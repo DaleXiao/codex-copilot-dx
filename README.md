@@ -54,7 +54,10 @@ Model availability depends on your account and service. Microsoft 365 also requi
 | Choose client models | `ccdx app codex models --edit` |
 | Preview client setup | `ccdx app claude-app sync --preview` |
 | Set up Antigravity | `ccdx app antigravity status` / `enable` / `open` |
+| Inspect compression | `ccdx compact status` / `ccdx compact enable` / `ccdx compact disable` |
 | Inspect failures | `ccdx requests --failed` |
+| Inspect observed tool calls | `ccdx requests tools` / `ccdx requests tools --active` |
+| Capture one upstream error | `ccdx requests diagnose --source api_work --model model-id --yes` |
 | Read usage | `ccdx usage` / `ccdx usage --provider google --days 7` / `ccdx usage --purpose diagnostic` / `ccdx usage --scope run` |
 | Inspect preferences | `ccdx config show --effective` |
 | Inspect local masking | `ccdx config privacy status` |
@@ -62,7 +65,7 @@ Model availability depends on your account and service. Microsoft 365 also requi
 
 Use `ccdx help` or `ccdx <command> --help` for options. The CLI uses English; the Web UI supports English and Chinese.
 
-**1.3 uses one command tree.** Old command names and the `codex-copilot-dx` executable have been removed. This changes command entrypoints, not saved accounts, model selections or chats. See the [command reference](docs/REFERENCE.md#commands).
+**CCDX uses one command tree.** Old command names and the `codex-copilot-dx` executable have been removed. This changes command entrypoints, not saved accounts, model selections or chats. See the [command reference](docs/REFERENCE.md#commands).
 
 ## Features and maintenance
 

@@ -156,6 +156,15 @@ test("Claude gateway delivers Messages JSON and normalizes cache accounting once
   assert.equal(observed.input_tokens, 15);assert.equal(observed.cached_input_tokens, 8);
   assert.equal(observed.context_window_tokens, null);
 });
+test("Claude tool observations wait for the real matching result without retaining payloads", async t => {
+  const performance = createStreamPerformanceMetrics({ routeNames: ["messages"] });let requests = 0;
+  const first = { ...message, content: [{ type: "tool_use", id: "tool_one", name: "read_file", input: { file: "private-fixture" } }], stop_reason: "tool_use" };
+  const g = await gateway(t, async () => Response.json(++requests === 1 ? first : message), { performance });
+  const headers = { session_id: "tool-session" };
+  await (await g.request(undefined, { headers })).text();assert.equal(performance.snapshot().tool_activity.items[0].state, "waiting");
+  await (await g.request({ model: message.model, messages: [{ role: "assistant", content: first.content }, { role: "user", content: [{ type: "tool_result", tool_use_id: "tool_one", content: "private-result" }] }] }, { headers })).text();
+  const snapshot = performance.snapshot().tool_activity;assert.equal(snapshot.items[0].state, "returned");assert.doesNotMatch(JSON.stringify(snapshot), /private-fixture|private-result|tool_one/);
+});
 
 test("Messages context observes declared, effective and pinned windows without another catalog read", async t => {
   const raw = { capabilities: { limits: { max_context_window_tokens: 1234567 } } };

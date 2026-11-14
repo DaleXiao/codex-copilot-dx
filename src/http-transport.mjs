@@ -26,7 +26,7 @@ export const MAX_DECODED_BODY_BYTES = decodedBodyLimitPreference().bytes;
 
 export {
   MAX_UPSTREAM_ERROR_BODY_BYTES, MAX_UPSTREAM_MODEL_CATALOG_BYTES, MAX_UPSTREAM_RETRY_DRAIN_BYTES,
-  readBoundedResponseBuffer, readBoundedResponseText, discardBoundedResponseBody,
+  readBoundedResponseBuffer, readBoundedResponseText, discardBoundedResponseBody, readResponseChunk,
 } from "./upstream-body.mjs";
 export const MAX_UPSTREAM_CHAT_SUCCESS_BODY_BYTES = HTTP_RUNTIME_CONFIG.maxUpstreamChatResponseBytes;
 export const MAX_UPSTREAM_RESPONSES_SUCCESS_BODY_BYTES = HTTP_RUNTIME_CONFIG.maxUpstreamResponsesResponseBytes;

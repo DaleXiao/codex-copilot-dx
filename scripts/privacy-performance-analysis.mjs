@@ -2,7 +2,8 @@
 // historical-receipt-specific threshold is used by this development tool.
 export const PRIVACY_PERFORMANCE_POLICY = Object.freeze({
   schema: 2, confidence: 0.95, pairs: 20, hot_repetitions: 1000, repeatability_equivalence: true,
-  tolerances: Object.freeze({ cold: 0.10, startup_cold: 0.10, append: 0, hot: 0 }),
+  tolerances: Object.freeze({ cold: 0.10, startup_cold: 0.10, append: 0.05, hot: 0 }),
+  absolute_tolerances_ms: Object.freeze({ append: 0.5 }),
 });
 
 const median = values => {
@@ -10,10 +11,11 @@ const median = values => {
   return sorted.length % 2 ? sorted[at] : (sorted[at - 1] + sorted[at]) / 2;
 };
 
-export function comparePerformancePairs(pairs, { tolerance, confidence = 0.95 } = {}) {
+export function comparePerformancePairs(pairs, { tolerance, confidence = 0.95, absoluteToleranceMs } = {}) {
   if (!Array.isArray(pairs) || !pairs.length || pairs.length > 128
     || !Number.isFinite(tolerance) || tolerance < 0 || tolerance > 1
-    || !Number.isFinite(confidence) || confidence <= 0 || confidence >= 1) throw Error("Invalid paired performance inputs");
+    || !Number.isFinite(confidence) || confidence <= 0 || confidence >= 1
+    || absoluteToleranceMs !== undefined && (!Number.isFinite(absoluteToleranceMs) || absoluteToleranceMs < 0)) throw Error("Invalid paired performance inputs");
   for (const pair of pairs) if (!pair || !Number.isFinite(pair.before_ms) || !Number.isFinite(pair.after_ms)
     || pair.before_ms <= 0 || pair.after_ms <= 0) throw Error("Paired durations must have a positive measurement basis");
   const ratios = pairs.map(pair => pair.after_ms / pair.before_ms), sorted = [...ratios].sort((a, b) => a - b), n = sorted.length;
@@ -25,12 +27,21 @@ export function comparePerformancePairs(pairs, { tolerance, confidence = 0.95 } 
   }
   const low = selected >= 0 ? sorted[selected] : 0, high = selected >= 0 ? sorted[n - selected - 1] : null;
   const limit = 1 + tolerance;
-  const decision = high !== null && high <= limit ? "pass" : low > limit ? "regression" : "inconclusive";
+  let absolute;
+  if (absoluteToleranceMs !== undefined) {
+    const differences = pairs.map(pair => pair.after_ms - pair.before_ms).sort((a, b) => a - b);
+    absolute = { median_ms: median(differences), tolerance_ms: absoluteToleranceMs,
+      interval: { low: selected >= 0 ? differences[selected] : null, high: selected >= 0 ? differences[n - selected - 1] : null } };
+  }
+  const absolutePassed = !absolute || absolute.interval.high !== null && absolute.interval.high <= absoluteToleranceMs;
+  const decision = high !== null && high <= limit && absolutePassed ? "pass"
+    : low > limit || absolute && absolute.interval.low !== null && absolute.interval.low > absoluteToleranceMs ? "regression" : "inconclusive";
   return {
     method: "paired-median-exact-binomial", n, ratios, ratio_median: median(ratios),
     before_median_ms: median(pairs.map(pair => pair.before_ms)), after_median_ms: median(pairs.map(pair => pair.after_ms)),
     confidence_requested: confidence, confidence_coverage: selected >= 0 ? 1 - 2 * selectedTail : 1,
     interval: { low, high }, tolerance, decision,
+    ...(absolute ? { absolute } : {}),
   };
 }
 
@@ -62,7 +73,7 @@ export function summarizePerformanceSamples(samples, { control = false } = {}) {
         return value.ms + (phase === "startup_cold" ? sample.load_ms : 0);
       };
       const pairs = [...before.keys()].sort((a, b) => a - b).map(trial => ({ before_ms: duration(before.get(trial)), after_ms: duration(after.get(trial)) }));
-      phases[phase] = comparePerformancePairs(pairs, { tolerance });
+      phases[phase] = comparePerformancePairs(pairs, { tolerance, absoluteToleranceMs: PRIVACY_PERFORMANCE_POLICY.absolute_tolerances_ms[phase] });
     }
     const sequencePairs = [...before.keys()].map(trial => ({
       before_ms: before.get(trial).timings.reduce((sum, timing) => sum + timing.ms, 0),
@@ -87,7 +98,7 @@ export function applyPerformanceRepeatability(result, control) {
     const reference = control.comparisons.find(value => value.workload === row.workload);
     if (!reference) throw Error("Missing matching A/A workload");
     const phases = Object.fromEntries(Object.entries(row.phases).map(([phase, value]) => {
-      if (!["append", "hot"].includes(phase) || value.decision === "pass") return [phase, value];
+      if (phase !== "hot" || value.decision === "pass") return [phase, value];
       const band = reference.phases[phase].interval;
       const qualified = band.high !== null && band.low <= 1 && band.high >= 1 && band.high <= 1.10;
       const equivalent = qualified && value.interval.high !== null && value.interval.high <= band.high;

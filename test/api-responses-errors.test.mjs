@@ -6,6 +6,42 @@ import { createAdapterHandler } from '../src/adapter.mjs';
 import { createRequestAdmission } from '../src/request-admission.mjs';
 import { invokeAdapterRequest } from '../test-support/adapter.mjs';
 import { Readable } from 'node:stream';
+import { createUpstreamErrorCapture } from '../src/upstream-error-capture.mjs';
+import { runWithRequestContext } from '../src/request-context.mjs';
+
+test('Messages input-limit failures retain native recovery semantics without exposing vendor prose', async () => {
+  let message;const provider=createApiProvider({env:{},secrets:{get:async()=> 'synthetic-key'},config:{id:'api_context',name:'Context',base_url:'https://example.test/v1',endpoints:{messages:'https://example.test/v1/messages'},auth_header:'bearer',secret_ref:'a'.repeat(32),models:[{id:'m',protocols:['messages']}]},
+    networkFactory:async()=>({close(){},fetch:async()=>Response.json({error:{type:'invalid_request_error',message}},{status:400})})});
+  try {
+    for (const [vendor,code,marker] of [['Range of input length should be [1, 1048576]','input_length_invalid','Range of input length should be [1, 1048576].'],
+      ['Input tokens exceed context window; content: fixture-private','context_length_exceeded','prompt is too long']]) {
+      message=vendor;const response=await provider.client.messages({model:'m',messages:[{role:'user',content:'synthetic'}],max_tokens:32}),body=await response.json();
+      assert.equal(response.status,400);assert.equal(body.error.type,'invalid_request_error');assert.equal(body.error.upstream_code,code);
+      assert.ok(body.error.message.includes(marker));assert.doesNotMatch(JSON.stringify(body),/fixture-private/);
+      assert.equal(body.error.code,'ccdx_api_http_400');
+    }
+    message='Invalid field; content: fixture-private';const body=await(await provider.client.messages({model:'m',messages:[],max_tokens:32})).json();
+    assert.equal(body.error.type,'api_error');assert.doesNotMatch(body.error.message,/prompt is too long|fixture-private/);
+  } finally {await provider.close();}
+});
+
+test('one-shot diagnostics stay on the original provider path and redact credentials before retention', async () => {
+  const capture = createUpstreamErrorCapture(), observed = [], key = 'fixture-private-literal';
+  const provider = createApiProvider({ config: { id: 'api_capture', name: 'Capture', base_url: 'https://example.test/v1',
+    endpoints: { messages: 'https://example.test/v1/messages' }, secret_ref: 'a'.repeat(32), auth_header: 'bearer', models: [{ id: 'kimi', protocols: ['messages'] }] },
+    env: {}, errorCapture: capture, secrets: { get: async () => key }, networkFactory: async () => ({ close() {}, fetch: async () =>
+      Response.json({ error: { type: 'invalid_request_error', message: 'Unexpected message field; key=' + key + '; content: private request echo' } }, { status: 400 }) }) });
+  const request = id => runWithRequestContext({ requestId: id, onHttpError: e => observed.push(e) }, () => provider.client.messages({ model: 'kimi', max_tokens: 32, messages: [] }));
+  try {
+    await request('before');assert.deepEqual(observed, []);
+    capture.arm('api_capture', 'kimi');const response = await request('chosen');
+    assert.equal(response.status, 400);assert.equal(capture.snapshot().state, 'captured');
+    assert.equal(capture.snapshot().request_id, 'chosen');assert.equal(observed.length, 1);
+    assert.doesNotMatch(JSON.stringify(observed) + JSON.stringify(capture.snapshot()), /fixture-private-literal|private request echo/);
+    assert.doesNotMatch(await response.text(), /Unexpected message field|fixture-private-literal|private request echo/);
+    await request('after');assert.equal(observed.length, 1);
+  } finally { provider.close(); }
+});
 
 test('Responses errors retain safe JSON and backoff in streaming and JSON requests', async () => {
   for (const stream of [false, true]) for (const status of [401, 403, 429, 500, 503]) {

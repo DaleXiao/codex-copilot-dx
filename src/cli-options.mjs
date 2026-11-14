@@ -20,7 +20,7 @@ export function parseCliArgs(input = []) {
       throw new Error(`Unknown help topic: ${help.join(" ")}`);
     return base({ command: "help", helpTopic: help.join(" ") });
   }
-  if (["app", "config", "source"].includes(args[0]) && args.length === 1)
+  if (["app", "config", "source", "compact"].includes(args[0]) && args.length === 1)
     return base({ command: "help", helpTopic: args[0] });
   const parsed = parseManagedCommand(args);
   return base(parsed.dispatch || parsed);

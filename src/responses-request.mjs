@@ -45,12 +45,13 @@ function responsesInputItems(input, { assertActive, clone = true } = {}) {
   return [item];
 }
 
-export function stripInternalResponsesInputFields(inputItems, { assertActive } = {}) {
+export function stripInternalResponsesInputFields(inputItems, { assertActive, resolveCompaction } = {}) {
   if (!Array.isArray(inputItems)) return inputItems;
   for (let index = 0; index < inputItems.length; index += 1) {
     if ((index & 63) === 0) assertActive?.();
-    const item = inputItems[index];
+    let item = inputItems[index];
     if (!item || typeof item !== "object") continue;
+    if (resolveCompaction && item.type === "compaction") item = inputItems[index] = resolveCompaction(item);
     for (const key of Object.keys(item)) {
       if (key.startsWith("internal_")) delete item[key];
     }
@@ -357,6 +358,7 @@ export function prepareResponsesRequest(reqBody, {
   copilotBoundary = true,
   historySnapshot,
   mutate = false,
+  resolveCompaction,
 } = {}) {
   assertActive?.();
   const body = mutate ? reqBody : cloneJson(reqBody);
@@ -411,10 +413,15 @@ export function prepareResponsesRequest(reqBody, {
   // pass copilotBoundary:false and apply the policy only after selecting a
   // concrete Copilot RoutePlan.
   if (copilotBoundary) applyCopilotResponsesRequestPolicies(body);
-  stripInternalResponsesInputFields(body.input, { assertActive });
+  let expanded = false;
+  const resolve = resolveCompaction ? item => {
+    const next = resolveCompaction(item);if (next !== item) { expanded = true;if (currentInputRefs.delete(item)) currentInputRefs.add(next); }return next;
+  } : undefined;
+  stripInternalResponsesInputFields(body.input, { assertActive, resolveCompaction: resolve });
   // The first pass already covers shared current items. Only an independent
   // pre-adaptation snapshot needs another pass.
-  if (historyInputItems !== currentInputItems) stripInternalResponsesInputFields(historyInputItems, { assertActive });
+  if (historyInputItems !== currentInputItems) stripInternalResponsesInputFields(historyInputItems, { assertActive, resolveCompaction: resolve });
+  if (expanded && !responseValueHasOpaqueState(body.input)) for (const metadata of historyRouteMetadata) metadata.hasOpaque = false;
   assertActive?.();
   const retainedCurrentInputStart = body.input.findIndex((item) => currentInputRefs.has(item));
 

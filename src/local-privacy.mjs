@@ -6,7 +6,7 @@ import { withFileLockSync } from "./lock.mjs";
 import { atomicWriteFileIfChangedSync } from "./atomic-file.mjs";
 import { createChangeSignal } from "./activity-events.mjs";
 import { createPrivacyModel, privacyFailure } from "./privacy-model.mjs";
-import { maskPrivacyRequest, protectPrivacyResponse, createPrivacyRuleCache } from "./privacy-transform.mjs";
+import { maskPrivacyRequest, protectPrivacyResponse, createPrivacyRuleCache, privacySessionMappings, restorePrivacyMappings } from "./privacy-transform.mjs";
 import { createPrivacyDetection, PRIVACY_BATCH_BYTES } from "./privacy-detection.mjs";
 import { markRequestObservation } from "./stream-performance.mjs";
 
@@ -48,7 +48,7 @@ export function createLocalPrivacy(options = {}) {
     if (disposed) throw privacyFailure("engine_unavailable");
     loadKey();
     const start = performance.now();
-    const deadline = new AbortController();let session, timer, budget = options.checkTimeoutMs ?? 15000;
+    const deadline = new AbortController();let session, timer, textKeys, budget = options.checkTimeoutMs ?? 15000;
     const arm = () => {
       clearTimeout(timer);timer = setTimeout(() => deadline.abort(privacyFailure("check_timeout", "waiting")), Math.max(1, budget - (performance.now() - start)));
       timer.unref?.();
@@ -60,7 +60,9 @@ export function createLocalPrivacy(options = {}) {
       markRequestObservation({ ...(Number.isSafeInteger(plan.pending_bytes) ? { privacy_pending_bytes: plan.pending_bytes, privacy_new_bytes: plan.new_bytes } : {}),
         ...(Number.isSafeInteger(plan.pending_windows) ? { privacy_pending_windows: plan.pending_windows } : {}), privacy_wait_budget_ms: budget });
     };
-    try { session = await maskPrivacyRequest(body, { protocol, client, personal: saved.personal, secret, find, rules: rules.find, onPlan,
+    try { session = await maskPrivacyRequest(body, { protocol, client, personal: saved.personal, secret,
+      find: (texts, context) => detection.find(texts, { ...context, onKey(text, key) { if (text.length >= 256) (textKeys ||= new Map()).set(text, key); } }),
+      rules: (text, personal) => rules.find(text, personal, textKeys?.get(text)), onPlan,
       signal: signal ? AbortSignal.any([signal, deadline.signal]) : deadline.signal }); }
     catch (error) {
       const failure = deadline.signal.aborted && !signal?.aborted ? privacyFailure("check_timeout", "waiting") : error;
@@ -68,12 +70,15 @@ export function createLocalPrivacy(options = {}) {
       lastCheck = { state: cancelled ? "cancelled" : "failed", at: new Date().toISOString(), elapsed_ms: elapsed,
         code: /^ccdx_privacy_[a-z_]+$/.test(failure?.code || "") ? failure.code : cancelled ? "ccdx_privacy_cancelled" : "ccdx_privacy_unavailable", continuing: !cancelled && failure?.retryAfter === 5, wait_budget_ms: budget };
       markRequestObservation({ privacy_ms: elapsed, privacy_state: cancelled ? "cancelled" : "failed" });changes.changed();throw failure;
-    } finally { clearTimeout(timer); }
+    } finally { clearTimeout(timer);textKeys?.clear(); }
     if (signal?.aborted) { session.release();throw signal.reason; }
     markRequestObservation({ privacy_count: session.count, privacy_ms: Math.round(performance.now() - start), privacy_state: "checked" });
     actionError = null;lastCheck = { state: "checked", at: new Date().toISOString(), elapsed_ms: Math.round(performance.now() - start), count: session.count, wait_budget_ms: budget };changes.changed();
     if (onSession) { onSession(session);return session.body; }
-    if (res && session.count) {
+    if (res && session.count) attachSession(res, session);
+    return session.body;
+  }
+  function attachSession(res, session) {
       let current = responses.get(res);
       if (!current) {
         const sessions = [];
@@ -87,8 +92,6 @@ export function createLocalPrivacy(options = {}) {
           onComplete() { lastResponse = { state: "completed", at: new Date().toISOString() };changes.changed(); },
         });
       } else current.sessions.push(session);
-    }
-    return session.body;
   }
   async function action(input) {
     if (!input || typeof input !== "object" || Array.isArray(input) || Object.keys(input).some(key => !["action", "revision", "personal", "text"].includes(key))) throw privacyFailure("action_invalid");
@@ -137,6 +140,11 @@ export function createLocalPrivacy(options = {}) {
       };
     },
     restoreResponse: (res, value) => responses.get(res)?.restoreValue(value) || value,
+    responseMappings(res) {
+      const entries = new Map();for (const session of responses.get(res)?.sessions || []) for (const [token, value] of privacySessionMappings(session)) entries.set(token, value);
+      return [...entries];
+    },
+    async importResponseMappings(res, entries) { const session = await restorePrivacyMappings(entries);if (session.count) attachSession(res, session); },
     settingsChanged() { actionError = null;if (!settings().enabled) { generation++;model.stop(); }else warm();changes.changed(); },
     close() { disposed = true;generation++;detection.close();model.close();rules.clear();secret.fill(0); } };
 }

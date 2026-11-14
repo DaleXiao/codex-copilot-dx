@@ -158,7 +158,7 @@ export function reconcileClaudeConfiguration(operations, { restore = false, rest
   return withFileLockSync(`${journalPath}.lock`, () => {
     const journal = readM365Json(journalPath, { version: 1, operations: [] });
     const keys = new Map([
-      [paths.code, new Set(["env.ANTHROPIC_BASE_URL", "env.ANTHROPIC_AUTH_TOKEN", "env.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY", "env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS", "env.ANTHROPIC_CUSTOM_HEADERS", "env.ANTHROPIC_MODEL", "env.CLAUDE_CODE_MAX_CONTEXT_TOKENS", "env.CLAUDE_CODE_MAX_OUTPUT_TOKENS", "env.CLAUDE_CODE_MODEL_CAPABILITIES"])],
+      [paths.code, new Set(["env.ANTHROPIC_BASE_URL", "env.ANTHROPIC_AUTH_TOKEN", "env.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY", "env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS", "env.ANTHROPIC_CUSTOM_HEADERS", "env.ANTHROPIC_MODEL", "env.CLAUDE_CODE_MAX_CONTEXT_TOKENS", "env.CLAUDE_CODE_MAX_OUTPUT_TOKENS", "env.CLAUDE_CODE_MODEL_CAPABILITIES", "env.CLAUDE_CODE_GATEWAY_HINT_HEADERS"])],
       [paths.normal, new Set(["deploymentMode"])], [paths.threep, new Set(["deploymentMode"])],
       [paths.meta, new Set(["entries", "appliedId"])],
       [paths.profile, new Set(["inferenceProvider", "inferenceGatewayBaseUrl", "inferenceGatewayApiKey", "inferenceGatewayAuthScheme", "inferenceModels", "inferenceCustomHeaders", "modelDiscoveryEnabled"])],
@@ -172,7 +172,7 @@ export function reconcileClaudeConfiguration(operations, { restore = false, rest
       throw new Error("Claude configuration ownership is invalid; files were preserved");
     }
     const states = new Map(), pending = [], nextJournal = structuredClone(journal), skipped = [];
-    const sharedOperation = op => op.file === paths.code && (op.keys[0] === "modelSettings" || ["CLAUDE_CODE_MAX_CONTEXT_TOKENS", "CLAUDE_CODE_MAX_OUTPUT_TOKENS", "CLAUDE_CODE_MODEL_CAPABILITIES"].includes(op.keys[1]));
+    const sharedOperation = op => op.file === paths.code && (op.keys[0] === "modelSettings" || ["CLAUDE_CODE_MAX_CONTEXT_TOKENS", "CLAUDE_CODE_MAX_OUTPUT_TOKENS", "CLAUDE_CODE_MODEL_CAPABILITIES", "CLAUDE_CODE_GATEWAY_HINT_HEADERS"].includes(op.keys[1]));
     const forClient = op => (!options.selectOperation || options.selectOperation(op)) && (!options.client || (options.client === "claude_code" ? op.file === paths.code && !sharedOperation(op) : op.file !== paths.code))
       && (!options.fields || options.fields.includes(op.keys.join(".")));
     const list = restore ? journal.operations.filter(forClient) : [

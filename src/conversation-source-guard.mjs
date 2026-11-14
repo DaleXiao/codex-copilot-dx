@@ -9,7 +9,14 @@ import { withFileLock } from "./lock.mjs";
 // Correlation only: retain hashes, never prompts, session IDs or credentials.
 export function createConversationSourceGuard(options = {}) {
   const file = path.join(path.dirname(accessSettingsPath(options)), "conversation-sources.json");let cache;
-  return (client, profile, body, headers = {}, salt, transfer, signal) => {
+  const loadOwners = async () => {
+    let owners = {};
+    try { owners = JSON.parse(await readBoundedFile(file, { encoding: "utf8", maxBytes: 256 * 1024 })); } catch (error) { if (error.code !== "ENOENT") throw accessError("ccdx_conversation_state_invalid", 409); }
+    if (!owners || typeof owners !== "object" || Array.isArray(owners) || Object.keys(owners).length > 1024
+      || Object.entries(owners).some(([key, owner]) => !/^[a-f0-9]{64}$/.test(key) || !/^[a-f0-9]{64}$/.test(owner))) throw accessError("ccdx_conversation_state_invalid", 409);
+    return owners;
+  };
+  const guard = (client, profile, body, headers = {}, salt, transfer, signal) => {
     signal?.throwIfAborted();
     const hash = value => createHmac("sha256", salt).update(value).digest("hex");
     const items = Array.isArray(body.messages) ? body.messages : Array.isArray(body.input) ? body.input : [];
@@ -39,10 +46,7 @@ export function createConversationSourceGuard(options = {}) {
       }
       await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
       try { return await withFileLock(`${file}.lock`, async () => {
-        let owners = {};
-        try { owners = JSON.parse(await readBoundedFile(file, { encoding: "utf8", maxBytes: 256 * 1024 })); } catch (error) { if (error.code !== "ENOENT") throw accessError("ccdx_conversation_state_invalid", 409); }
-        if (!owners || typeof owners !== "object" || Array.isArray(owners) || Object.keys(owners).length > 1024
-          || Object.entries(owners).some(([key, owner]) => !/^[a-f0-9]{64}$/.test(key) || !/^[a-f0-9]{64}$/.test(owner))) throw accessError("ccdx_conversation_state_invalid", 409);
+        const owners = await loadOwners();
         prepared = await prepare(owners[key]);
         if (prepared?.handled) { cache = owners;return prepared; }
         if (owners[key] && owners[key] !== owner && (identified || hasHistory)) throw accessError("ccdx_conversation_source_changed", 409);
@@ -55,4 +59,10 @@ export function createConversationSourceGuard(options = {}) {
       }, { timeoutMs: 1000, staleMs: 60_000, pollMs: 10, signal }); } catch (error) { prepared?.release();throw error; }
     })();
   };
+  guard.owner = async (client, session, salt) => {
+    if (typeof session !== "string" || !session || session.length > 512 || /[\u0000-\u001f\u007f]/.test(session)) return null;
+    const key = createHmac("sha256", salt).update(client + "\0session\0" + session).digest("hex");
+    if (cache?.[key]) return cache[key];cache = await loadOwners();return cache[key] || null;
+  };
+  return guard;
 }

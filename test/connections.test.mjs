@@ -104,6 +104,15 @@ async function save(r, options = {}) {
   const state = await r.manageConnections({ operation: "save_api", config, allowed: ["codex", "claude_app", "claude_code"], key: "synthetic-key-only", ...options });
   const savedId = state.providers.find(p => !p.builtin).id;await r.manageConnections({ operation: "discover", id: savedId });return savedId;
 }
+test("error capture requires an enabled Messages deployment and never changes saved settings", async t => {
+  const s = runtime(t), source = await save(s.runtime), file = accessSettingsPath(s), before = fs.readFileSync(file, "utf8");
+  assert.deepEqual(s.runtime.errorCaptureSnapshot(), { state: "off" });
+  for (const model of ["missing", "custom/response"]) assert.throws(() => s.runtime.captureUpstreamError({ operation: "arm", source, model }));
+  assert.throws(() => s.runtime.captureUpstreamError({ operation: "arm", source: "missing", model: "any-message-model" }));
+  assert.equal(s.runtime.captureUpstreamError({ operation: "arm", source, model: "any-message-model" }).state, "armed");
+  assert.equal(fs.readFileSync(file, "utf8"), before);
+  assert.deepEqual(s.runtime.captureUpstreamError({ operation: "cancel" }), { state: "off" });
+});
 test("cached source catalogs and client inspection never create a gateway binding or rewrite Codex sign-in", async t => {
   const native = [{ id: "native-one", supported_endpoints: ["/responses"] }, { id: "native-other", supported_endpoints: ["/v1/messages"] }];
   const s = runtime(t, { githubRegistry: { models: { data: native } }, prepareHome(home) {

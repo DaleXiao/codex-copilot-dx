@@ -271,7 +271,7 @@ for (const [key, ids] of [["auth", ["account-authorization", "client-features", 
 const updateView = globalThis.ccdxDashboardUpdates.create(viewHelpers);
 function statusState(state) {
   if (!liveActivity.current && (state.error || !state.value)) globalThis.ccdxDashboardActivity?.unavailable();
-  if (!liveActivity.current && (state.error || !state.value) && statusResourceKey() === "status") globalThis.ccdxDashboardFlow?.unavailable();
+  if (!liveActivity.current && (state.error || !state.value) && statusResourceKey() === "status") { globalThis.ccdxDashboardFlow?.unavailable();globalThis.ccdxToolActivity?.unavailable(); }
   text("connection", state.pending && !state.value ? "reading" : state.error ? "unavailable_eb0be" : "service_reachable");
   element("connection").className = `badge ${state.pending ? "neutral" : state.error ? "bad" : "good"}`;
   globalThis.ccdxIcons?.set(element("connection"), state.pending && !state.value ? "reading" : state.error ? "unavailable_eb0be" : "service_reachable",
@@ -457,7 +457,7 @@ const liveActivity = globalThis.ccdxLive.create({
       element("connection").className = "badge good";
       globalThis.ccdxIcons?.set(element("connection"), "service_reachable", "connected");
     } else {
-      globalThis.ccdxDashboardActivity?.unavailable();globalThis.ccdxDashboardFlow?.unavailable();
+      globalThis.ccdxDashboardActivity?.unavailable();globalThis.ccdxDashboardFlow?.unavailable();globalThis.ccdxToolActivity?.unavailable();
       if (value !== "paused") {
         element("connection").className = "badge neutral";
         globalThis.ccdxIcons?.set(element("connection"), "reading", "unknown");

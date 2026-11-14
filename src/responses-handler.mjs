@@ -1,3 +1,4 @@
+import { markToolActivity } from "./stream-performance.mjs";
 import { defaultGithubProvider } from "./providers/github.mjs";
 import { observeContextSession } from "./context-metrics.mjs";
 import {
@@ -36,6 +37,10 @@ import { endStreamWithError } from "./stream-errors.mjs";
 import { createSseKeepalive } from "./sse-keepalive.mjs";
 import { safeUpstreamResponseHeaders } from "./upstream-headers.mjs";
 import { recordResponsesUsage } from "./usage-store.mjs";
+import { compactionScope, resolveGatewayCompactionItem, protectNativeCompactionResult, COMPACTION_USAGE_RECORDED } from "./context-compaction.mjs";
+import { compactionSummarizer } from "./context-compaction-wire.mjs";
+import { catalogCapabilities } from "./model-capabilities.mjs";
+import { currentRequestContext, requestPurpose } from "./request-context.mjs";
 import {
   markResponseErrorOrigin,
   markResponseModel,
@@ -45,6 +50,54 @@ import {
   measureRequestStage,
   measureRequestStageAsync,
 } from "./stream-performance.mjs";
+
+function gatewayCompactionContext(options, provider, res) {
+  let key, inherited, wrappedNative;
+  const loadKey = () => key ||= options.compactionKey?.();
+  const scope = compactionScope(provider, "codex", "responses");
+  return {
+    scope, key: loadKey,
+    resolve: item => resolveGatewayCompactionItem(item, { scope, key: loadKey, onMappings(entries) {
+      inherited ||= new Map();for (const entry of entries) inherited.set(...entry);
+    } }),
+    async importMappings() { if (inherited?.size) {
+      if (!options.privacy?.importResponseMappings) throw Object.assign(new Error("Private compression mappings cannot be restored by this gateway."), { code: "ccdx_compaction_privacy_unavailable", statusCode: 409 });
+      await options.privacy.importResponseMappings(res, [...inherited]);inherited = null;
+    } },
+    protect(value) {
+      if (wrappedNative) {
+        if (!value.output?.some(item => item?.encrypted_content === wrappedNative.original)) return value;
+        return { ...value, output: value.output.map(item => item?.encrypted_content === wrappedNative.original ? { ...item, encrypted_content: wrappedNative.sealed } : item) };
+      }
+      const next = protectNativeCompactionResult(value, { scope, key: loadKey, mappings: () => options.privacy?.responseMappings?.(res) || [] });
+      if (next !== value) { const index = next.output.findIndex((item, index) => item !== value.output[index]);wrappedNative = { original: value.output[index].encrypted_content, sealed: next.output[index].encrypted_content }; }
+      return next;
+    },
+    restoreText: text => options.privacy?.restoreResponse(res, { output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text }] }] })?.output[0].content[0].text || text,
+  };
+}
+
+function adaptiveResponsesCompaction(options, state) {
+  return async (value, callOptions) => {
+    const raw = state.modelRegistry?.models, entries = Array.isArray(raw) ? raw : Array.isArray(raw?.data) ? raw.data : [];
+    const entry = entries.find(model => model.id === value.model), limits = entry?.protocol_capabilities?.responses?.values || entry?.capability?.values || catalogCapabilities(entry || {});
+    const endpoints = state.getCachedModelEndpoints?.(value.model), carriesResponses = !Array.isArray(endpoints) || !endpoints.length || endpoints.some(path => ["/responses", "/v1/responses"].includes(path));
+    let summarize;
+    const result = await options.compaction.run({ body: value, protocol: "responses", scope: state.context.scope, key: state.context.key, source: state.provider.id, client: "codex",
+      nativeKind: state.kind, inputLimit: limits.max_input_tokens || limits.context_window, outputAllowance: value.max_output_tokens || 0,
+      native: state.kind === "inline" && !carriesResponses ? undefined : state.native, options: callOptions,
+      summarize(text, summaryOptions) {
+        if (!summarize) {
+          const route = state.provider.route({ model: value.model, input: [], reasoning: value.reasoning }, { requestedModel: value.model, upstreamModel: value.model, forceResponses: state.forceResponses,
+            surface: "responses", getCachedModelEndpoints: state.getCachedModelEndpoints });
+          const chat = route.protocol === "openai-chat-completions", template = chat ? { model: value.model, max_completion_tokens: value.max_output_tokens, reasoning_effort: value.reasoning?.effort, service_tier: value.service_tier } : value;
+          summarize = compactionSummarizer(template, chat ? "chat" : "responses", chat ? state.chat : state.responses);
+        }
+        return summarize(text, summaryOptions);
+      }, restoreText: state.context.restoreText, onActivity: state.onActivity });
+    if (result[COMPACTION_USAGE_RECORDED]) state.prepared.compactionUsageRecorded = true;return result;
+  };
+}
 
 function resolveRequestModel(model, openAIModelEnv, autoReviewModelResolver) {
   const preference = model === CODEX_AUTO_REVIEW_MODEL && typeof autoReviewModelResolver === "function"
@@ -221,6 +274,7 @@ export function createResponsesHandler(options) {
       const validation = options.validateConversation?.(parsed, req.headers, provider, abort.signal);
       if (validation?.then) await validation;
       observeContextSession(parsed, req.headers, provider);
+      const compactionContext = options.compaction ? gatewayCompactionContext(options, provider, res) : null;
       activeDeadline = now() + upstreamTimeoutMs;
       activeTimeoutReason = "responses_prepare_timeout";
       abort.setTimeout(upstreamTimeoutMs, "responses_prepare_timeout");
@@ -239,7 +293,9 @@ export function createResponsesHandler(options) {
         copilotBoundary: false,
         historySnapshot,
         mutate: true,
+        resolveCompaction: compactionContext?.resolve,
       }));
+      await compactionContext?.importMappings();
       parsed = null;
       assertPrepareActive();
       imagePressureResult = imagePressure?.apply?.(prepared, { assertActive: assertPrepareActive }) || null;
@@ -260,17 +316,29 @@ export function createResponsesHandler(options) {
         }
       }
       if (upstreamModel !== requestedModel) prepared.body.model = upstreamModel;
+      const inlineCompacting = options.compaction && prepared.body.input?.at(-1)?.type === "compaction_trigger";
+      if (inlineCompacting) {
+        const context = currentRequestContext();if (context) { context.purpose = requestPurpose(req.headers["x-ccdx-purpose"], "compaction");context.streamPerformance?.setPurpose(context.purpose); }
+        markRequestObservation({ compaction: 1 });
+      }
       markResponseModel(upstreamModel, { requestedModel, configuredModel: provider.configuredModels === true });
       markRequestObservation({ context_window_tokens: modelContextWindowTokens(modelRegistry?.models, upstreamModel) });
       const upstreamLog = upstreamModel === requestedModel ? "" : ` upstream_model=${upstreamModel}`;
       console.log(status("info", `responses model=${requestedModel}${upstreamLog} stream=${streaming}`));
-      const routePlan = provider.route(prepared.body, { requestedModel, upstreamModel, forceResponses,
+      const routePlan = provider.route(prepared.body, { requestedModel, upstreamModel, forceResponses: forceResponses || inlineCompacting,
         surface: "responses", getCachedModelEndpoints: getCachedModelEndpointsFn });
       const selected = applySelectedRoute(prepared, routePlan, { req, env: openAIModelEnv, signal: abort.signal,
         assertActive: assertPrepareActive, reserveHistory: releaseRequest.reserveResponseHistory });
       prepared = selected instanceof Promise ? await selected : selected;
       if (prepared.historyParentId === null) releaseHistorySnapshot();
       provider.applyRequestPolicies(prepared.body);
+      if (inlineCompacting) {
+        const source = responsesFn;
+        responsesFn = adaptiveResponsesCompaction(options, { provider, modelRegistry, prepared, context: compactionContext, kind: "inline", native: source, responses: source,
+          chat: chatCompletionsFn, forceResponses, getCachedModelEndpoints: getCachedModelEndpointsFn,
+          onActivity() { activeDeadline = Number.POSITIVE_INFINITY;abort.setTimeout(streamIdleTimeoutMs, "compaction_idle_timeout"); } });
+        prepared.protectCompactionResult = compactionContext.protect;
+      }
       if (options.privacy) {
         prepared.privacyRestore = value => options.privacy.restoreResponse(res, value);
         responsesFn = options.privacy.wrap(responsesFn, { res, protocol: "responses", client: "codex" });
@@ -417,6 +485,7 @@ export function createResponsesHandler(options) {
               return;
             }
             const response = chatToResponses(JSON.parse(data), model, { toolChoice, ...(carbonBridge ? { toolAdapter: carbonBridge } : {}) });
+            markToolActivity(response);
             markResponseTerminal(response.status, {
               model: response.model || model, origin: "chat_completion", reason: response.incomplete_details?.reason,
             });
@@ -529,6 +598,8 @@ export function createResponsesCompactHandler(options) {
       releaseRequest = await measureRequestStageAsync("admission", () => acquireRequest(req, { signal: abort.signal }));
       abort.setTimeout(requestBodyTimeoutMs, "request_body_timeout");
       const parsed = await measureRequestStageAsync("body", () => readJsonBody(req, { admission: releaseRequest, signal: abort.signal }));
+      const context = currentRequestContext();if (context) { context.purpose = requestPurpose(req.headers["x-ccdx-purpose"], "compaction");context.streamPerformance?.setPurpose(context.purpose); }
+      markRequestObservation({ compaction: 1 });
       observeRequestedModel(parsed);
       markRequestObservation({ max_output_tokens_requested: parsed?.max_output_tokens });
       const selectedProvider = options.resolveProvider?.(parsed, req);
@@ -542,6 +613,7 @@ export function createResponsesCompactHandler(options) {
       const validation = options.validateConversation?.(parsed, req.headers, provider, abort.signal);
       if (validation?.then) await validation;
       observeContextSession(parsed, req.headers, provider);
+      const compactionContext = options.compaction ? gatewayCompactionContext(options, provider, res) : null;
       activeDeadline = now() + upstreamTimeoutMs;
       activeTimeoutReason = "responses_prepare_timeout";
       abort.setTimeout(upstreamTimeoutMs, "responses_prepare_timeout");
@@ -560,7 +632,9 @@ export function createResponsesCompactHandler(options) {
         copilotBoundary: false,
         historySnapshot,
         mutate: true,
+        resolveCompaction: compactionContext?.resolve,
       }));
+      await compactionContext?.importMappings();
       imagePressureResult = imagePressure?.applyRecovery?.(prepared, { assertActive: assertPrepareActive }) || null;
       if (imagePressureResult?.adapted) {
         console.warn(status("warn", `responses compact visual history mode=recovery historical_images=${imagePressureResult.initialHistoricalImages}->${imagePressureResult.historicalImages} omitted=${imagePressureResult.imagesOmitted} bytes=${imagePressureResult.initialBodyBytes}->${imagePressureResult.bodyBytes}`));
@@ -589,6 +663,12 @@ export function createResponsesCompactHandler(options) {
       prepared = selected instanceof Promise ? await selected : selected;
       releaseHistorySnapshot();
       provider.applyRequestPolicies(prepared.body);
+      if (options.compaction) {
+        responsesCompactFn = adaptiveResponsesCompaction(options, { provider, modelRegistry, prepared, context: compactionContext, kind: "compact", native: responsesCompactFn,
+          responses: responsesFn, chat: chatCompletionsFn, forceResponses, getCachedModelEndpoints: getCachedModelEndpointsFn,
+          onActivity() { activeDeadline = Number.POSITIVE_INFINITY;abort.setTimeout(options.streamIdleTimeoutMs || upstreamTimeoutMs, "compaction_idle_timeout"); } });
+        prepared.protectCompactionResult = compactionContext.protect;
+      }
       if (options.privacy) {
         prepared.privacyRestore = value => options.privacy.restoreResponse(res, value);
         responsesCompactFn = options.privacy.wrap(responsesCompactFn, { res, protocol: "responses", client: "codex" });

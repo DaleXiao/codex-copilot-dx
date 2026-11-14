@@ -14,7 +14,7 @@ export function observeContextSession(body, headers = {}, provider, protocol = "
     try { session = JSON.parse(body.metadata.user_id)?.session_id; }
     catch { session = /(?:^|_)session_([\w-]{8,128})$/.exec(body.metadata.user_id)?.[1]; }
   }
-  if (!bounded(session)) return;
+  if (!bounded(session)) { tracker.observeToolInput?.(body, protocol);return; }
   try {
     const profile = provider?.profileId?.(protocol);
     if (!bounded(profile)) return;
@@ -22,6 +22,7 @@ export function observeContextSession(body, headers = {}, provider, protocol = "
     const key = createHmac("sha256", salt).update(`${profile}\0${session}\0${bounded(agent) ? agent : ""}`).digest("hex");
     tracker.observeSession(key);
   } catch { /* Optional metadata cannot change request admission or routing. */ }
+  tracker.observeToolInput?.(body, protocol);
 }
 
 export function createContextMetrics() {
@@ -34,7 +35,7 @@ export function createContextMetrics() {
         context_window_tokens: count(context.context_window_tokens) || null,
         cached_input_tokens: input !== null && cached !== null && cached <= input ? cached : null,
         elapsed_ms: Math.max(0, finished - started), finished };
-      const compact = route === "responses_compact";
+      const compact = route === "responses_compact" || context.compaction === 1;
       if (!session) {
         unassigned.push({ id: `request-${++sequence}`, application, provider, model, ...point, compact });
         if (unassigned.length > 20) unassigned.shift();

@@ -272,6 +272,19 @@ test("forwardToChat: emits a completed empty message for an empty successful str
   assert.equal(response.output[0].content[0].text, "");
 });
 
+test("empty reasoning does not introduce assistant turns or split parallel tool calls", () => {
+  const call = id => ({ type: "function_call", call_id: id, name: "lookup", arguments: "{}" });
+  const empty = { type: "reasoning", id: "reasoning_empty", summary: [], content: [], encrypted_content: null };
+  const input = [call("a"), empty, call("b"), { type: "function_call_output", call_id: "a", output: "done" }, empty];
+  const before = structuredClone(input), messages = responsesToChat({ model: "model", input }).messages;
+  assert.equal(messages.length, 2);assert.deepEqual(messages[0].tool_calls.map(call => call.id), ["a", "b"]);
+  assert.equal(messages[1].role, "tool");assert.deepEqual(input, before);
+  assert.deepEqual(responsesToChat({ model: "model", input: [empty] }).messages, []);
+  for (const item of [{ ...empty, summary: [{ type: "summary_text", text: "reason" }] }, { ...empty, encrypted_content: "opaque" },
+    { ...empty, content: [{ type: "reasoning_text", text: "reason" }] }, { ...empty, extension: "unknown" }, { type: "reasoning", summary: null }])
+    assert.throws(() => responsesToChat({ model: "model", input: [item] }), { code: "ccdx_responses_chat_incompatible" });
+});
+
 test("Chat conversion preserves reasoning effort, validates advertised levels and rejects lost semantics", () => {
   const base = { model: "synthetic-chat", input: "hello" };
   for (const effort of ["none", "minimal", "low", "medium", "high", "xhigh", "max"]) {

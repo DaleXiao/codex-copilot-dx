@@ -671,3 +671,29 @@ input[role="switch"]:disabled { opacity: .5; cursor: wait; }
 .image-model-choice { display: flex; align-items: center; gap: 8px; overflow-wrap: anywhere; }
 .image-model-choice input { flex: 0 0 auto; }
 .image-metrics { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+
+.tool-style { display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);white-space:nowrap; }
+.tool-style select { max-width:160px; }
+.tool-stage { display:grid;grid-template-columns:minmax(180px,250px) minmax(0,1fr);align-items:center;gap:24px;min-height:230px; }
+.tool-visual,.tool-content { min-width:0; }
+.tool-orbit { width:100%;height:190px;position:relative; }
+.tool-orbit canvas { display:block;width:100%;height:100%; }
+.tool-stage[data-style="grid"] .tool-orbit { max-height:140px; }
+.tool-stage[data-style="off"] { grid-template-columns:1fr;min-height:110px; }
+.tool-stage[data-style="off"] .tool-visual { display:none; }
+.tool-narration { margin:0;min-height:24px;text-align:center;color:var(--text);font-size:12px;line-height:1.7; }
+.tool-context { color:var(--muted);font-size:11px;line-height:1.6;margin:0 0 16px; }
+.tool-entry { display:grid;grid-template-columns:18px minmax(0,1fr) auto;gap:10px;align-items:center;min-height:48px;padding-block:8px;border-bottom:1px solid var(--border); }
+.tool-entry:last-child { border-bottom:0; }
+.tool-name { font-size:12px; }
+.tool-entry > span:last-child { color:var(--muted);font-size:11px;white-space:nowrap; }
+.tool-mark { display:inline-block;width:7px;height:7px;border:1px solid var(--accent);border-radius:50%; }
+.tool-entry[data-state="preparing"] .tool-mark { background:var(--accent); }
+.tool-entry[data-state="returned"] .tool-mark { width:9px;height:5px;border-top:0;border-right:0;border-radius:0;transform:rotate(-45deg); }
+.tool-technical { margin:12px 0 0;color:var(--muted);font-size:11px; }
+.tool-technical p { overflow-wrap:anywhere;line-height:1.7;margin:6px 0; }
+#tool-cursor { display:inline-block;animation:tool-cursor 1s steps(1) infinite; }
+#tool-activity[data-paused="true"] #tool-cursor { animation:none; }
+@keyframes tool-cursor { 50% { opacity:0; } }
+@media(max-width:620px) { .tool-stage { grid-template-columns:1fr;gap:8px; }.tool-visual { width:100%;max-width:330px;margin:auto; }.tool-content { padding-bottom:8px; }.tool-context { margin-bottom:4px; } }
+@media(prefers-reduced-motion:reduce) { #tool-cursor { animation:none; } }

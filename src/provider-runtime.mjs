@@ -1,7 +1,8 @@
 import { isImageModel, imageModelCatalog } from "./image-models.mjs";
 import fs from "node:fs";
 import { providerDescriptors } from "./provider-descriptors.mjs";
-import { autoReviewPreference, writeAutoReviewModel } from "./user-settings.mjs";
+import { autoReviewPreference, writeAutoReviewModel, servicePreferences } from "./user-settings.mjs";
+import { createContextCompactionService } from "./context-compaction.mjs";
 import { autoReviewReasoningEfforts, DEFAULT_CODEX_AUTO_REVIEW_MODEL, responsesModelIdsFromCopilotModels } from "./models.mjs";
 import { publicModelCatalog } from "./provider-metadata.mjs";
 import { publicCopilotModelCatalog } from "./live-models.mjs";
@@ -26,8 +27,9 @@ const unavailable = reason => Object.assign(new Error(`Microsoft 365 is unavaila
 // image configuration or each other's credentials.
 export function createProviderRuntime(options = {}) {
   options = { ...options, corePort: options.corePort ?? Number((options.env || process.env).ADAPTER_PORT || 2026) };
+  const compaction = options.compaction || createContextCompactionService({ enabled() { try { return servicePreferences(options).context_compaction_enabled; } catch { return false; } } });
   let connections;
-  const legacy = createBuiltinProviderRuntime({ ...options, managedClaude: () => connections?.managesClaude() !== false,
+  const legacy = createBuiltinProviderRuntime({ ...options, compaction, managedClaude: () => connections?.managesClaude() !== false,
     privacy: { wrap: (fn, context) => connections?.privacy.wrap(fn, context) || fn },
     onClaudeReady: () => connections?.syncSourceClients("m365") });
   connections = createConnectionRuntime({ ...options, legacy });return connections;
@@ -35,7 +37,7 @@ export function createProviderRuntime(options = {}) {
 
 function createBuiltinProviderRuntime({ githubClient, githubRegistry, refreshGithubCatalog, githubCredentialFingerprint = "", githubClientConfigured = true, home, env = process.env, platform = process.platform,
   corePort = Number(env.ADAPTER_PORT || 2026), log = () => {}, createM365, startGateway, configureClients, restoreClients,
-  discoverM365 = requestM365Accounts, managedClaude, onClaudeReady, preserveClientConfiguration, privacy } = {}) {
+  discoverM365 = requestM365Accounts, managedClaude, onClaudeReady, preserveClientConfiguration, privacy, compaction } = {}) {
   const options = { home, env, platform }, github = { ...createGithubProvider({ client: githubClient,
     profileId: () => { const value = typeof githubCredentialFingerprint === "function" ? githubCredentialFingerprint() : githubCredentialFingerprint;
       return value ? `codex:${value}` : "codex"; } }), registry: githubRegistry };
@@ -87,7 +89,7 @@ function createBuiltinProviderRuntime({ githubClient, githubRegistry, refreshGit
         const apiKey = ensureM365GatewayKey({ ...options, create: !preserveClientConfiguration?.() });
         if (!gateway) {
           const start = startGateway || (await import("./claude-gateway.mjs")).createClaudeGateway;
-          const opened = await start({ privacy, provider: m365, apiKey, port: corePort, env, log, performance: claudePerformance,
+          const opened = await start({ privacy, compaction, provider: m365, apiKey, port: corePort, env, log, performance: claudePerformance,
             onRequest({ client }) { lastClients[client] = new Date().toISOString(); } });
           if (closed || !enabled) { await opened.close();return null; }
           gateway = opened;
@@ -154,7 +156,7 @@ function createBuiltinProviderRuntime({ githubClient, githubRegistry, refreshGit
       if (closed) throw unavailable("m365_runtime_closed");
       if (candidate.models("claude").length) {
         const start = startGateway || (await import("./claude-gateway.mjs")).createClaudeGateway;
-          opened = await start({ privacy, provider: candidate, apiKey: ensureM365GatewayKey(options), port: corePort, env, log, performance: claudePerformance,
+          opened = await start({ privacy, compaction, provider: candidate, apiKey: ensureM365GatewayKey(options), port: corePort, env, log, performance: claudePerformance,
           onRequest({ client }) { lastClients[client] = new Date().toISOString(); } });
       }
       candidate.commitSelection(discovered.binding);
@@ -210,6 +212,7 @@ function createBuiltinProviderRuntime({ githubClient, githubRegistry, refreshGit
     return snapshot();
   }
   return {
+    compaction,
     claudePerformance,
     source: id => sources.get(id),
     async pauseM365() {

@@ -4,7 +4,7 @@
     const theme = () => globalThis.ccdxDashboardTheme;
     const backupKey = "ccdx.dashboard.preferences-backup";
     const fields = { terminal_color_theme: "terminal-color-theme", terminal_animation_enabled: "setting-terminal_animation_enabled",
-      open_webui: "setting-open_webui", nightly_updates: "nightly-update" };
+      open_webui: "setting-open_webui", nightly_updates: "nightly-update", context_compaction_enabled: "setting-context_compaction_enabled" };
     let base, draft = {}, appearance, appearanceBase, pending, timer, error = null, conflict = false, version = 0, dialog, dialogRevision, resetting = false, retrying = false, locks = {}, terminalMode;
     const dirty = () => Object.keys(draft).length + (appearance ? 1 : 0);
     const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);

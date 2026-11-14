@@ -32,7 +32,7 @@ export function apiCatalog(config, env = process.env) {
     supported_endpoints: model.protocols.map(api => paths[api]), model_picker_enabled: true, policy: { state: "enabled" },
     capability, protocol_capabilities }); });
 }
-export function createApiProvider({ config, secrets, env = process.env, platform = process.platform, networkFactory = createApiNetwork, modelDisplay = () => ({}), now = Date.now } = {}) {
+export function createApiProvider({ config, secrets, env = process.env, platform = process.platform, networkFactory = createApiNetwork, modelDisplay = () => ({}), now = Date.now, errorCapture } = {}) {
   const cooldowns = Object.fromEntries(["messages", "responses", "chat"].map(protocol => [protocol, createProviderCooldown({ now })]));
   const catalog = apiCatalog(config, env);
   const fingerprint = config.key_env ? createHash("sha256").update(env[config.key_env] || "").digest("hex") : "";
@@ -107,7 +107,16 @@ export function createApiProvider({ config, secrets, env = process.env, platform
         const schemaCandidate = api === "messages" && !options.countTokens && [400, 422].includes(result.status)
           && !options.compatibilityRetried && hasRootToolSchema(body);
         if (!adapted && !schemaCandidate) try { options.onUpstreamErrorHeaders?.(result.status); } catch { /* Optional admission release cannot hide the upstream response. */ }
-        const reason = await readSafeUpstreamReason(result, { signal: options.signal, missingCallId: Boolean(adapted), rootToolSchema: schemaCandidate });
+        const context = currentRequestContext();
+        const finishCapture = options.countTokens ? null : errorCapture?.claim(config.id, body?.model, api, result.status, context?.requestId);
+        let reason;
+        try {
+          reason = await readSafeUpstreamReason(result, { signal: options.signal, missingCallId: Boolean(adapted), rootToolSchema: schemaCandidate,
+            ...(finishCapture ? { diagnosticRedact: text => text.replaceAll(key, "[redacted]") } : {}) });
+        } finally {
+          const retained = finishCapture?.(reason?.diagnostic_message);
+          if (retained && reason?.diagnostic_message) context?.onHttpError?.({ diagnostic_message: reason.diagnostic_message });
+        }
         if (adapted && reason?.code === "ccdx_missing_call_id") {
           const recovered = await request(url, adapted, { ...options, bodyText: undefined, compatibilityRetried: true }, api);
           if (recovered.ok) Object.defineProperty(recovered, CALL_LESS_TOOL_RETRIED, { value: true });
@@ -132,8 +141,10 @@ export function createApiProvider({ config, secrets, env = process.env, platform
         if (/^\d{1,8}$/.test(retry || "")) safeHeaders["Retry-After"] = retry;
         else if (retry && Number.isFinite(Date.parse(retry))) safeHeaders["Retry-After"] = new Date(retry).toUTCString();
         const requestId=currentRequestContext()?.requestId;
-        const message=(reason?.message||"The source rejected the request (HTTP "+result.status+"); no recognised technical reason was returned.")+" Source: "+redactDiagnosticText(config.name||config.id)+". Model: "+redactDiagnosticText(body?.model||"unknown")+". API: "+api+"."+(requestId?" Request: "+requestId+".":"");
-        return new Response(JSON.stringify({ type: "error", error: { type: "api_error", code, message,
+        const contextOverflow = api === "messages" && ["context_length_exceeded", "context_window_exceeded"].includes(reason?.code);
+        const message=(contextOverflow ? "prompt is too long. " : "")+(reason?.message||"The source rejected the request (HTTP "+result.status+"); no recognised technical reason was returned.")+" Source: "+redactDiagnosticText(config.name||config.id)+". Model: "+redactDiagnosticText(body?.model||"unknown")+". API: "+api+"."+(requestId?" Request: "+requestId+".":"");
+        const errorType = api === "messages" && ["input_length_invalid", "context_length_exceeded", "context_window_exceeded"].includes(reason?.code) ? "invalid_request_error" : "api_error";
+        return new Response(JSON.stringify({ type: "error", error: { type: errorType, code, message,
           ...(reason ? { upstream_code: reason.code, ...(reason.parameter ? { param: reason.parameter } : {}), ...(reason.maximum ? { maximum: reason.maximum } : {}) } : {}) } }), { status: result.status, headers: safeHeaders });
       }
       return result;

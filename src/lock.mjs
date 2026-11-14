@@ -265,6 +265,7 @@ export async function withFileLock(lockPath, fn, {
   pollMs = 50,
   now = Date.now,
   fsImpl = fs,
+  platform = process.platform,
   processAlive = processIsAlive,
   signal,
 } = {}) {
@@ -290,7 +291,7 @@ export async function withFileLock(lockPath, fn, {
         pid: process.pid,
         owner,
         created_at: new Date().toISOString(),
-      }, fs);
+      }, fsImpl);
       if (lockPathExists(guardPath, fsImpl)) {
         fs.closeSync(fd);
         fd = null;
@@ -299,8 +300,14 @@ export async function withFileLock(lockPath, fn, {
       }
       break;
     } catch (e) {
-      if (e?.code !== "EEXIST") throw e;
       const nowMs = now();
+      if (e?.code !== "EEXIST") {
+        // Windows can deny creation while a previous lock is pending deletion.
+        // Retry only acquisition, within the original lock deadline.
+        if (platform !== "win32" || e?.code !== "EPERM" || nowMs - started >= timeoutMs) throw e;
+        await delay(Math.min(pollMs, Math.max(1, timeoutMs - (nowMs - started))), undefined, { signal });
+        continue;
+      }
       if (maybeRemoveStaleLock(lockPath, staleMs, nowMs, fsImpl, processAlive)) continue;
       if (nowMs - started >= timeoutMs) {
         throw new Error(`Timed out waiting for lock: ${lockPath}`);

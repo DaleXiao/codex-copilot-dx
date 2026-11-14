@@ -8,9 +8,66 @@ import {summarizeUsage} from "../src/usage-store.mjs";
 import {runWithRequestContext} from "../src/request-context.mjs";
 import {createStreamPerformanceMetrics} from "../src/stream-performance.mjs";
 import {createGoogleResponseObserver} from "../src/antigravity-usage.mjs";
+import {createContextCompactionService} from "../src/context-compaction.mjs";
 
 const catalog={data:["gemini-4-carbon","gemini-4-argon"].map(id=>({id,supported_endpoints:["/chat/completions"],capabilities:{supports:{vision:true,reasoning_effort:["low","medium","high"]},limits:{max_context_window_tokens:1000000,max_output_tokens:64000}}}))};
 const alias=antigravityCopilotModels(catalog)[2].id;
+
+test("native Google and Copilot tool results update the same isolated activity contract",async()=>{
+  for(const native of [true,false]){
+    let first=true;const performance=createStreamPerformanceMetrics({routeNames:["antigravity"]});
+    const f=fixture({fetchGoogle:async()=>Response.json({response:{candidates:[{content:{role:"model",parts:first?(first=false,[{functionCall:{id:"native-tool",name:"read_file",args:{private:"not retained"}}}]):[{text:"continued"}]},finishReason:"STOP"}]}}),
+      client:{chatCompletions:async()=>{const message=first?(first=false,{tool_calls:[{id:"tool-one",type:"function",function:{name:"read_file",arguments:"{}"}}]}):{content:"continued"};return Response.json({choices:[{message,finish_reason:message.tool_calls?"tool_calls":"stop"}]});}}});
+    const call=async value=>{
+      const tracker=performance.begin("antigravity",{application:"gemini_app"});
+      const result=await runWithRequestContext({streamPerformance:tracker},()=>invoke(f.handler,value,{url:"/antigravity/v1internal:generateContent"}).done);
+      tracker.finish({statusCode:result.status});return result;
+    };
+    const initial=body(native?"native-model":alias);initial.request.labels={root_cascade_id:"observed-tool-session"};
+    initial.request.tools=[{functionDeclarations:[{name:"read_file",parameters:{type:"OBJECT",properties:{}}}]}];
+    const response=await call(initial);assert.equal(response.status,200);assert.equal(performance.snapshot().tool_activity.items[0].state,"waiting");
+    const issued=JSON.parse(response.text).response.candidates[0].content.parts.find(part=>part.functionCall).functionCall;
+    const next=structuredClone(initial);next.request.contents.push({role:"model",parts:[{functionCall:issued}]},{role:"user",parts:[{functionResponse:{id:issued.id,name:issued.name,response:{result:"not retained"}}}]});
+    assert.equal((await call(next)).status,200);assert.equal(performance.snapshot().tool_activity.items[0].state,"returned");
+    assert.doesNotMatch(JSON.stringify(performance.snapshot().tool_activity),/not retained|observed-tool-session/);
+  }
+});
+test("Copilot Antigravity streaming keeps parallel calls distinct across separate chunks",async()=>{
+  let requests=0;const performance=createStreamPerformanceMetrics({routeNames:["antigravity"]});
+  const toolCalls=["read_file","search_files"].map((name,index)=>({index,id:`parallel-${index}`,type:"function",function:{name,arguments:"{}"}}));
+  const f=fixture({client:{chatCompletions:async()=>requests++?sse("continued"):new Response('data: '+JSON.stringify({choices:[{delta:{tool_calls:toolCalls},finish_reason:"tool_calls"}]})+'\n\ndata: [DONE]\n\n',{headers:{"content-type":"text/event-stream"}})}});
+  const call=async value=>{const tracker=performance.begin("antigravity",{application:"gemini_app"});const result=await runWithRequestContext({streamPerformance:tracker},()=>invoke(f.handler,value).done);tracker.finish({statusCode:result.status});return result;};
+  const initial=body();initial.request.labels={root_cascade_id:"parallel-tool-session"};initial.request.tools=[{functionDeclarations:toolCalls.map(call=>({name:call.function.name,parameters:{type:"OBJECT",properties:{}}}))}];
+  const result=await call(initial);assert.equal(result.status,200);assert.equal(performance.snapshot().tool_activity.items.length,2);
+  const parts=result.text.split('\n').filter(line=>line.startsWith('data: ')).flatMap(line=>JSON.parse(line.slice(6)).response?.candidates?.[0]?.content?.parts||[]).filter(part=>part.functionCall);
+  assert.equal(parts.length,2);const next=structuredClone(initial);next.request.contents.push({role:"model",parts},{role:"user",parts:parts.map(part=>({functionResponse:{id:part.functionCall.id,name:part.functionCall.name,response:{result:"complete"}}}))});
+  assert.equal((await call(next)).status,200);assert.ok(performance.snapshot().tool_activity.items.every(row=>row.state==="returned"));
+});
+
+test("known Google compaction stays on Google and recovers within the same model",async()=>{
+  const calls=[],records=[],compaction=createContextCompactionService({recordUsageFn:record=>records.push(record)});
+  const f=fixture({compaction,resolveCompactionSource:()=>({source:"google",model:"native-bound-model"}),fetchGoogle:async(url,request)=>{
+    calls.push({url,body:JSON.parse(request.body)});
+    if(calls.length===1)return Response.json({error:{message:"The input token count (20000) exceeds the maximum number of tokens allowed (16000)."}},{status:400});
+    return Response.json({response:{candidates:[{index:0,content:{role:"model",parts:[{text:"verified continuation"}]},finishReason:"STOP"}],usageMetadata:{promptTokenCount:7,candidatesTokenCount:2,cachedContentTokenCount:0}}});
+  }});
+  const request=body("native-default","summarization");request.request.contents=[{role:"user",parts:[{text:"keep requirements"}]},{role:"model",parts:[{text:"verified old facts"}]},{role:"user",parts:[{text:"compact"}]}];
+  const result=await invoke(f.handler,request,{url:"/antigravity/v1internal:generateContent"}).done;
+  assert.equal(result.status,200);assert.equal(calls.length,3);assert.equal(f.copilot.length,0);assert.ok(calls.every(call=>call.body.model==="native-bound-model"));
+  assert.match(calls[1].url,/streamGenerateContent/);assert.deepEqual(calls[1].body.request.generationConfig.thinkingConfig,request.request.generationConfig.thinkingConfig);
+  assert.equal(records.length,1);assert.equal(records[0].provider,"google");assert.equal(records[0].purpose,"compaction");assert.equal(f.records[0].provider,"google");
+});
+
+test("known Copilot compaction retains the selected reasoning alias instead of another background model",async()=>{
+  const calls=[],compaction=createContextCompactionService({recordUsageFn(){}});
+  const f=fixture({compaction,resolveCompactionSource:()=>({source:"github",model:alias}),client:{chatCompletions:async(value)=>{
+    calls.push(value);if(calls.length===1)return Response.json({error:{type:"invalid_request_error",message:"Range of input length should be [1, 1048576]"}},{status:400});
+    return Response.json({model:value.model,usage:{prompt_tokens:7,completion_tokens:2},choices:[{index:0,message:{content:"verified continuation"},finish_reason:"stop"}]});
+  }}});
+  const request=body("native-default","summarization");request.request.contents=[{role:"user",parts:[{text:"keep requirements"}]},{role:"model",parts:[{text:"verified old facts"}]},{role:"user",parts:[{text:"compact"}]}];
+  const result=await invoke(f.handler,request,{url:"/antigravity/v1internal:generateContent"}).done;
+  assert.equal(result.status,200);assert.equal(f.google.length,0);assert.equal(calls.length,3);assert.ok(calls.every(call=>call.model==="gemini-4-carbon"&&call.reasoning_effort==="high"));
+});
 const body=(model=alias,requestType="agent")=>({model,requestType,request:{contents:[{role:"user",parts:[{text:"fixture"}]}],generationConfig:{thinkingConfig:{includeThoughts:true,thinkingBudget:4096}}}});
 const sse=(content="ok")=>new Response('data: '+JSON.stringify({choices:[{delta:{content},finish_reason:"stop"}]})+'\n\ndata: [DONE]\n\n');
 function fixture(options={}){

@@ -1,3 +1,4 @@
+import { markToolActivity } from "./stream-performance.mjs";
 import { responses as copilotResponses } from "./copilot.mjs";
 import {
   logRequestFailure,
@@ -50,6 +51,7 @@ import {
 } from "./stream-performance.mjs";
 import { safeUpstreamResponseHeaders } from "./upstream-headers.mjs";
 import { recordResponsesUsage } from "./usage-store.mjs";
+import { COMPACTION_USAGE_RECORDED } from "./context-compaction.mjs";
 import { status } from "./status.mjs";
 
 const MAX_SSE_BUFFER_BYTES = loadRuntimeConfig().maxSseBufferBytes;
@@ -123,6 +125,7 @@ function inspectResponseSseEvent(state, eventName, data) {
     );
   }
   const eventType = event.type || (event.error ? "error" : eventName);
+  if (event.item || event.response?.output) markToolActivity(event);
   const previousSequence = state.lastSequence;
   state.lastSequence = event.sequence_number ?? previousSequence + 1;
   if (event.response && typeof event.response === "object" && !Array.isArray(event.response)) {
@@ -130,7 +133,17 @@ function inspectResponseSseEvent(state, eventName, data) {
     if (Number.isSafeInteger(event.response.created_at) && event.response.created_at >= 0) state.response.created_at = event.response.created_at;
     if (typeof event.response.model === "string" && event.response.model) state.response.model = event.response.model;
   }
-  const changed = normalizeMessageIds(state, event, eventType);
+  let changed = normalizeMessageIds(state, event, eventType);
+  if (state.protectCompactionResult) {
+    if (event.item?.type === "compaction") {
+      const protectedItem = state.protectCompactionResult({ output: [event.item] }).output[0];
+      if (protectedItem !== event.item) { event.item = protectedItem;changed = true; }
+    }
+    if (Array.isArray(event.response?.output)) {
+      const protectedResponse = state.protectCompactionResult(event.response);
+      if (protectedResponse !== event.response) { event.response = protectedResponse;changed = true; }
+    }
+  }
   const outputTokens = event.response?.usage?.output_tokens ?? event.usage?.output_tokens;
   if (outputTokens !== undefined) markOutputTokens(outputTokens);
   const inputTokens = event.response?.usage?.input_tokens ?? event.usage?.input_tokens;
@@ -400,7 +413,7 @@ function parseSuccessfulResponsesResult(text) {
 function storeCompletedResponse(reqContext, completed) {
   if (!completed) return;
   rememberResponseHistory(reqContext, reqContext.privacyRestore?.(completed.response) || completed.response);
-  recordResponsesUsage({
+  if (!reqContext.compactionUsageRecorded) recordResponsesUsage({
     surface: reqContext.surface,
     mode: "stream",
     model: reqContext.body?.model,
@@ -501,6 +514,7 @@ async function proxyStreamingResponses(opened, res, upstream, options) {
       lastSequence: -1,
       toolArgumentGuard: new ToolArgumentDeltaGuard(),
       messageIds: new Map(),
+      protectCompactionResult: reqContext.protectCompactionResult,
     };
     const transformer = createResponseSseTransformer(streamState);
     let holdPrelude = streamRetryEligible;
@@ -656,12 +670,14 @@ export async function proxyCopilotResponses(reqContext, req, res, upstream = cop
         label: "Copilot Responses error body",
       });
     if (resp.ok && reqContext.surface === "responses_compact") {
-      const response = parseResponsesCompactionResult(
+      let response = parseResponsesCompactionResult(
         compactionInputWithoutTrigger(reqContext.body.input),
         data,
       );
+      response = reqContext.protectCompactionResult?.(response) || response;
+      markToolActivity(response);
       rememberResponseHistory(reqContext, reqContext.privacyRestore?.(response) || response);
-      recordResponsesUsage({
+      if (!resp[COMPACTION_USAGE_RECORDED]) recordResponsesUsage({
         surface: reqContext.surface,
         mode: "json",
         model: reqContext.body?.model,
@@ -709,8 +725,9 @@ export async function proxyCopilotResponses(reqContext, req, res, upstream = cop
           continue;
         }
       }
+      markToolActivity(response);
       rememberResponseHistory(reqContext, reqContext.privacyRestore?.(response) || response);
-      recordResponsesUsage({
+      if (!reqContext.compactionUsageRecorded) recordResponsesUsage({
         surface: reqContext.surface,
         mode: "json",
         model: reqContext.body?.model,

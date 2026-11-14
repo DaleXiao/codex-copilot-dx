@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { comparePerformancePairs, qualifyPerformanceControl, summarizePerformanceSamples, applyPerformanceRepeatability } from "../scripts/privacy-performance-analysis.mjs";
+import { comparePerformancePairs, qualifyPerformanceControl, summarizePerformanceSamples, applyPerformanceRepeatability, PRIVACY_PERFORMANCE_POLICY } from "../scripts/privacy-performance-analysis.mjs";
 
 const pairs = (ratio, count = 20) => Array.from({ length: count }, (_, i) => ({ before_ms: 100 + i * 10, after_ms: (100 + i * 10) * ratio }));
 
@@ -40,14 +40,29 @@ test("phase comparisons preserve matching trials despite speed drift", () => {
   assert.ok(result.comparisons[0].phases.cold.confidence_coverage >= .95);
 });
 
-test("repeatability equivalence is limited to the approved phases and measured A/A upper bound", () => {
+test("repeatability equivalence stays on hot reuse and cannot override either append limit", () => {
   const phase = (low, high) => ({ interval: { low, high }, decision: "inconclusive" });
   const candidate = { decision: "inconclusive", comparisons: [{ workload: "one", phases: { cold: phase(.99, 1.11), append: phase(.99, 1.02), hot: phase(.98, 1.03) } }] };
   const control = { decision: "qualified", comparisons: [{ workload: "one", phases: { cold: phase(.98, 1.04), append: phase(.98, 1.025), hot: phase(.98, 1.02) } }] };
   const result = applyPerformanceRepeatability(candidate, control);
   assert.equal(result.comparisons[0].phases.cold.decision, "inconclusive");
-  assert.equal(result.comparisons[0].phases.append.decision, "equivalent");
+  assert.equal(result.comparisons[0].phases.append.decision, "inconclusive");
   assert.equal(result.comparisons[0].phases.hot.decision, "inconclusive");
   assert.equal(result.decision, "inconclusive");
   assert.throws(() => applyPerformanceRepeatability(candidate, { ...control, decision: "unqualified" }));
+});
+
+test("append requires both paired relative and absolute interval limits", () => {
+  assert.equal(PRIVACY_PERFORMANCE_POLICY.tolerances.append, .05);
+  assert.equal(PRIVACY_PERFORMANCE_POLICY.absolute_tolerances_ms.append, .5);
+  assert.equal(PRIVACY_PERFORMANCE_POLICY.tolerances.hot, 0);
+  const options = { tolerance: .05, absoluteToleranceMs: .5 };
+  const durationPairs = (before, difference) => Array.from({ length: 20 }, () => ({ before_ms: before, after_ms: before + difference }));
+  assert.equal(comparePerformancePairs(durationPairs(10, .4), options).decision, "pass");
+  assert.equal(comparePerformancePairs(durationPairs(1, .1), options).decision, "regression", "Small absolute change cannot bypass the relative limit");
+  assert.equal(comparePerformancePairs(durationPairs(100, 1), options).decision, "regression", "Small relative change cannot bypass the absolute limit");
+  const uncertain = durationPairs(10, .4).map((pair, i) => ({ ...pair, after_ms: pair.before_ms + (i % 2 ? .8 : .2) }));
+  assert.equal(comparePerformancePairs(uncertain, options).decision, "inconclusive");
+  assert.equal(comparePerformancePairs(durationPairs(10, .1).slice(0, 5), options).absolute.interval.high, null);
+  for (const absoluteToleranceMs of [-1, NaN, Infinity]) assert.throws(() => comparePerformancePairs(durationPairs(10, .1), { ...options, absoluteToleranceMs }));
 });

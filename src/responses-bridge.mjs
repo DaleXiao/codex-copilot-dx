@@ -1,3 +1,4 @@
+import { markToolActivity } from "./stream-performance.mjs";
 import { randomUUID } from "node:crypto";
 import { chatCompletions } from "./copilot.mjs";
 import { webStreamLines } from "./stream.mjs";
@@ -75,6 +76,13 @@ function chatCompatibilityError(kind, itemType) {
     },
   };
   return error;
+}
+
+function emptyReasoningItem(item) {
+  return item?.type === "reasoning" && Array.isArray(item.summary) && item.summary.length === 0
+    && (item.content === undefined || Array.isArray(item.content) && item.content.length === 0)
+    && item.encrypted_content == null
+    && Object.keys(item).every(key => ["type", "id", "status", "summary", "content", "encrypted_content"].includes(key));
 }
 
 export function responsesToChat(body, { reasoningEfforts, cacheSupport } = {}) {
@@ -155,11 +163,9 @@ export function responsesToChat(body, { reasoningEfforts, cacheSupport } = {}) {
           index += 1;
         }
         index -= 1;
-        messages.push({
-          role: "assistant",
-          content: null,
-          tool_calls: toolCalls,
-        });
+        const previous = messages.at(-1);
+        if (previous?.tool_calls) previous.tool_calls.push(...toolCalls);
+        else messages.push({ role: "assistant", content: null, tool_calls: toolCalls });
       } else if (item?.type === "function_call_output") {
         if (typeof item.call_id === "string" && item.call_id.trim()) {
           messages.push({ role: "tool", tool_call_id: item.call_id, content: typeof item.output === "string" ? item.output : JSON.stringify(item.output) });
@@ -168,6 +174,8 @@ export function responsesToChat(body, { reasoningEfforts, cacheSupport } = {}) {
           if (!adapted) throw chatCompatibilityError("input item", "function_call_output");
           messages.push({ role: "user", content: messageContent(adapted.input[0].content) });
         }
+      } else if (emptyReasoningItem(item)) {
+        continue;
       } else {
         throw chatCompatibilityError("input item", item?.type);
       }
@@ -376,6 +384,7 @@ export async function forwardToChat(chatReq, emitEvent, onDone, onError, options
   emitEvent = async (...args) => {
     const written = await configuredEmitEvent(...args);
     if (written === false) throw downstreamClosed;
+    if (args[1]?.item || args[1]?.response?.output) markToolActivity(args[1]);
     return written;
   };
   let performanceOutputSeen = false;

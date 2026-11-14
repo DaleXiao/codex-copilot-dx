@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import {createHmac} from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import {execFile} from "node:child_process";
@@ -24,7 +25,13 @@ export function createAntigravityRuntime({client,models=()=>[],privacy,home=os.h
   exec=execute,searchFn,imageFn,guardSource,googleFetch,acquireRequest,readToken=()=>readSavedGithubToken(home),...timeouts}={}) {
   const options={home,env},guard=createConversationSourceGuard(options);
   const web=searchFn?null:createCopilotWeb({client,readToken});
-  let app={status:"unknown"},route=null,lastOperation=null;
+  let app={status:"unknown"},route=null,lastOperation=null,compactionSalt;const conversationSources=new Map();
+  const conversationKey=body=>{
+    const id=body?.request?.labels?.root_cascade_id||body?.request?.labels?.cascade_id;
+    if(typeof id!=="string"||!id||id.length>160||/[\u0000-\u001f\u007f]/.test(id))return null;
+    compactionSalt||=readClientGatewayKeys({...options,create:false}).codex;
+    return createHmac("sha256",compactionSalt).update("antigravity-compression\0"+id).digest("hex");
+  };
   const settings=()=>{
     const saved=readUserSettings({...options,strict:true});
     if(saved[key]!==undefined&&typeof saved[key]!=="boolean")throw httpError("Invalid Gemini integration setting",409);
@@ -39,7 +46,19 @@ export function createAntigravityRuntime({client,models=()=>[],privacy,home=os.h
     return guard("gemini",profile,{messages:[]},{session_id:id},readClientGatewayKeys({...options,create:false}).codex,undefined,signal);
   });
   const handler=createAntigravityHandler({client,models:available,selectedModels:()=>settings().selected_models,enabled:()=>settings().configured,privacy,searchFn:searchFn||web.search,
-    imageFn:imageFn||createAntigravityImages({client,models:available,privacy}),guardSource:sourceGuard,fetchGoogle:googleFetch,acquireRequest,...timeouts});
+    imageFn:imageFn||createAntigravityImages({client,models:available,privacy}),guardSource:sourceGuard,compactionProfile:()=>githubTokenFingerprint(readToken()||""),
+    rememberConversationSource(body,source){const key=conversationKey(body);if(!key||typeof body.model!=="string"||!/^[\w][\w./:@+-]{0,159}$/.test(body.model))return;conversationSources.delete(key);conversationSources.set(key,{source,model:body.model});while(conversationSources.size>256)conversationSources.delete(conversationSources.keys().next().value)},
+    async resolveCompactionSource(body){
+      const key=conversationKey(body);if(!key)return null;if(conversationSources.has(key))return conversationSources.get(key);
+      const id=body.request.labels.root_cascade_id||body.request.labels.cascade_id,owner=await guard.owner("gemini",id,compactionSalt);
+      const profileHash=value=>createHmac("sha256",compactionSalt).update(value).digest("hex");
+      if(owner===profileHash("google:gemini-native")){
+        if(body.model.startsWith("ccdx-copilot-"))throw httpError("The conversation belongs to another model source",409);
+        return{source:"google",model:body.model};
+      }
+      if(owner===profileHash("codex:"+githubTokenFingerprint(readToken()||"")))return{source:"github",background:true};
+      return null;
+    },fetchGoogle:googleFetch,acquireRequest,...timeouts});
   function snapshot(){
     const config=settings(),sourceEnabled=readAccessSettings(options).providers.github,activity=handler.snapshot();
     const listed=antigravityCopilotModels(models()).map(({id,model,displayName,effort,maxTokens})=>({id,model,name:displayName,effort,context_window:maxTokens,selected:config.selected_models===null||config.selected_models.includes(id)}));
@@ -52,6 +71,7 @@ export function createAntigravityRuntime({client,models=()=>[],privacy,home=os.h
     const reload=config.enabled&&sourceEnabled?(activity.catalog_models===null?null:JSON.stringify([...activity.catalog_models].sort())!==JSON.stringify(expected)):false;
     return {source:"gemini_antigravity",...config,source_enabled:sourceEnabled,models_reload_required:reload,app,route_observed:handler.snapshot().observed,
       model_source:"Google + GitHub Copilot",background_source:"GitHub Copilot",ordinary_chat_source:"Google (unchanged)",
+      compaction_source:"Observed conversation source; existing background policy when unassigned",
       models:listed,model_groups:[...groups.values()],activity,last_operation:lastOperation};
   }
   async function action(input={},baseUrl){

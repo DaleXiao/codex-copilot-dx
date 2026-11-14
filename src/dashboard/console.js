@@ -59,7 +59,7 @@
     if (snapshot) render(snapshot);
     void refreshStatus();
     globalThis.ccdxDashboardActivity?.visibilityChanged();
-    globalThis.ccdxDashboardFlow?.visibilityChanged();
+    globalThis.ccdxDashboardFlow?.visibilityChanged();globalThis.ccdxToolActivity?.visibilityChanged();
     for (const item of document.querySelectorAll("[data-route]")) {
       if (item.dataset.route === next) item.setAttribute("aria-current", "page");else item.removeAttribute("aria-current");
     }

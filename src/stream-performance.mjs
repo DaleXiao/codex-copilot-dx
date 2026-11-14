@@ -5,6 +5,7 @@ import { applicationLabel } from "./request-application.mjs";
 import { createContextMetrics } from "./context-metrics.mjs";
 import { createChangeSignal } from "./activity-events.mjs";
 import { redactDiagnosticText } from "./diagnostic-text.mjs";
+import { createToolActivity, isToolActivityOutput } from "./tool-activity.mjs";
 
 const PERFORMANCE_ROUTES = Object.freeze(["responses", "responses_compact"]);
 const PREPARATION_STAGES = Object.freeze(["admission", "body", "history", "images", "serialization"]);
@@ -217,6 +218,7 @@ function routeSnapshot(route) {
 
 export function createStreamPerformanceMetrics({ now = () => performance.now(), wallNow = () => new Date().toISOString(), routeNames = PERFORMANCE_ROUTES } = {}) {
   const changes = createChangeSignal();
+  const toolActivity = createToolActivity({ now, changed: changes.changed });
   const routes = Object.fromEntries(routeNames.map((name) => [name, createRoutePerformance()]));
   const recentRequests = [];
   const contexts = createContextMetrics();
@@ -232,7 +234,7 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
       const activeId = ++activeSequence;
       const safeRequestId = typeof requestId === "string" && /^[a-zA-Z0-9_-]{1,80}$/.test(requestId) ? requestId : null;
       const client = applicationLabel(application);
-      const purposeLabel = requestPurpose(purpose);
+      let purposeLabel = requestPurpose(purpose);
       activeTotal++;
       let upstreamStartedAt = null;
       let firstOutputAt = null;
@@ -260,6 +262,9 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
       let terminalAt = null;
       const context = { payload_bytes: null, images: null, input_tokens: null, context_window_tokens: null, output_tokens: null, max_output_tokens_requested: null, max_output_tokens_sent: null };
       let stopReason = null;
+      let toolObserver = null;
+      const tools = () => toolObserver ||= toolActivity.request(() => ({ application: client, session,
+        provider: provider || currentRequestContext()?.provider, model: model === "other" ? currentRequestContext()?.requestedModel || model : model }));
       const elapsed = (time) => time === null ? null : Number(Math.max(0, time - requestStartedAt).toFixed(1));
       if (activeRequests.size < MAX_ACTIVE_REQUESTS) activeRequests.set(activeId, () => ({
         request_id: safeRequestId, session_id: session ? session.slice(0, 16) : null, application: client, purpose: purposeLabel, route: routeName, provider, model, phase,
@@ -299,6 +304,7 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
         },
         upstreamStarted(streaming = true) {
           if (finished) return;
+          if (attempts && toolObserver) { toolObserver.finish("unknown");toolObserver = null; }
           const time = now();
           attempts += 1;
           if (attemptTimings.length === 3) attemptTimings.splice(1, 1);
@@ -322,6 +328,7 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
         },
         upstreamActivity() {
           if (finished) return;
+          toolObserver?.activity();
           lastActivityAt = now();
           if (phase !== "upstream_stream") { phase = "upstream_stream";changes.changed(); }
         },
@@ -342,13 +349,16 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
           if (next !== model) { model = next;changes.changed(); }
         },
         setProvider: assignProvider,
+        setPurpose(value) { if (!finished) { purposeLabel = requestPurpose(value);changes.changed(); } },
         observeSession(key) { if (!finished && typeof key === "string" && /^[a-f0-9]{64}$/.test(key)) session = key; },
+        observeToolInput(body, protocol) { if (!finished && purposeLabel === "conversation" && toolActivity.size) tools().input(body, protocol); },
+        observeToolOutput(value, protocol) { if (!finished && purposeLabel === "conversation" && isToolActivityOutput(value, protocol)) tools().output(value, protocol); },
         attemptCount() { return attempts; },
         attemptTimings() { return attemptTimings.map(attempt => ({ ...attempt })); },
         observeContext(values) {
           if (finished || !values || typeof values !== "object") return;
           if (Number.isSafeInteger(values.cached_input_tokens) && values.cached_input_tokens >= 0) cachedInput = values.cached_input_tokens;
-          for (const key of [...Object.keys(context), "requested_model", "reasoning_effort_requested", "reasoning_effort_sent", "usage_state", "capability_revision", "capability_constraints", "privacy_count", "privacy_ms", "privacy_state", "privacy_pending_bytes", "privacy_new_bytes", "privacy_pending_windows", "privacy_wait_budget_ms", "privacy_error", "privacy_event_type", "privacy_channel_type", "privacy_buffered_bytes", "privacy_terminal_seen", "client_tool_errors_received"]) {
+          for (const key of [...Object.keys(context), "compaction", "requested_model", "reasoning_effort_requested", "reasoning_effort_sent", "usage_state", "capability_revision", "capability_constraints", "privacy_count", "privacy_ms", "privacy_state", "privacy_pending_bytes", "privacy_new_bytes", "privacy_pending_windows", "privacy_wait_budget_ms", "privacy_error", "privacy_event_type", "privacy_channel_type", "privacy_buffered_bytes", "privacy_terminal_seen", "client_tool_errors_received"]) {
             const value = values[key];
             if (["reasoning_effort_requested", "reasoning_effort_sent"].includes(key)) { if (["none", "minimal", "low", "medium", "high", "xhigh", "max"].includes(value)) context[key] = value;continue; }
             if (key === "requested_model") { if (typeof value === "string" && /^[\w][\w./:@+-]{0,159}$/.test(value) && redactDiagnosticText(value) === value) context[key] = value;continue; }
@@ -389,6 +399,7 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
           changes.changed();
           failed ||= finishFailed;
           const outcome = terminalOutcome || (aborted ? "cancelled" : "unknown");
+          toolObserver?.finish(aborted ? "cancelled" : statusCode >= 400 ? "failed" : outcome);
           const emptyStreamCompletion = outcome === "completed" && upstreamStartedAt !== null
             && firstOutputAt === null && outputTokens === 0;
           if (emptyStreamCompletion) route.empty_stream_completions += 1;
@@ -463,6 +474,7 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
     contextSnapshot: () => contexts.snapshot(),
     activitySnapshot() {
       return {
+        tool_activity: toolActivity.snapshot(),
         by_route: Object.fromEntries(routeNames.map(name => [name, {
           terminal_outcomes: { totals: { ...routes[name].terminalTotals } },
           by_provider: Object.fromEntries([...routes[name].providers].map(([id, value]) => [id, {
@@ -476,6 +488,7 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
     },
     snapshot() {
       return {
+        tool_activity: toolActivity.snapshot(),
         by_route: Object.fromEntries(routeNames.map((name) => [name, routeSnapshot(routes[name])])),
         active_requests: [...activeRequests.values()].map(snapshot => snapshot()),
         active_total: activeTotal,
@@ -555,4 +568,8 @@ export function markResponseErrorOrigin(origin) {
 
 export function markResponseTerminal(outcome, options) {
   tracker()?.terminal?.(outcome, options);
+}
+
+export function markToolActivity(value, protocol = "responses") {
+  tracker()?.observeToolOutput?.(value, protocol);
 }

@@ -65,7 +65,7 @@ export function claudeSharedCapabilityPlan({ app = [], code = [], support = {} }
   if (capabilities.length > 8000) limitations.push({ code: "capability_list_limited" });
   return { state: consumers.length ? "planned" : "not_configured", context_tokens: context || null,
     preserve_refs: preserveRefs,
-    preserve_fields: [...(!knownAdapters ? ["env.CLAUDE_CODE_MAX_CONTEXT_TOKENS"] : []), ...(!knownAdapters || support.app_contract && !support.app_contract.fields.output ? ["env.CLAUDE_CODE_MAX_OUTPUT_TOKENS"] : [])],
+    preserve_fields: [...(!knownAdapters ? ["env.CLAUDE_CODE_MAX_CONTEXT_TOKENS", "env.CLAUDE_CODE_GATEWAY_HINT_HEADERS"] : []), ...(!knownAdapters || support.app_contract && !support.app_contract.fields.output ? ["env.CLAUDE_CODE_MAX_OUTPUT_TOKENS"] : [])],
     output_tokens: output && knownAdapters && (!support.app_contract || support.app_contract.fields.output) && consumers.every(({ model }) => model.capability?.values.max_output_tokens) ? Math.min(output, 128000) : null, budgets: context ? budgets : {},
     capabilities: capabilities.length <= 8000 ? capabilities : "", limitations };
 }
@@ -82,8 +82,9 @@ export function syncClaudeCapabilities(plan, options = {}) {
   const journal = readM365Json(m365Paths(options).ownership, { version: 1, operations: [] });
   const ownsCodeBase = journal.operations?.some(op => op.file === paths.code && op.keys?.join(".") === "env.ANTHROPIC_BASE_URL" && op.after === base);
   const conflict = Boolean(env.ANTHROPIC_BASE_URL || base && (!/^http:\/\/127\.0\.0\.1:\d+\/anthropic$/.test(base) || !ownsCodeBase));
-  const ownedFields = ["env.CLAUDE_CODE_MAX_CONTEXT_TOKENS", "env.CLAUDE_CODE_MAX_OUTPUT_TOKENS", "env.CLAUDE_CODE_MODEL_CAPABILITIES"];
+  const ownedFields = ["env.CLAUDE_CODE_MAX_CONTEXT_TOKENS", "env.CLAUDE_CODE_MAX_OUTPUT_TOKENS", "env.CLAUDE_CODE_MODEL_CAPABILITIES", "env.CLAUDE_CODE_GATEWAY_HINT_HEADERS"];
   if (!conflict) {
+    if (plan.state === "planned" && !plan.limitations?.some(item => item.code === "client_version_unknown")) add(["env", "CLAUDE_CODE_GATEWAY_HINT_HEADERS"], "1");
     for (const [key, value] of [["CLAUDE_CODE_MAX_CONTEXT_TOKENS", plan.context_tokens], ["CLAUDE_CODE_MAX_OUTPUT_TOKENS", plan.output_tokens], ["CLAUDE_CODE_MODEL_CAPABILITIES", plan.capabilities]]) {
       let selected=value;
       if(key==="CLAUDE_CODE_MODEL_CAPABILITIES"&&selected){

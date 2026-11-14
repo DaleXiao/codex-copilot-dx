@@ -111,7 +111,35 @@ export async function runManagementCommand(command, options = {}) {
       ...(sourceNames ? [sourceNames] : []), "", print(view.clients, [["name", "Client"], ["setup", "Setup"], ["active", "Active"]]), "",
       `Model requests: ${view.requests ?? "unknown"} total · ${view.active ?? "unknown"} active · ${view.outcomes.failed} failed`].join("\n");
   }
+  if (group === "compact") {
+    const live = await request({ path: "settings" });
+    if (action === "status") return print(live.compaction || { enabled: false, state: "unsupported" });
+    if (!live.compaction) throw new Error("This command needs the updated running service; no settings changed.");
+    const enabled = action === "enable";
+    if (flags.preview) return print({ enabled, saved: false, source_policy: "current source and model", uses_quota: enabled });
+    await confirm(enabled ? "Enable bounded compression recovery using the current source and model? It can use quota." : "Disable gateway compression fallback?");
+    const result = await request({ path: "settings", body: { action: "preference", key: "context_compaction_enabled", value: enabled } });
+    return print(result.compaction);
+  }
   if (group === "requests") {
+    if (action === "tools") {
+      const { data } = await readStatus();
+      const parts = [data.stream_performance, (data.providers?.claude || data.providers?.m365?.claude)?.requests?.performance].filter(Boolean);
+      if (!parts.some(part => part.tool_activity)) throw new Error("This command needs the updated running service; no settings changed.");
+      const items = parts.flatMap(part => part.tool_activity?.items || []).filter(row => !flags.active || ["preparing", "waiting"].includes(row.state));
+      return print(items, [["application", "Client"], ["provider", "Source"], ["model", "Model"], ["name", "Tool"], ["state", "State"]]);
+    }
+    if (action === "diagnose") {
+      if (flags.source || flags.model || flags.cancel) {
+        if (!flags.cancel && (!flags.source || !flags.model)) throw new Error("Use --source ID and --model ID together.");
+        if (flags.cancel && (flags.source || flags.model)) throw new Error("Use --cancel alone.");
+        if (flags.preview) return print({ source: flags.source, model: flags.model, operation: flags.cancel ? "cancel" : "arm", saved: false, error_limit: 512, expires_minutes: 10 });
+        await confirm(flags.cancel ? "Cancel the pending capture?" : "Capture one redacted technical error (up to 512 characters)? It may contain a request fragment; no prompt body is saved.");
+        const result = await request({ path: "settings", body: { action: "error_capture", operation: flags.cancel ? "cancel" : "arm", ...(flags.cancel ? {} : { source: flags.source, model: flags.model }) } });
+        return print(result.error_capture);
+      }
+      return print((await request({ path: "settings" })).error_capture || { state: "unsupported" });
+    }
     let rows = retainedRequests((await readStatus()).data);
     if (ids.request) {
       const found = rows.find(row => row.request_id === ids.request);if (!found) throw new Error("Request not retained. No full-history lookup is available.");return print(found);

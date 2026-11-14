@@ -58,7 +58,7 @@ try {
   const models = { data: [{ id: "gpt-5.5", vendor: "OpenAI", policy: { state: "enabled" }, model_picker_enabled: true, supported_endpoints: ["/responses"] }] };
   const catalog = buildCodexModelResponse({ copilotModels: models, codexCatalog: bundled });
   const diagnostics = createResponseFailureDiagnostics();
-  handler = createAdapterHandler({ openAIModelEnv: env, responseFailures: diagnostics, getCachedModelEndpointsFn: () => ["/responses"], responsesFn: async body => {
+  handler = createAdapterHandler({ env, dashboardOptions: { home: root }, openAIModelEnv: env, responseFailures: diagnostics, getCachedModelEndpointsFn: () => ["/responses"], responsesFn: async body => {
     if (body.input.some(item => item.type === "compaction_trigger")) {
       compactions++;
       if (body.stream) return stream("", true);

@@ -321,7 +321,7 @@
         <div class="section-actions usage-source-controls"><label><span data-i18n="source_entire_page">Source / entire page</span><select id="usage-provider"><option value="" data-i18n="all_providers">All providers</option></select></label>
           <label><span data-i18n="usage_model_page">Model / entire page</span><select id="analytics-model"><option value="" data-i18n="all_models">All models</option></select></label>
           <label><span data-i18n="usage_range_page">Time / entire page</span><select id="analytics-range"><option value="all" selected data-i18n="usage_all_history">All retained history</option><option value="7" data-i18n="7_days">Last 7 days</option><option value="30" data-i18n="30_days">Last 30 days</option><option value="90" data-i18n="90_days">Last 90 days</option><option value="365" data-i18n="usage_365_days">Last 365 days</option></select></label>
-          <label><span data-i18n="request_kind">Request purpose</span><select id="usage-purpose"><option value="" data-i18n="purpose_all">All purposes</option><option value="conversation" data-i18n="purpose_conversation">Conversation</option><option value="diagnostic" data-i18n="purpose_diagnostic">Diagnostic</option><option value="compatibility" data-i18n="purpose_compatibility">Compatibility test</option><option value="unknown" data-i18n="purpose_unknown">Unknown</option></select></label>
+          <label><span data-i18n="request_kind">Request purpose</span><select id="usage-purpose"><option value="" data-i18n="purpose_all">All purposes</option><option value="conversation" data-i18n="purpose_conversation">Conversation</option><option value="compaction" data-i18n="purpose_compaction">Compression</option><option value="diagnostic" data-i18n="purpose_diagnostic">Diagnostic</option><option value="compatibility" data-i18n="purpose_compatibility">Compatibility test</option><option value="unknown" data-i18n="purpose_unknown">Unknown</option></select></label>
           <button id="refresh-usage" type="button" data-i18n="refresh_usage">Refresh usage</button></div>
 
           <details id="usage-analytics" class="panel dashboard-section analytics-section">
@@ -368,6 +368,13 @@
           </div>
           <div class="flow-caption"><span id="flow-caption" data-i18n="flow_status_unknown">Status unavailable</span><button id="flow-clear" type="button" data-i18n="flow_show_all" hidden>Show all</button><button id="flow-more" type="button" hidden>More models</button></div>
           <details id="flow-active" class="tool-details"><summary id="flow-active-title" data-i18n="flow_active_requests">Active requests</summary><div class="table-wrap"><table><thead><tr><th data-i18n="client">App</th><th data-i18n="source">Source</th><th data-i18n="model">Model</th><th data-i18n="state">State</th><th data-i18n="flow_elapsed">Elapsed</th><th data-i18n="attempts">Attempts</th></tr></thead><tbody id="flow-active-body"></tbody></table></div></details>
+        </section>
+        <section id="tool-activity" class="panel dashboard-section" aria-labelledby="tool-title" data-paused="true">
+          <div class="panel-heading"><h2 id="tool-title" data-i18n="tool_heading">TOOL CALLS</h2><label class="tool-style" for="tool-style"><span data-i18n="tool_style">Style</span><select id="tool-style"><option value="grid" data-i18n="tool_style_grid">Grid</option><option value="halo" data-i18n="tool_style_halo">Beam ring</option><option value="orbit" data-i18n="tool_style_orbit">Orbit rings</option><option value="weave" data-i18n="tool_style_weave">Woven field</option><option value="off" data-i18n="tool_style_off">Off</option></select></label></div>
+          <div id="tool-stage" class="tool-stage" data-style="grid">
+            <div class="tool-visual"><div class="tool-orbit"><canvas id="tool-canvas" role="img" data-i18n-label="tool_heading" aria-label="Tool calls"></canvas></div><p class="tool-narration"><span id="tool-state" role="status" aria-live="polite" data-i18n="flow_status_unknown">Waiting for a fresh status</span><span id="tool-cursor" aria-hidden="true" hidden> ···</span></p></div>
+            <div class="tool-content"><p id="tool-context" class="tool-context" hidden></p><div id="tool-list"></div><p id="tool-more" class="hint" hidden></p><details id="tool-details" class="tool-details tool-technical" hidden><summary data-i18n="tool_details">Call details</summary><div id="tool-technical"></div></details></div>
+          </div>
         </section>
         <details class="panel dashboard-section" id="source-requests" open>
           <summary data-i18n="requests_by_source">REQUESTS BY SOURCE</summary>
@@ -444,6 +451,12 @@
           <h2 id="settings-heading" data-i18n="startup_preferences">STARTUP</h2>
           <div class="setting-row"><label for="setting-open_webui" data-i18n="open_webui_at_startup">Open dashboard on startup</label><input id="setting-open_webui" type="checkbox" role="switch" disabled><span id="effect-open_webui" class="hint" role="status"></span></div>
           <p id="settings-note" class="hint" role="status" data-i18n="reading_settings">Reading settings…</p>
+        </section>
+
+        <section class="panel dashboard-section" aria-labelledby="context-compaction-heading">
+          <h2 id="context-compaction-heading" data-i18n="context_compaction_heading">CONTEXT COMPRESSION</h2>
+          <div class="setting-row"><label for="setting-context_compaction_enabled" data-i18n="context_compaction_enabled">Recover failed compression automatically</label><input id="setting-context_compaction_enabled" type="checkbox" role="switch" aria-describedby="context-compaction-note" disabled></div>
+          <p id="context-compaction-note" class="hint" data-i18n="context_compaction_note">Use the current source and model when native compression is unavailable or the input is too long. Uses quota.</p>
         </section>
 
         <section class="panel dashboard-section" id="version-updates" aria-labelledby="version-updates-title">

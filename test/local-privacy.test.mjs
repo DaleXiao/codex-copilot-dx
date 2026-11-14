@@ -33,6 +33,24 @@ test("protocol adapters can own a masking session and release its restoration ma
   const masked=session.body.messages[0].content;assert.notEqual(masked,token);assert.equal(session.restoreText(masked),token);
   session.release();assert.equal(session.restoreText(masked),masked);
 });
+test("concurrent long-text checks keep rule-cache keys and restoration scoped to each request", async t => {
+  const jobs = [], f = fixture(t, { find: (texts, options) => new Promise(resolve => jobs.push({ texts, options, resolve })) });
+  await enable(f);
+  const inputs = ["ordinary text ".repeat(50) + " password=first-private-value", "another passage ".repeat(70) + " password=second-private-value"];
+  const pending = inputs.map(input => f.privacy.prepareSession({ input }, { protocol: "responses", client: "codex" }));
+  await waitForJobs(jobs, 2);
+  for (const job of jobs.toReversed()) job.resolve(job.texts.map(() => []));
+  const sessions = await Promise.all(pending);
+  for (let i = 0; i < sessions.length; i++) {
+    assert.ok(!sessions[i].body.input.includes(i ? "second-private-value" : "first-private-value"));
+    assert.equal(sessions[i].restoreText(sessions[i].body.input), inputs[i]);sessions[i].release();
+  }
+  for (const input of inputs) {
+    const session = await f.privacy.prepareSession({ input }, { protocol: "responses", client: "codex" });
+    assert.equal(session.restoreText(session.body.input), input);assert.notEqual(session.body.input, input);session.release();
+  }
+  assert.equal(jobs.length, 2, "Hot histories keep the existing detection cache");
+});
 test("cold detection gets a bounded longer wait while exact hot history submits no new work", async t => {
   const f = fixture(t);await enable(f);
   const input = Array.from({ length: 2200 }, (_, i) => "ordinary history line " + i + " with additional text 中文\n").join("");

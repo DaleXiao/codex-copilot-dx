@@ -25,6 +25,13 @@ test("a call ID supplied after an item announcement still matches its result onc
   activity.request(() => meta()).input({ input: [{ type: "function_call_output", call_id: "call_one" }] });
   assert.equal(activity.snapshot().items.length, 1);assert.equal(activity.snapshot().items[0].state, "returned");
 });
+test("client computer and shell calls wait for results even when generation is completed", () => {
+  const activity = createToolActivity(), request = activity.request(() => meta());
+  request.output({ output: ["computer_call", "shell_call"].map((type, i) => ({ type, id: `item-${i}`, call_id: `call-${i}`, status: "completed" })) });
+  request.finish("completed");assert.ok(activity.snapshot().items.every(row => row.state === "waiting"));
+  activity.request(() => meta()).input({ input: [{ type: "computer_call_output", call_id: "call-0" }, { type: "shell_call_output", call_id: "call-1" }] });
+  assert.ok(activity.snapshot().items.every(row => row.state === "returned"));
+});
 
 test("Messages metadata completes and cancels without reading tool arguments or output", () => {
   const activity = createToolActivity(), m = () => meta("a".repeat(64), "claude_app");

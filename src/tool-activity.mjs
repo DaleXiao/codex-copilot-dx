@@ -6,6 +6,7 @@ const pending = state => state === "preparing" || state === "waiting";
 const nameOf = value => typeof value === "string" && /^[\w./:@-]{1,80}$/.test(value) && redactDiagnosticText(value) === value ? value : null;
 const idOf = value => typeof value === "string" && value.length > 0 && value.length <= 256 ? value : null;
 const toolTypes = new Set(["function_call", "custom_tool_call", "web_search_call", "file_search_call", "computer_call", "tool_search_call", "mcp_call", "shell_call", "image_generation_call", "program", "multi_agent_call"]);
+const hostedTools = new Set(["web_search_call", "file_search_call", "mcp_call", "image_generation_call"]);
 const messageResult = value => typeof value?.type === "string" && value.type.endsWith("_tool_result") && idOf(value.tool_use_id);
 const items = value => Array.isArray(value) ? value.slice(0, 64) : [];
 export function isToolActivityOutput(value, protocol = "responses") {
@@ -68,7 +69,7 @@ export function createToolActivity({ now = Date.now, changed = () => {} } = {}) 
         const item = value.item || value;
         if (toolTypes.has(item.type)) {
           const entry = record(item.call_id || item.id, item.name || item.type, value.output_index ?? item.id, item.call_id);
-          if (["completed", "failed", "cancelled"].includes(item.status) && !["function_call", "custom_tool_call"].includes(item.type)) {
+          if (["completed", "failed", "cancelled"].includes(item.status) && hostedTools.has(item.type)) {
             change(entry, item.status === "completed" ? "returned" : item.status);
           }
         } else if (value.response?.output || value.output) {

@@ -28,7 +28,7 @@ test("Chat conversion cannot silently flatten deferred or namespaced functions",
 });
 
 test("responsesToChat: rejects input items that Chat Completions cannot represent", () => {
-  const item = { type: "reasoning", id: "rs_1", summary: [] };
+  const item = { type: "reasoning", id: "rs_1", summary: [{ type: "summary_text", text: "Reasoning state must not be discarded" }] };
   assert.throws(
     () => responsesToChat({ model: "m", input: [item] }),
     (error) => error.statusCode === 400

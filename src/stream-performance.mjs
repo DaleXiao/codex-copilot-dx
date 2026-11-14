@@ -232,7 +232,7 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
       const activeId = ++activeSequence;
       const safeRequestId = typeof requestId === "string" && /^[a-zA-Z0-9_-]{1,80}$/.test(requestId) ? requestId : null;
       const client = applicationLabel(application);
-      const purposeLabel = requestPurpose(purpose);
+      let purposeLabel = requestPurpose(purpose);
       activeTotal++;
       let upstreamStartedAt = null;
       let firstOutputAt = null;
@@ -342,13 +342,14 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
           if (next !== model) { model = next;changes.changed(); }
         },
         setProvider: assignProvider,
+        setPurpose(value) { if (!finished) { purposeLabel = requestPurpose(value);changes.changed(); } },
         observeSession(key) { if (!finished && typeof key === "string" && /^[a-f0-9]{64}$/.test(key)) session = key; },
         attemptCount() { return attempts; },
         attemptTimings() { return attemptTimings.map(attempt => ({ ...attempt })); },
         observeContext(values) {
           if (finished || !values || typeof values !== "object") return;
           if (Number.isSafeInteger(values.cached_input_tokens) && values.cached_input_tokens >= 0) cachedInput = values.cached_input_tokens;
-          for (const key of [...Object.keys(context), "requested_model", "reasoning_effort_requested", "reasoning_effort_sent", "usage_state", "capability_revision", "capability_constraints", "privacy_count", "privacy_ms", "privacy_state", "privacy_pending_bytes", "privacy_new_bytes", "privacy_pending_windows", "privacy_wait_budget_ms", "privacy_error", "privacy_event_type", "privacy_channel_type", "privacy_buffered_bytes", "privacy_terminal_seen", "client_tool_errors_received"]) {
+          for (const key of [...Object.keys(context), "compaction", "requested_model", "reasoning_effort_requested", "reasoning_effort_sent", "usage_state", "capability_revision", "capability_constraints", "privacy_count", "privacy_ms", "privacy_state", "privacy_pending_bytes", "privacy_new_bytes", "privacy_pending_windows", "privacy_wait_budget_ms", "privacy_error", "privacy_event_type", "privacy_channel_type", "privacy_buffered_bytes", "privacy_terminal_seen", "client_tool_errors_received"]) {
             const value = values[key];
             if (["reasoning_effort_requested", "reasoning_effort_sent"].includes(key)) { if (["none", "minimal", "low", "medium", "high", "xhigh", "max"].includes(value)) context[key] = value;continue; }
             if (key === "requested_model") { if (typeof value === "string" && /^[\w][\w./:@+-]{0,159}$/.test(value) && redactDiagnosticText(value) === value) context[key] = value;continue; }

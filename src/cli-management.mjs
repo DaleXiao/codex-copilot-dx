@@ -111,6 +111,16 @@ export async function runManagementCommand(command, options = {}) {
       ...(sourceNames ? [sourceNames] : []), "", print(view.clients, [["name", "Client"], ["setup", "Setup"], ["active", "Active"]]), "",
       `Model requests: ${view.requests ?? "unknown"} total · ${view.active ?? "unknown"} active · ${view.outcomes.failed} failed`].join("\n");
   }
+  if (group === "compact") {
+    const live = await request({ path: "settings" });
+    if (action === "status") return print(live.compaction || { enabled: false, state: "unsupported" });
+    if (!live.compaction) throw new Error("This command needs the updated running service; no settings changed.");
+    const enabled = action === "enable";
+    if (flags.preview) return print({ enabled, saved: false, source_policy: "current source and model", uses_quota: enabled });
+    await confirm(enabled ? "Enable bounded compression recovery using the current source and model? It can use quota." : "Disable gateway compression fallback?");
+    const result = await request({ path: "settings", body: { action: "preference", key: "context_compaction_enabled", value: enabled } });
+    return print(result.compaction);
+  }
   if (group === "requests") {
     if (action === "diagnose") {
       if (flags.source || flags.model || flags.cancel) {

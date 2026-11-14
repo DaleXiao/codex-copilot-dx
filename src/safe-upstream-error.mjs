@@ -15,6 +15,7 @@ const reasons = new Map([
   ["content_policy_violation", { statuses: [400, 403, 422], message: "The source rejected the request under its content policy." }],
   ["invalid_request_error", { statuses: [400, 422], message: "The source rejected the request parameters." }],
   ["input_length_invalid", { statuses: [400, 413, 422], message: "The source rejected the input length." }],
+  ["compaction_unavailable", { statuses: [400, 404, 405, 501], message: "The source does not support this compression operation." }],
   ["unsupported_parameter", { statuses: [400, 422], message: "The source does not support a requested parameter." }],
   ["output_limit_invalid", { statuses: [400, 422], message: "The source rejected the output token limit." }],
   ["tool_limit_exceeded", { statuses: [400, 422], message: "The source rejected the number of tool definitions." }],
@@ -44,18 +45,24 @@ export function classifyUpstreamError(value,status){
   const param=safeUpstreamParameter(error?.param||error?.parameter);
   const range = /^Range of input length should be\s*\[\s*1\s*,\s*(\d{1,9})\s*\]\.?\s*$/i.exec(text.trim());
   let code;
-  if([400,413,422].includes(status)&&range&&Number(range[1])>0&&Number(range[1])<=100000000)code="input_length_invalid";
-  else if([400,413,422].includes(status)&&/(context (?:length|window)|input tokens|上下文).{0,80}(?:exceed|too (?:long|large)|超|超过)|(?:exceed|超).{0,60}(?:context|上下文)/i.test(text))code="context_length_exceeded";
+  if([400,404,405,501].includes(status)&&(["unsupported_compaction","compaction_not_supported"].includes(error?.code)
+    || /^(?:unsupported|unknown|unrecognized) (?:input item(?: type)?|parameter|type)\s*[:=]?\s*["']?compaction_trigger["']?\.?$/i.test(text.trim())
+    || param?.endsWith(".type")&&/compaction_trigger/i.test(text)&&/unsupported|not supported|supported values|unknown type/i.test(text)))code="compaction_unavailable";
+  else if([400,413,422].includes(status)&&range&&Number(range[1])>0&&Number(range[1])<=100000000)code="input_length_invalid";
+  else if([400,413,422].includes(status)&&/(context (?:length|window)|input tokens?|input token count|上下文).{0,80}(?:exceed|too (?:long|large)|超|超过)|(?:exceed|超).{0,60}(?:context|上下文)/i.test(text))code="context_length_exceeded";
   else if([400,422].includes(status)&&/max_(?:completion_)?tokens|max_output_tokens|output token limit|输出.{0,12}(?:上限|限制)/i.test(text)&&/(?:maximum|at most|less than|exceed|between|invalid|unsupported|最多|超过|不支持)/i.test(text))code="output_limit_invalid";
   else if([400,422].includes(status)&&/(?:too many|maximum number of|at most).{0,40}tools|工具.{0,20}(?:过多|超过)/i.test(text))code="tool_limit_exceeded";
   else if([400,422].includes(status)&&/(?:effort|thinking|reasoning).{0,60}(?:not support|unsupported)|not support.{0,60}(?:effort|thinking|reasoning)/i.test(text))code="reasoning_parameter_unsupported";
-  const selected=safeUpstreamReason(code,status)||safeUpstreamReason(error?.code,status)||safeUpstreamReason(error?.type,status);
+  const selected=safeUpstreamReason(code,status)||safeUpstreamReason(error?.code,status)||safeUpstreamReason(error?.upstream_code,status)||safeUpstreamReason(error?.type,status);
   if(!selected)return null;
   const inferred = code === "output_limit_invalid" ? /\b(max_(?:completion_)?tokens|max_output_tokens)\b/i.exec(text)?.[1]?.toLowerCase() : code === "tool_limit_exceeded" ? "tools" : undefined;
   const bounds = {};
   if (code === "input_length_invalid") bounds.maximum = Number(range[1]);
+  if (["input_length_invalid", "output_limit_invalid", "tool_limit_exceeded", "context_length_exceeded", "context_window_exceeded"].includes(selected.code)
+    && Number.isSafeInteger(error?.maximum) && error.maximum > 0 && error.maximum <= 100000000) bounds.maximum = error.maximum;
   if (["output_limit_invalid", "tool_limit_exceeded", "context_length_exceeded"].includes(selected.code)) {
-    const maximum = /(?:maximum(?: (?:context length|number of tools|tokens))?(?: is| of)?|at most|must be (?:less than or equal to|<=)|最多|上限(?:为)?)\s*[:=]?\s*(\d[\d,]{0,11})(?![\d,])/i.exec(text)?.[1];
+    const maximum = /maximum number of tokens allowed\s*\((\d[\d,]{0,11})\)/i.exec(text)?.[1]
+      || /(?:maximum(?: (?:context length|number of tools|tokens))?(?: is| of)?|at most|must be (?:less than or equal to|<=)|最多|上限(?:为)?)\s*[:=]?\s*(\d[\d,]{0,11})(?![\d,])/i.exec(text)?.[1];
     const n = maximum && Number(maximum.replaceAll(",", ""));
     if (Number.isSafeInteger(n) && n > 0 && n <= 100000000) bounds.maximum = n;
   }

@@ -179,6 +179,9 @@ jobs:
       - name: Verify native recorded compaction and local plaintext recovery without live provider calls
         if: ${{ !cancelled() && always() && steps.deps.outcome == 'success' }}
         run: node scripts/codex-history-recovery-replay.mjs --codex "$RUNNER_TEMP/ccdx-codex/node_modules/.bin/codex"
+      - name: Verify gateway compression and continuation in native Codex
+        if: ${{ !cancelled() && always() && steps.deps.outcome == 'success' }}
+        run: node scripts/context-compaction-client-replay.mjs --codex "$RUNNER_TEMP/ccdx-codex/node_modules/.bin/codex"
       - name: Verify native reasoning declaration handling with an isolated synthetic provider
         if: ${{ !cancelled() && always() && steps.deps.outcome == 'success' }}
         run: node scripts/codex-reasoning-header-replay.mjs --codex "$RUNNER_TEMP/ccdx-codex/node_modules/.bin/codex"

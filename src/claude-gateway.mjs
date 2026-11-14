@@ -20,6 +20,9 @@ import { catalogCapabilities } from "./model-capabilities.mjs";
 import { applyMessagesSystemPolicy } from "./messages-system-policy.mjs";
 import { createApiTokenCounter } from "./providers/api-token-count.mjs";
 import { MESSAGES_TOOL_GUARD } from "./messages-tool-schema.mjs";
+import { isCompactionRequest, compactionScope } from "./context-compaction.mjs";
+import { compactionSummarizer } from "./context-compaction-wire.mjs";
+import { requestPurpose } from "./request-context.mjs";
 
 function observeMessagesWindow(provider, model, capability, entry) {
   try {
@@ -197,7 +200,7 @@ function createGuardedMessagesObserver(onEvent, maxBytes, clientModel, guard, re
 }
 
 export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = false, appContract, messagesSystemMode = "passthrough", log = () => {}, onRequest = () => {}, env = process.env, performance: sharedPerformance, validateConversation,
-  resolveRequest, privacy, privacyClient = "claude", record = recordUsage, acquireRequest = createRequestAdmission({ maxBytes: 16 * 1024 * 1024, maxQueued: 8 }) } = {}) {
+  resolveRequest, privacy, compaction, privacyClient = "claude", record = recordUsage, acquireRequest = createRequestAdmission({ maxBytes: 16 * 1024 * 1024, maxQueued: 8 }) } = {}) {
   if (!provider || !isProviderId(provider.id) || typeof apiKey !== "string" || apiKey.length < 32) throw new Error("Claude gateway requires a provider and private local key");
   const config = loadRuntimeConfig(env), performance = sharedPerformance || createStreamPerformanceMetrics({ routeNames: ["messages"] });
   const decodedLimit = decodedBodyLimitPreference({ env }).bytes;
@@ -225,7 +228,9 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
     const parent = currentRequestContext();
     if (parent) parent.provider = provider.id;
     const countTokens = pathname.endsWith("/count_tokens"), requestId = parent?.requestId || randomUUID();
-    const tracker = countTokens ? parent?.streamPerformance : performance.begin("messages", { requestId, purpose: req.headers["x-ccdx-purpose"], application: requestApplication(req.headers, "claude") });
+    const compacting = !countTokens && isCompactionRequest("messages", null, req.headers);
+    const purpose = requestPurpose(req.headers["x-ccdx-purpose"], compacting ? "compaction" : "conversation");
+    const tracker = countTokens ? parent?.streamPerformance : performance.begin("messages", { requestId, purpose, application: requestApplication(req.headers, "claude") });
     if (!resolveRequest) tracker?.setProvider(provider.id);
     const abort = createRequestAbort(req, res);
     let release = () => {}, conversation, outcome = "failed", model = null, configuredModel = null, clientModel = null, responseId = null, usage = null, stopReason = null, streamed = false, sawStop = false, failedEvent = false;
@@ -233,6 +238,7 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
     let terminalOrigin = "client_validation", failureStatus = null, countDeadline = null, rejectionReason;
     if (!countTokens) { stats.total++;stats.active++;stats.last_request_at = new Date().toISOString(); }
     const context = parent || { requestId, purpose: req.headers["x-ccdx-purpose"] };
+    if (!countTokens) context.purpose = purpose;
     context.provider = selectedProvider.id;context.application = requestApplication(req.headers, "claude");
     context.streamPerformance = tracker;context.route = countTokens ? "messages_count_tokens" : "messages";
     await runWithRequestContext(context, async () => {
@@ -242,6 +248,7 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
         let body = await readJsonBody(req, { admission: release, signal: abort.signal, maxBodyBytes: config.maxBodyBytes, maxDecodedBodyBytes: decodedLimit });
         abort.setTimeout(config.upstreamTimeoutMs, "messages_prepare_timeout");
         observeRequestedModel(body);
+        if (compacting) markRequestObservation({ compaction: 1 });
         context.requestOptions = requestOptionsEvidence(body);
         if (context.requestOptions.client_tool_errors_received) markRequestObservation({ client_tool_errors_received: context.requestOptions.client_tool_errors_received });
         if (!body || typeof body.model !== "string" || !Array.isArray(body.messages)) {
@@ -274,7 +281,15 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
         conversation = await validateConversation?.(body, req.headers, selectedProvider, abort.signal);
         if (!countTokens) observeContextSession(body, req.headers, selectedProvider, "messages");
         terminalOrigin = "transport";
-        const call = privacy?.wrap(selectedProvider.client.messages, { res, protocol: "messages", client: privacyClient }) || selectedProvider.client.messages;
+        const sourceCall = compacting && compaction ? (value, options) => {
+          let limits = selectedCapability?.values;
+          if (!limits) try { const entry = selectedModel || resolveClaudeModel(selectedProvider.models("claude"), value.model);limits = entry?.protocol_capabilities?.messages?.values || entry?.capability?.values || catalogCapabilities(entry || {}); } catch { limits = {}; }
+          return compaction.run({ body: value, protocol: "messages", scope: compactionScope(selectedProvider, privacyClient, "messages"), source: selectedProvider.id,
+            client: privacyClient, inputLimit: limits.max_input_tokens || limits.context_window, outputAllowance: value.max_tokens || 0,
+            native: selectedProvider.client.messages, options, summarize: compactionSummarizer(value, "messages", selectedProvider.client.messages),
+            onActivity: () => abort.setTimeout(config.streamIdleTimeoutMs, "compaction_idle_timeout") });
+        } : selectedProvider.client.messages;
+        const call = privacy?.wrap(sourceCall, { res, protocol: "messages", client: privacyClient }) || sourceCall;
         let upstreamHeadersObserved = false;
         const callOptions = { headers: req.headers, countTokens, signal: abort.signal,
           onUpstreamErrorHeaders(status) { upstreamHeadersObserved = true;tracker?.upstreamHeaders(status);body = null;release();release = () => {}; },
@@ -401,6 +416,7 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
         context.onHttpError?.({ code: detail.code, origin: terminalOrigin, ...(rejectionReason ? { reason: rejectionReason } : {}), ...(diagnostic ? { transport: diagnostic } : {}) });
         if (outcome === "cancelled") return;
         if (!res.headersSent) {
+          if (typeof error.code === "string" && error.code.startsWith("ccdx_compaction_")) res.setHeader("x-should-retry", "false");
           if (error.origin === "privacy" && Number.isInteger(error.retryAfter) && error.retryAfter > 0) res.setHeader("Retry-After", String(error.retryAfter));
           const value = apiError(abort.reason || error.code || "ccdx_gateway_error", message);
           if (rejectionReason) value.error.reason = rejectionReason;

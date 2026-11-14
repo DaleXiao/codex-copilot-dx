@@ -37,6 +37,8 @@ import { httpError } from "./http-errors.mjs";
 import { createRequestAdmission } from "./request-admission.mjs";
 import { PROVIDER_MANAGEMENT_PATH, handleProviderManagement } from "./provider-management.mjs";
 import { isLoopbackAddress, isLoopbackHostHeader } from "./security.mjs";
+import { createContextCompactionService } from "./context-compaction.mjs";
+import { readClientGatewayKeys } from "./client-gateway-keys.mjs";
 
 export {
   abortErrorStatusCode,
@@ -180,12 +182,16 @@ export function createAdapterHandler(options = {}) {
   const imagePressure = options.imagePressure || createResponsesImagePressureController();
   const responseFailures = options.responseFailures || createResponseFailureDiagnostics();
   const privacy = options.privacy || options.providerRuntime?.privacy || createLocalPrivacy({ env: options.env, home: options.dashboardOptions?.home });
+  const compaction = options.compaction || options.providerRuntime?.compaction || createContextCompactionService({ enabled() {
+    try { return readUserSettings({ env: options.env, home: options.dashboardOptions?.home, strict: true }).context_compaction_enabled !== false; } catch { return false; }
+  } });
+  const compactionOptions = { compaction, compactionKey: options.compactionKey || (() => readClientGatewayKeys({ env: options.env, home: options.dashboardOptions?.home, create: false }).codex) };
   let carbonSearch = null, copilotWeb = null;
   let antigravity = null, antigravityLoading = null;
   const geminiRuntime = async () => {
     if (!antigravityLoading) antigravityLoading = (async () => {
       const { createAntigravityRuntime } = await import("./antigravity-runtime.mjs");
-      antigravity = createAntigravityRuntime({ client: codexClient, models: () => codexModelRegistry?.models || [], privacy, acquireRequest,
+      antigravity = createAntigravityRuntime({ client: codexClient, models: () => codexModelRegistry?.models || [], privacy, compaction, acquireRequest,
         env: options.env, home: options.dashboardOptions?.home, requestBodyTimeoutMs, upstreamTimeoutMs, streamIdleTimeoutMs,
         ...options.antigravityOptions });
       return antigravity;
@@ -253,6 +259,7 @@ export function createAdapterHandler(options = {}) {
     },
   });
   const responsesHandler = createResponsesHandler({
+    ...compactionOptions,
     privacy,
     validateConversation: (body, headers, source, signal) => options.providerRuntime?.validateConversation?.(body, headers, source, signal),
     resolveProvider: (body, req) => options.providerRuntime?.resolveCodex?.(body, req),
@@ -276,6 +283,8 @@ export function createAdapterHandler(options = {}) {
     upstreamTimeoutMs,
   });
   const responsesCompactHandler = createResponsesCompactHandler({
+    ...compactionOptions,
+    responsesFn, chatCompletionsFn, getCachedModelEndpointsFn,
     privacy,
     validateConversation: (body, headers, source, signal) => options.providerRuntime?.validateConversation?.(body, headers, source, signal),
     resolveProvider: (body, req) => options.providerRuntime?.resolveCodex?.(body, req),
@@ -305,12 +314,13 @@ export function createAdapterHandler(options = {}) {
         modelRegistry: provider.registry, now: options.now, openAIModelEnv: { ...openAIModelEnv, CCDX_AUTO_REVIEW_MODEL: "" },
         autoReviewModelResolver: () => { const preference = options.providerRuntime.providerPreference?.(provider.id) || options.providerRuntime.selection().m365;
           return { model: preference?.auto_review_model, reasoningEffort: preference?.auto_review_effort === undefined ? Object.hasOwn(provider, "defaultReviewEffort") ? provider.defaultReviewEffort : "low" : preference.auto_review_effort }; },
-        requestBodyTimeoutMs, responsesPayloadOptions: options.responsesPayloadOptions, responseFailures,
+        ...compactionOptions, requestBodyTimeoutMs, responsesPayloadOptions: options.responsesPayloadOptions, responseFailures,
         streamHandshakeTimeoutMs, streamIdleTimeoutMs, upstreamTimeoutMs };
       providerHandlers.set(provider, {
         responses: createResponsesHandler({ ...common, responsesFn: provider.client.responses, chatCompletionsFn: provider.client.chatCompletions,
           getCachedModelEndpointsFn: provider.client.getCachedModelEndpoints }),
-        compact: createResponsesCompactHandler({ ...common, responsesCompactFn: provider.client.responsesCompact }),
+        compact: createResponsesCompactHandler({ ...common, responsesCompactFn: provider.client.responsesCompact, responsesFn: provider.client.responses, chatCompletionsFn: provider.client.chatCompletions,
+          getCachedModelEndpointsFn: provider.client.getCachedModelEndpoints }),
       });
     }
     return providerHandlers.get(provider);

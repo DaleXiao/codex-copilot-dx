@@ -7,6 +7,20 @@ export { validatePrivacyFindings };
 import { markRequestObservation, markResponseTerminal } from "./stream-performance.mjs";
 
 const TOKEN_START = "{{CCDX_", tokenPattern = /\{\{CCDX_[a-f0-9]{24}\}\}/g;
+const SESSION_MAPPINGS = Symbol("privacy-session-mappings");
+export const privacySessionMappings = session => [...(session?.[SESSION_MAPPINGS] || [])];
+
+export async function restorePrivacyMappings(entries) {
+  if (!Array.isArray(entries) || entries.length > 8192) throw privacyFailure("mapping_limit");
+  const values = new Map();let bytes = 0;
+  for (const entry of entries) {
+    if (!Array.isArray(entry) || entry.length !== 2 || typeof entry[0] !== "string" || !/^\{\{CCDX_[a-f0-9]{24}\}\}$/.test(entry[0]) || typeof entry[1] !== "string"
+      || values.has(entry[0]) && values.get(entry[0]) !== entry[1]) throw privacyFailure("mapping_invalid");
+    bytes += Buffer.byteLength(entry[1]);if (bytes > 4 * 1024 * 1024) throw privacyFailure("mapping_limit");values.set(...entry);
+  }
+  const session = await maskPrivacyRequest({ input: [] }, { protocol: "responses", find: async () => [], seedMappings: values });
+  session.count = values.size;return session;
+}
 const secretPatterns = [
   /\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-(?:ant-|proj-)?[A-Za-z0-9_-]{16,}|AIza[A-Za-z0-9_-]{25,}|xox[baprs]-[A-Za-z0-9-]{16,}|AKIA[A-Z0-9]{16}|hf_[A-Za-z0-9]{20,}|npm_[A-Za-z0-9]{20,})\b/g,
   /-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z]+ )?PRIVATE KEY-----/g,
@@ -133,10 +147,10 @@ function modelSpanFits(text, start, end, label) {
     && /\b(?:function|class|const|let|var)\s+$/.test(text.slice(Math.max(0, start - 32), start))) return false;
   return true;
 }
-export async function maskPrivacyRequest(body, { protocol, client = "api", personal = false, secret, find, signal, onPlan, rules = ruleSpans }) {
+export async function maskPrivacyRequest(body, { protocol, client = "api", personal = false, secret, find, signal, onPlan, rules = ruleSpans, seedMappings }) {
   const copy = structuredClone(body), { items, nested } = requestTexts(copy, protocol), texts = items.map(item => item.text);
   if (items.length > 8192 || texts.reduce((n, text) => n + Buffer.byteLength(text), 0) > 8 * 1024 * 1024) throw privacyFailure("request_too_large");
-  const found = texts.length ? await find(texts, { signal, onPlan }) : [], values = new Map(), kinds = {}, total = { count: 0, bytes: 0 };
+  const found = texts.length ? await find(texts, { signal, onPlan }) : [], values = new Map(seedMappings), kinds = {}, total = { count: 0, bytes: 0 };
   if (!Array.isArray(found) || found.length !== texts.length) throw privacyFailure("engine_invalid");
   for (let i = 0; i < items.length; i++) {
     const item = items[i], spans = rules(item.text, personal);let bytes;
@@ -181,7 +195,7 @@ export async function maskPrivacyRequest(body, { protocol, client = "api", perso
     if (!text.includes(TOKEN_START) && !text.includes("\\u")) return text;
     try { return JSON.stringify(restoreValue(parseToolArguments(text), true)); } catch { return restoreText(text); }
   }
-  return { body: total.count ? copy : body, count: total.count, kinds, restoreText, restoreValue,
+  return { body: total.count ? copy : body, count: total.count, kinds, restoreText, restoreValue, [SESSION_MAPPINGS]: values,
     restoreToolValue: value => restoreValue(value, true), release: () => values.clear() };
 }
 

@@ -34,7 +34,7 @@ export function createContextMetrics() {
         context_window_tokens: count(context.context_window_tokens) || null,
         cached_input_tokens: input !== null && cached !== null && cached <= input ? cached : null,
         elapsed_ms: Math.max(0, finished - started), finished };
-      const compact = route === "responses_compact";
+      const compact = route === "responses_compact" || context.compaction === 1;
       if (!session) {
         unassigned.push({ id: `request-${++sequence}`, application, provider, model, ...point, compact });
         if (unassigned.length > 20) unassigned.shift();

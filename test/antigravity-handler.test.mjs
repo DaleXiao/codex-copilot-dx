@@ -8,9 +8,35 @@ import {summarizeUsage} from "../src/usage-store.mjs";
 import {runWithRequestContext} from "../src/request-context.mjs";
 import {createStreamPerformanceMetrics} from "../src/stream-performance.mjs";
 import {createGoogleResponseObserver} from "../src/antigravity-usage.mjs";
+import {createContextCompactionService} from "../src/context-compaction.mjs";
 
 const catalog={data:["gemini-4-carbon","gemini-4-argon"].map(id=>({id,supported_endpoints:["/chat/completions"],capabilities:{supports:{vision:true,reasoning_effort:["low","medium","high"]},limits:{max_context_window_tokens:1000000,max_output_tokens:64000}}}))};
 const alias=antigravityCopilotModels(catalog)[2].id;
+
+test("known Google compaction stays on Google and recovers within the same model",async()=>{
+  const calls=[],records=[],compaction=createContextCompactionService({recordUsageFn:record=>records.push(record)});
+  const f=fixture({compaction,resolveCompactionSource:()=>({source:"google",model:"native-bound-model"}),fetchGoogle:async(url,request)=>{
+    calls.push({url,body:JSON.parse(request.body)});
+    if(calls.length===1)return Response.json({error:{message:"The input token count (20000) exceeds the maximum number of tokens allowed (16000)."}},{status:400});
+    return Response.json({response:{candidates:[{index:0,content:{role:"model",parts:[{text:"verified continuation"}]},finishReason:"STOP"}],usageMetadata:{promptTokenCount:7,candidatesTokenCount:2,cachedContentTokenCount:0}}});
+  }});
+  const request=body("native-default","summarization");request.request.contents=[{role:"user",parts:[{text:"keep requirements"}]},{role:"model",parts:[{text:"verified old facts"}]},{role:"user",parts:[{text:"compact"}]}];
+  const result=await invoke(f.handler,request,{url:"/antigravity/v1internal:generateContent"}).done;
+  assert.equal(result.status,200);assert.equal(calls.length,3);assert.equal(f.copilot.length,0);assert.ok(calls.every(call=>call.body.model==="native-bound-model"));
+  assert.match(calls[1].url,/streamGenerateContent/);assert.deepEqual(calls[1].body.request.generationConfig.thinkingConfig,request.request.generationConfig.thinkingConfig);
+  assert.equal(records.length,1);assert.equal(records[0].provider,"google");assert.equal(records[0].purpose,"compaction");assert.equal(f.records[0].provider,"google");
+});
+
+test("known Copilot compaction retains the selected reasoning alias instead of another background model",async()=>{
+  const calls=[],compaction=createContextCompactionService({recordUsageFn(){}});
+  const f=fixture({compaction,resolveCompactionSource:()=>({source:"github",model:alias}),client:{chatCompletions:async(value)=>{
+    calls.push(value);if(calls.length===1)return Response.json({error:{type:"invalid_request_error",message:"Range of input length should be [1, 1048576]"}},{status:400});
+    return Response.json({model:value.model,usage:{prompt_tokens:7,completion_tokens:2},choices:[{index:0,message:{content:"verified continuation"},finish_reason:"stop"}]});
+  }}});
+  const request=body("native-default","summarization");request.request.contents=[{role:"user",parts:[{text:"keep requirements"}]},{role:"model",parts:[{text:"verified old facts"}]},{role:"user",parts:[{text:"compact"}]}];
+  const result=await invoke(f.handler,request,{url:"/antigravity/v1internal:generateContent"}).done;
+  assert.equal(result.status,200);assert.equal(f.google.length,0);assert.equal(calls.length,3);assert.ok(calls.every(call=>call.model==="gemini-4-carbon"&&call.reasoning_effort==="high"));
+});
 const body=(model=alias,requestType="agent")=>({model,requestType,request:{contents:[{role:"user",parts:[{text:"fixture"}]}],generationConfig:{thinkingConfig:{includeThoughts:true,thinkingBudget:4096}}}});
 const sse=(content="ok")=>new Response('data: '+JSON.stringify({choices:[{delta:{content},finish_reason:"stop"}]})+'\n\ndata: [DONE]\n\n');
 function fixture(options={}){

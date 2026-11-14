@@ -41,7 +41,7 @@ function responseAbortError(signal) {
   return error;
 }
 
-function readResponseChunk(reader, signal) {
+export function readResponseChunk(reader, signal) {
   if (!signal) return reader.read();
   if (signal.aborted) return Promise.reject(responseAbortError(signal));
   return new Promise((resolve, reject) => {

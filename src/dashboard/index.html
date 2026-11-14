@@ -321,7 +321,7 @@
         <div class="section-actions usage-source-controls"><label><span data-i18n="source_entire_page">Source / entire page</span><select id="usage-provider"><option value="" data-i18n="all_providers">All providers</option></select></label>
           <label><span data-i18n="usage_model_page">Model / entire page</span><select id="analytics-model"><option value="" data-i18n="all_models">All models</option></select></label>
           <label><span data-i18n="usage_range_page">Time / entire page</span><select id="analytics-range"><option value="all" selected data-i18n="usage_all_history">All retained history</option><option value="7" data-i18n="7_days">Last 7 days</option><option value="30" data-i18n="30_days">Last 30 days</option><option value="90" data-i18n="90_days">Last 90 days</option><option value="365" data-i18n="usage_365_days">Last 365 days</option></select></label>
-          <label><span data-i18n="request_kind">Request purpose</span><select id="usage-purpose"><option value="" data-i18n="purpose_all">All purposes</option><option value="conversation" data-i18n="purpose_conversation">Conversation</option><option value="diagnostic" data-i18n="purpose_diagnostic">Diagnostic</option><option value="compatibility" data-i18n="purpose_compatibility">Compatibility test</option><option value="unknown" data-i18n="purpose_unknown">Unknown</option></select></label>
+          <label><span data-i18n="request_kind">Request purpose</span><select id="usage-purpose"><option value="" data-i18n="purpose_all">All purposes</option><option value="conversation" data-i18n="purpose_conversation">Conversation</option><option value="compaction" data-i18n="purpose_compaction">Compression</option><option value="diagnostic" data-i18n="purpose_diagnostic">Diagnostic</option><option value="compatibility" data-i18n="purpose_compatibility">Compatibility test</option><option value="unknown" data-i18n="purpose_unknown">Unknown</option></select></label>
           <button id="refresh-usage" type="button" data-i18n="refresh_usage">Refresh usage</button></div>
 
           <details id="usage-analytics" class="panel dashboard-section analytics-section">
@@ -444,6 +444,12 @@
           <h2 id="settings-heading" data-i18n="startup_preferences">STARTUP</h2>
           <div class="setting-row"><label for="setting-open_webui" data-i18n="open_webui_at_startup">Open dashboard on startup</label><input id="setting-open_webui" type="checkbox" role="switch" disabled><span id="effect-open_webui" class="hint" role="status"></span></div>
           <p id="settings-note" class="hint" role="status" data-i18n="reading_settings">Reading settings…</p>
+        </section>
+
+        <section class="panel dashboard-section" aria-labelledby="context-compaction-heading">
+          <h2 id="context-compaction-heading" data-i18n="context_compaction_heading">CONTEXT COMPRESSION</h2>
+          <div class="setting-row"><label for="setting-context_compaction_enabled" data-i18n="context_compaction_enabled">Automatic compression recovery</label><input id="setting-context_compaction_enabled" type="checkbox" role="switch" aria-describedby="context-compaction-note" disabled></div>
+          <p id="context-compaction-note" class="hint" data-i18n="context_compaction_note">Prefer source-native compression. When it is unavailable or rejects the input length, recover using the current source and model within bounded work. Uses quota.</p>
         </section>
 
         <section class="panel dashboard-section" id="version-updates" aria-labelledby="version-updates-title">

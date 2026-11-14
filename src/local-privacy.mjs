@@ -6,7 +6,7 @@ import { withFileLockSync } from "./lock.mjs";
 import { atomicWriteFileIfChangedSync } from "./atomic-file.mjs";
 import { createChangeSignal } from "./activity-events.mjs";
 import { createPrivacyModel, privacyFailure } from "./privacy-model.mjs";
-import { maskPrivacyRequest, protectPrivacyResponse, createPrivacyRuleCache } from "./privacy-transform.mjs";
+import { maskPrivacyRequest, protectPrivacyResponse, createPrivacyRuleCache, privacySessionMappings, restorePrivacyMappings } from "./privacy-transform.mjs";
 import { createPrivacyDetection, PRIVACY_BATCH_BYTES } from "./privacy-detection.mjs";
 import { markRequestObservation } from "./stream-performance.mjs";
 
@@ -73,7 +73,10 @@ export function createLocalPrivacy(options = {}) {
     markRequestObservation({ privacy_count: session.count, privacy_ms: Math.round(performance.now() - start), privacy_state: "checked" });
     actionError = null;lastCheck = { state: "checked", at: new Date().toISOString(), elapsed_ms: Math.round(performance.now() - start), count: session.count, wait_budget_ms: budget };changes.changed();
     if (onSession) { onSession(session);return session.body; }
-    if (res && session.count) {
+    if (res && session.count) attachSession(res, session);
+    return session.body;
+  }
+  function attachSession(res, session) {
       let current = responses.get(res);
       if (!current) {
         const sessions = [];
@@ -87,8 +90,6 @@ export function createLocalPrivacy(options = {}) {
           onComplete() { lastResponse = { state: "completed", at: new Date().toISOString() };changes.changed(); },
         });
       } else current.sessions.push(session);
-    }
-    return session.body;
   }
   async function action(input) {
     if (!input || typeof input !== "object" || Array.isArray(input) || Object.keys(input).some(key => !["action", "revision", "personal", "text"].includes(key))) throw privacyFailure("action_invalid");
@@ -137,6 +138,11 @@ export function createLocalPrivacy(options = {}) {
       };
     },
     restoreResponse: (res, value) => responses.get(res)?.restoreValue(value) || value,
+    responseMappings(res) {
+      const entries = new Map();for (const session of responses.get(res)?.sessions || []) for (const [token, value] of privacySessionMappings(session)) entries.set(token, value);
+      return [...entries];
+    },
+    async importResponseMappings(res, entries) { const session = await restorePrivacyMappings(entries);if (session.count) attachSession(res, session); },
     settingsChanged() { actionError = null;if (!settings().enabled) { generation++;model.stop(); }else warm();changes.changed(); },
     close() { disposed = true;generation++;detection.close();model.close();rules.clear();secret.fill(0); } };
 }

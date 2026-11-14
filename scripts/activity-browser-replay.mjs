@@ -14,7 +14,8 @@ import {closeHttpServer} from '../src/shutdown.mjs';
 const options=new Map();for(let i=2;i<process.argv.length;i+=2)options.set(process.argv[i],process.argv[i+1]);
 const module=await import(pathToFileURL(options.get('--playwright')).href);const playwright=module.default||module;
 const home=await fs.mkdtemp(path.join(os.tmpdir(),'ccdx-activity-browser-'));
-const metrics=createRequestMetrics(),codex=createStreamPerformanceMetrics(),claude=createStreamPerformanceMetrics({routeNames:['messages']});
+let clockOffset=0;const metricNow=()=>performance.now()+clockOffset;
+const metrics=createRequestMetrics(),codex=createStreamPerformanceMetrics({now:metricNow}),claude=createStreamPerformanceMetrics({routeNames:['messages'],now:metricNow});
 const handler=createAdapterHandler({requestMetrics:metrics,streamPerformanceMetrics:codex,terminalActivity:{beginRequest:()=>()=>{}},providerRuntime:{claudePerformance:claude,snapshot:()=>({})},
   dashboardOptions:{home,env:{},providerStateFn:()=>[],connectionsFn:()=>({source:'connections',providers:[],clients:[],managed:false}),authStatusFn:()=>({profiles:{codex:{configured:false,valid:false}}})}});
 let subscriptions=0;const responses=new Set();
@@ -30,7 +31,7 @@ try{
   console.log(`Activity replay: ${engine}`);
   const context=await browser.newContext({viewport:{width:1280,height:1000}}),page=await context.newPage(),errors=[];page.on('pageerror',e=>errors.push(String(e)));page.setDefaultTimeout(15000);const watchdog=setTimeout(()=>{console.error(`Activity replay timed out: ${engine}`);process.exit(1)},120000);watchdog.unref();
   await page.goto(base+'/#requests');await page.waitForFunction(()=>document.querySelector('#request-flow').dataset.state==='idle',{timeout:10000});
-  const toolReceipt=await checkToolActivity({page,codex,metrics,performanceCheck:options.get('--tool-performance')==='true'});console.log(JSON.stringify({tool_activity:toolReceipt}));
+  const toolReceipt=await checkToolActivity({page,codex,metrics,performanceCheck:options.get('--tool-performance')==='true',advanceToolClock:ms=>{clockOffset+=ms;const notice=codex.begin('responses',{purpose:'diagnostic'});notice.finish({statusCode:200})}});console.log(JSON.stringify({tool_activity:toolReceipt}));
   const finish=[begin('codex_app','gpt-one','responses'),begin('claude_app','claude-two','messages'),begin('claude_code','claude-three','messages')];
   await page.waitForFunction(()=>document.querySelector('#request-flow').dataset.state==='active'&&document.querySelector('#flow-models').children.length===3);
   assert.match(writes.at(-1),/Active/);if(options.get('--output'))await page.screenshot({path:options.get('--output'),fullPage:true});

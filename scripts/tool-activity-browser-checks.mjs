@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-export async function checkToolActivity({ page, codex, metrics, performanceCheck = false }) {
+export async function checkToolActivity({ page, codex, metrics, performanceCheck = false, advanceToolClock }) {
   await page.evaluate(() => {
     window.__toolFrames = [];window.__toolFrameCount = 0;
     const original = window.requestAnimationFrame;
@@ -63,7 +63,11 @@ export async function checkToolActivity({ page, codex, metrics, performanceCheck
   await page.waitForTimeout(1050);
   const stopped = await page.evaluate(() => window.__toolFrameCount);await page.waitForTimeout(150);
   assert.equal(await page.evaluate(() => window.__toolFrameCount), stopped, "Completed tools stop drawing after their bounded finish");
-  await page.evaluate(() => window.ccdxToolActivity.update({stream_performance:{tool_activity:{items:[{id:'expires',application:'codex_app',model:'tool-model',name:'read_file',state:'waiting',expires_in_ms:100}],omitted:0}}}));
+  const expiring = codex.begin("responses", { requestId: "tool-expiring", application: "codex_app" });
+  expiring.setProvider("github");expiring.setModel("tool-model");expiring.observeSession("e".repeat(64));
+  expiring.observeToolOutput({ type: "function_call", call_id: "expiring-call", name: "read_file" }, "responses");expiring.terminal("completed");expiring.finish({ statusCode: 200 });
+  await page.waitForFunction(() => document.querySelector('#tool-state').textContent === '等待工具返回');
+  advanceToolClock(89900);
   await page.waitForFunction(() => document.querySelector('#tool-state').textContent === '状态待更新');
   const stale = await page.evaluate(() => window.__toolFrameCount);await page.waitForTimeout(120);
   assert.equal(await page.evaluate(() => window.__toolFrameCount), stale, 'Expired evidence does not remain animated');

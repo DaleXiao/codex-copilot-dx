@@ -21,22 +21,39 @@ const worker=options.has("--sample")?JSON.parse(options.get("--sample")):null;
 assert.ok(["aa","compare"].includes(options.get("--mode")||"compare")&&["gate","report"].includes(timingMode));
 assert.ok(Number.isSafeInteger(trials)&&trials>=5&&trials<=40);
 const root=fs.mkdtempSync(path.join(os.tmpdir(),"ccdx-candidate-native-")),repository=fileURLToPath(new URL("../",import.meta.url));
-const baselineCommit="164edd0af96fa6563d34b50125ce6158797263f3",samples=[];
+const baselineCommit=options.get("--baseline-commit")||"164edd0af96fa6563d34b50125ce6158797263f3",samples=[];
+const fullBaseline=options.has("--baseline-commit"),reuseComponentPath=options.get("--reuse-component-path")==="true";
+assert.match(baselineCommit,/^[a-f0-9]{40}$/);
+assert.ok(!options.has("--reuse-component-path")||["true","false"].includes(options.get("--reuse-component-path")));
+assert.ok(!reuseComponentPath||fullBaseline,"Stable component execution requires a complete source baseline");
 const modelDirectory=worker?options.get("--model-directory"):path.join(root,"shared-model");assert.ok(path.isAbsolute(modelDirectory||""));
 if(!worker){
  fs.mkdirSync(modelDirectory,{recursive:true});
  for(const file of PRIVACY_MODEL_FILES){const bytes=fs.readFileSync(path.join(weights,file.name));assert.equal(bytes.length,file.bytes);assert.equal(createHash("sha256").update(bytes).digest("hex"),file.sha256);fs.copyFileSync(path.join(weights,file.name),path.join(modelDirectory,file.name));}
  if(fs.existsSync(path.join(weights,"coreml")))fs.cpSync(path.join(weights,"coreml"),path.join(modelDirectory,"coreml"),{recursive:true});
 }
-const baselineFiles=new Set(["local-privacy.mjs","privacy-model.mjs","privacy-detection.mjs"]),baselineRoot=path.join(root,"baseline-source");
-fs.mkdirSync(baselineRoot,{recursive:true});
-for(const name of baselineFiles){
- const source=execFileSync("git",["show",baselineCommit+":src/"+name],{cwd:repository,encoding:"utf8"})
-  .replace(/from "\.\/([^"]+)"/g,(_,file)=>"from "+JSON.stringify(pathToFileURL(path.join(baselineFiles.has(file)?baselineRoot:path.join(repository,"src"),file)).href));
- fs.writeFileSync(path.join(baselineRoot,name),source);
+const baselineFiles=new Set(["local-privacy.mjs","privacy-model.mjs","privacy-detection.mjs"]),baselineDirectory=options.get("--baseline-directory")||path.join(root,"baseline-source"),baselineRoot=fullBaseline?path.join(baselineDirectory,"src"):baselineDirectory;
+assert.ok(path.isAbsolute(baselineDirectory));
+if(fullBaseline){
+ if(!worker){
+  fs.mkdirSync(baselineDirectory,{recursive:true});
+  const archive=execFileSync("git",["archive",baselineCommit,"src","bin","package.json","package-lock.json"],{cwd:repository,maxBuffer:32*1024*1024});
+  execFileSync("tar",["-xf","-","-C",baselineDirectory],{input:archive});
+  const before=JSON.parse(fs.readFileSync(path.join(baselineDirectory,"package.json"))),after=JSON.parse(fs.readFileSync(path.join(repository,"package.json")));
+  for(const key of ["dependencies","optionalDependencies"])assert.deepEqual(before[key],after[key],"Install the exact baseline dependencies before comparing changed dependencies");
+  fs.symlinkSync(path.join(repository,"node_modules"),path.join(baselineDirectory,"node_modules"),process.platform==="win32"?"junction":"dir");
+ }
+}else{
+ fs.mkdirSync(baselineRoot,{recursive:true});
+ for(const name of baselineFiles){
+  const source=execFileSync("git",["show",baselineCommit+":src/"+name],{cwd:repository,encoding:"utf8"})
+   .replace(/from "\.\/([^"]+)"/g,(_,file)=>"from "+JSON.stringify(pathToFileURL(path.join(baselineFiles.has(file)?baselineRoot:path.join(repository,"src"),file)).href));
+  fs.writeFileSync(path.join(baselineRoot,name),source);
+ }
 }
 const {createLocalPrivacy:baseline}=await import(pathToFileURL(path.join(baselineRoot,"local-privacy.mjs")).href);
-const {createPrivacyModel:baselineModel}=await import(pathToFileURL(path.join(baselineRoot,"privacy-model.mjs")).href);
+const {createPrivacyModel:baselineModel,PRIVACY_COMPONENT_RELEASE:baselineRelease}=await import(pathToFileURL(path.join(baselineRoot,"privacy-model.mjs")).href);
+if(reuseComponentPath)assert.equal(baselineRelease,PRIVACY_COMPONENT_RELEASE,"The reused native component must be unchanged");
 const makeText=(count,chinese)=>Array.from({length:count},(_,i)=>chinese?"第"+i+"行包含普通说明文字和测试数据，不包含真实账户信息。\n":"line "+i+" contains ordinary sample text for an isolated history.\n").join("");
 const workloads=[{name:"short-fields",values:Array.from({length:80},(_,i)=>"ordinary field "+i),append:"one additional field"},
   {name:"long-english",values:[makeText(480,false)],append:makeText(20,false)},
@@ -50,20 +67,23 @@ try {
    if(!worker){
     const value=execFileSync(process.execPath,[fileURLToPath(import.meta.url),component,weights,output,baselineComponent,
       "--mode",control?"aa":"compare","--pairs",String(trials),"--timing","report","--machine",machine,
+      ...(fullBaseline?["--baseline-commit",baselineCommit,"--baseline-directory",baselineDirectory]:[]),...(reuseComponentPath?["--reuse-component-path","true"]:[]),
       "--sample",JSON.stringify({workload:workload.name,trial,label}),"--model-directory",modelDirectory],{
       cwd:repository,env:testEnvironment(root,{PATH:path.dirname(process.execPath)+path.delimiter+(process.env.PATH||"")}),encoding:"utf8",timeout:240000,maxBuffer:4*1024*1024});
     samples.push(JSON.parse(value));console.log(JSON.stringify({workload:workload.name,trial,variant:label,completed:true}));continue;
    }
    const home=path.join(root,workload.name,String(trial),label),env=testEnvironment(home,{XDG_CONFIG_HOME:path.join(home,"config"),XDG_CACHE_HOME:path.join(home,"cache")});
    const isBaseline=control||label.startsWith("baseline");
+   let sharedRunner;
    const detector=(isBaseline?baselineModel:createPrivacyModel)({home,env,fetchImpl:async()=>{throw Error("Candidate replay forbids downloads")},
-     spawnImpl:(file,_args,options)=>spawn(file,[modelDirectory],options)});let privacy;
+     spawnImpl:(file,_args,options)=>spawn(reuseComponentPath?sharedRunner:file,[modelDirectory],options)});let privacy;
    try {
     fs.mkdirSync(detector.paths.model,{recursive:true});fs.mkdirSync(path.dirname(detector.paths.runner),{recursive:true});
     for(const file of PRIVACY_MODEL_FILES)fs.linkSync(path.join(modelDirectory,file.name),path.join(detector.paths.model,file.name));
     const directory=isBaseline?baselineComponent:component,binary=fs.readFileSync(path.join(directory,detector.paths.name));
     if(isBaseline){const manifest=fs.readFileSync(path.join(directory,"SHA256SUMS"),"utf8");const expected=manifest.split("\n").find(line=>line.endsWith("  "+detector.paths.name))?.slice(0,64);assert.equal(createHash("sha256").update(binary).digest("hex"),expected,"Baseline component bytes changed");}
-    const release=isBaseline?"1.3.12":PRIVACY_COMPONENT_RELEASE,runner=path.join(detector.paths.components,release,detector.paths.name);fs.mkdirSync(path.dirname(runner),{recursive:true});fs.writeFileSync(runner,binary,{mode:0o700});
+    if(reuseComponentPath){sharedRunner=fs.realpathSync(path.join(component,detector.paths.name));assert.equal(createHash("sha256").update(fs.readFileSync(sharedRunner)).digest("hex"),createHash("sha256").update(binary).digest("hex"),"The shared executable bytes must match both variants");}
+    const release=isBaseline?baselineRelease:PRIVACY_COMPONENT_RELEASE,runner=path.join(detector.paths.components,release,detector.paths.name);fs.mkdirSync(path.dirname(runner),{recursive:true});fs.writeFileSync(runner,binary,{mode:0o700});
     fs.writeFileSync(runner+".json",JSON.stringify({release,abi:PRIVACY_COMPONENT_ABI,model_revision:PRIVACY_MODEL_REVISION,sha256:createHash("sha256").update(binary).digest("hex")}));
     const load=performance.now();await detector.load();if(!isBaseline)assert.equal(detector.snapshot().window_cache,true,"Window reuse capability missing");
     assert.equal(detector.snapshot().component_release,release,"The selected component changed during measurement");
@@ -73,7 +93,7 @@ try {
       onWindowWork(work){evaluations+=work.evaluated;hits+=work.hits+work.shared;totals+=work.total;cpuGroups+=work.cpu_batch_groups||0;cpuWindows+=work.cpu_batch_windows||0;options.onWindowWork?.(work)},
       onSubmitted(){calls++;bytes+=texts.reduce((sum,text)=>sum+Buffer.byteLength(text),0);options.onSubmitted?.()}});
       texts.forEach((text,index)=>findings.set(createHash("sha256").update(text).digest("hex"),found[index]));return found;}};
-    privacy=factory({home,env,model,...(isBaseline?{checkTimeoutMs:180000}:{})});
+    privacy=factory({home,env,model,...(isBaseline&&!fullBaseline?{checkTimeoutMs:180000}:{})});
     const first={messages:workload.values.map(content=>({role:"user",content}))},next=workload.name==="short-fields"?{messages:[...first.messages,{role:"user",content:workload.append}]}:{messages:[{role:"user",content:workload.values[0]+workload.append}]};
     const timings=[];
     for(const [phase,body]of [["cold",first],["append",next],["hot",next]]) {
@@ -105,7 +125,8 @@ try {
   }
  }
  const result={version:JSON.parse(fs.readFileSync(path.join(repository,"package.json"))).version,platform:process.platform,arch:process.arch,baseline_commit:baselineCommit,
-  comparison_scope:"Verified 1.3.12 baseline, paired fresh JS and native processes for every sample, same owned model directory with copied weights and acceleration cache. Detector caches are empty for cold input. Candidate uses production waits. Hot means amortized repeated same-body checks. No downloads, cloud inference or signed App execution.",
+  comparison_scope:fullBaseline?"Complete source baseline; paired fresh JS and native processes, same verified model and acceleration cache. Production waits in both variants; no detector-cache warmup before cold input. No downloads or cloud inference.":"Verified 1.3.12 baseline, paired fresh JS and native processes for every sample, same owned model directory with copied weights and acceleration cache. Detector caches are empty for cold input. Candidate uses production waits. Hot means amortized repeated same-body checks. No downloads, cloud inference or signed App execution.",
+  full_source_baseline:fullBaseline,reused_component_path:reuseComponentPath,
   mode:control?"aa":"compare",machine,runtime_fingerprint:privacyRuntimeFingerprint(repository),measurement_fingerprint:privacyMeasurementFingerprint(repository),
   machine_configuration:{platform:process.platform,arch:process.arch,os_release:os.release(),available_parallelism:os.availableParallelism()},samples,...analysis};
  fs.mkdirSync(output,{recursive:true});fs.writeFileSync(path.join(output,"privacy-candidate-"+process.platform+"-"+process.arch+".json"),JSON.stringify(result,null,2)+"\n");console.log(JSON.stringify(result));

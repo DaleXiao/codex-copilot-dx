@@ -448,8 +448,8 @@
 
         <section class="panel dashboard-section" aria-labelledby="context-compaction-heading">
           <h2 id="context-compaction-heading" data-i18n="context_compaction_heading">CONTEXT COMPRESSION</h2>
-          <div class="setting-row"><label for="setting-context_compaction_enabled" data-i18n="context_compaction_enabled">Automatic compression recovery</label><input id="setting-context_compaction_enabled" type="checkbox" role="switch" aria-describedby="context-compaction-note" disabled></div>
-          <p id="context-compaction-note" class="hint" data-i18n="context_compaction_note">Prefer source-native compression. When it is unavailable or rejects the input length, recover using the current source and model within bounded work. Uses quota.</p>
+          <div class="setting-row"><label for="setting-context_compaction_enabled" data-i18n="context_compaction_enabled">Recover failed compression automatically</label><input id="setting-context_compaction_enabled" type="checkbox" role="switch" aria-describedby="context-compaction-note" disabled></div>
+          <p id="context-compaction-note" class="hint" data-i18n="context_compaction_note">Use the current source and model when native compression is unavailable or the input is too long. Uses quota.</p>
         </section>
 
         <section class="panel dashboard-section" id="version-updates" aria-labelledby="version-updates-title">

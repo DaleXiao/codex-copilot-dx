@@ -59,6 +59,16 @@ test("Gemini name-only results require an unambiguous call in the same session",
   activity.request(() => meta("b".repeat(64), "gemini_app")).input({ contents: [{ parts: [{ functionResponse: { name: "same" } }] }] }, "gemini");
   assert.equal(activity.snapshot().items.filter(x => x.name === "same" && x.state === "waiting").length, 2);
 });
+test("Gemini streamed calls with the same part position keep distinct IDs and names", () => {
+  const activity = createToolActivity(), m = () => meta("a".repeat(64), "gemini_app"), request = activity.request(m);
+  for (const [id, name] of [["one", "read_file"], ["two", "search_files"]]) request.output({ response: { candidates: [{ content: { parts: [{ functionCall: { id, name } }] } }] } }, "gemini");
+  request.finish("completed");assert.equal(activity.snapshot().items.length, 2);
+  activity.request(m).input({ contents: [{ parts: [{ functionResponse: { id: "one", name: "read_file" } }] }] }, "gemini");
+  assert.deepEqual(activity.snapshot().items.map(row => row.state).sort(), ["returned", "waiting"]);
+  const noId = activity.request(() => meta("b".repeat(64), "gemini_app"));
+  for (let i = 0; i < 2; i++) noId.output({ functionCall: { name: "same" }, index: 0 }, "gemini");
+  noId.finish("completed");assert.equal(activity.snapshot().items.find(row => row.name === "same").state, "unknown");
+});
 
 test("unknown sessions and stale observations stop waiting without inventing tool completion", () => {
   let time = 0;const activity = createToolActivity({ now: () => time });

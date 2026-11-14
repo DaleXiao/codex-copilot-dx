@@ -32,6 +32,17 @@ test("native Google and Copilot tool results update the same isolated activity c
     assert.doesNotMatch(JSON.stringify(performance.snapshot().tool_activity),/not retained|observed-tool-session/);
   }
 });
+test("Copilot Antigravity streaming keeps parallel calls distinct across separate chunks",async()=>{
+  let requests=0;const performance=createStreamPerformanceMetrics({routeNames:["antigravity"]});
+  const toolCalls=["read_file","search_files"].map((name,index)=>({index,id:`parallel-${index}`,type:"function",function:{name,arguments:"{}"}}));
+  const f=fixture({client:{chatCompletions:async()=>requests++?sse("continued"):new Response('data: '+JSON.stringify({choices:[{delta:{tool_calls:toolCalls},finish_reason:"tool_calls"}]})+'\n\ndata: [DONE]\n\n',{headers:{"content-type":"text/event-stream"}})}});
+  const call=async value=>{const tracker=performance.begin("antigravity",{application:"gemini_app"});const result=await runWithRequestContext({streamPerformance:tracker},()=>invoke(f.handler,value).done);tracker.finish({statusCode:result.status});return result;};
+  const initial=body();initial.request.labels={root_cascade_id:"parallel-tool-session"};initial.request.tools=[{functionDeclarations:toolCalls.map(call=>({name:call.function.name,parameters:{type:"OBJECT",properties:{}}}))}];
+  const result=await call(initial);assert.equal(result.status,200);assert.equal(performance.snapshot().tool_activity.items.length,2);
+  const parts=result.text.split('\n').filter(line=>line.startsWith('data: ')).flatMap(line=>JSON.parse(line.slice(6)).response?.candidates?.[0]?.content?.parts||[]).filter(part=>part.functionCall);
+  assert.equal(parts.length,2);const next=structuredClone(initial);next.request.contents.push({role:"model",parts},{role:"user",parts:parts.map(part=>({functionResponse:{id:part.functionCall.id,name:part.functionCall.name,response:{result:"complete"}}}))});
+  assert.equal((await call(next)).status,200);assert.ok(performance.snapshot().tool_activity.items.every(row=>row.state==="returned"));
+});
 
 test("known Google compaction stays on Google and recovers within the same model",async()=>{
   const calls=[],records=[],compaction=createContextCompactionService({recordUsageFn:record=>records.push(record)});

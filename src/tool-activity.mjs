@@ -60,7 +60,14 @@ export function createToolActivity({ now = Date.now, changed = () => {} } = {}) 
           return;
         }
         if (protocol === "gemini") {
-          if (value.functionCall) record(value.functionCall.id, value.functionCall.name, `gemini:${value.index ?? value.functionCall.name}`);
+          if (value.functionCall) {
+            const id = idOf(value.functionCall.id), name = nameOf(value.functionCall.name);
+            if (!id && !name) return;
+            const alias = id ? undefined : `gemini:${name}:${value.index ?? 0}`;
+            const prior = alias === undefined ? null : aliases.get(alias);
+            if (prior) prior.ambiguous = true;
+            record(id, name, alias);
+          }
           else for (const candidate of items((value.response || value).candidates)) for (const [index, part] of items(candidate?.content?.parts).entries()) {
             if (part?.functionCall) output({ functionCall: part.functionCall, index }, protocol);
           }
@@ -112,7 +119,7 @@ export function createToolActivity({ now = Date.now, changed = () => {} } = {}) 
         finish(outcome) {
           for (const entry of owned) {
             entry.scope = scope();
-            change(entry, outcome === "completed" ? metadata().session ? "waiting" : "unknown" : ["failed", "cancelled"].includes(outcome) ? outcome : "unknown");
+            change(entry, outcome === "completed" ? metadata().session && !entry.ambiguous ? "waiting" : "unknown" : ["failed", "cancelled"].includes(outcome) ? outcome : "unknown");
           }
         },
       };
@@ -120,7 +127,7 @@ export function createToolActivity({ now = Date.now, changed = () => {} } = {}) 
     snapshot() {
       sweep();const time = now(), all = [...entries.values()].reverse();
       all.sort((a, b) => Number(pending(b.state)) - Number(pending(a.state)));
-      return { items: all.slice(0, TOOL_ACTIVITY_LIMITS.visible).map(({ key, scope, result_key, updated, ...entry }) => ({ ...entry,
+      return { items: all.slice(0, TOOL_ACTIVITY_LIMITS.visible).map(({ key, scope, result_key, ambiguous, updated, ...entry }) => ({ ...entry,
         expires_in_ms: Math.max(0, (pending(entry.state) ? TOOL_ACTIVITY_LIMITS.stale_ms : entry.state === "unknown" ? TOOL_ACTIVITY_LIMITS.unknown_ms : TOOL_ACTIVITY_LIMITS.terminal_ms) - (time - updated)) })),
       omitted: Math.max(0, all.length - TOOL_ACTIVITY_LIMITS.visible), limits: TOOL_ACTIVITY_LIMITS };
     },

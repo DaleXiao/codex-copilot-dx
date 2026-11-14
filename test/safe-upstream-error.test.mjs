@@ -22,6 +22,18 @@ test("specific failures retain only a safe field and bounded technical maximum",
   assert.equal(classifyUpstreamError({ error: { message: "input tokens exceed context window" } }, 400).code, "context_length_exceeded");
 });
 
+test("input-range failures retain only a validated range and client-recognizable wording", () => {
+  for (const maximum of [1048576, 262144, 128000]) {
+    const reason = classifyUpstreamError({ error: { type: "invalid_request_error", message: `Range of input length should be [1, ${maximum}]` } }, 400);
+    assert.equal(reason.code, "input_length_invalid");assert.equal(reason.maximum, maximum);
+    assert.equal(reason.message, `Range of input length should be [1, ${maximum}].`);
+  }
+  for (const message of ["Range of input length should be [1, 0]", "Range of input length should be [1, 9999999999]", "Range of max_tokens should be [1, 128000]",
+    "policy_blocked: Range of input length should be [1, 1048576]", "content: Range of input length should be [1, 1048576]"])
+    assert.notEqual(classifyUpstreamError({ error: { type: "invalid_request_error", message } }, 400)?.code, "input_length_invalid");
+  assert.equal(classifyUpstreamError({ error: { message: "Range of input length should be [1, 1048576]" } }, 429), null);
+});
+
 test("only known structured error codes and compatible statuses become safe reasons", async () => {
   for (const [status, code, recognized] of [[429, "credit_balance_exhausted", true], [429, "insufficient_quota", true],
     [429, "rate_limit_exceeded", true], [400, "context_length_exceeded", true], [422, "context_window_exceeded", true],

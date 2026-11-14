@@ -1,6 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createApiTokenCounter } from '../src/providers/api-token-count.mjs';
+import { createApiProvider } from '../src/providers/api.mjs';
+
+test('Messages counting and generation send the same reasoning and tool controls', async () => {
+ const sent=[],provider=createApiProvider({env:{},secrets:{get:async()=> 'synthetic-key'},config:{id:'api_wire',name:'Wire',base_url:'https://example.test/v1',endpoints:{messages:'https://example.test/v1/messages'},auth_header:'bearer',secret_ref:'a'.repeat(32),models:[{id:'wire-model',protocols:['messages']}]},
+  networkFactory:async()=>({close(){},fetch:async(url,init)=>{sent.push({url,body:JSON.parse(init.body)});return Response.json(url.endsWith('/count_tokens')?{input_tokens:12}:{type:'message',content:[],stop_reason:'end_turn'});}})});
+ try{
+  const input={model:'wire-model',messages:[{role:'user',content:'synthetic'}],system:'synthetic system',tools:[{name:'lookup',input_schema:{type:'object',properties:{}}}],thinking:{type:'adaptive'},output_config:{effort:'high'},tool_choice:{type:'auto'}};
+  await provider.client.messages(input,{countTokens:true});await provider.client.messages({...input,max_tokens:32});
+  assert.ok(sent[0].url.endsWith('/count_tokens'));assert.ok(sent[1].url.endsWith('/messages'));
+  for(const key of ['model','messages','system','tools','thinking','output_config','tool_choice'])assert.deepEqual(sent[0].body[key],sent[1].body[key],key);
+ }finally{await provider.close();}
+});
 const turn = () => new Promise(resolve => setImmediate(resolve));
 const body = { model: 'example-model', messages: [{ role: 'user', content: 'synthetic' }] };
 

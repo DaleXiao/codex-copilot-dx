@@ -141,8 +141,10 @@ export function createApiProvider({ config, secrets, env = process.env, platform
         if (/^\d{1,8}$/.test(retry || "")) safeHeaders["Retry-After"] = retry;
         else if (retry && Number.isFinite(Date.parse(retry))) safeHeaders["Retry-After"] = new Date(retry).toUTCString();
         const requestId=currentRequestContext()?.requestId;
-        const message=(reason?.message||"The source rejected the request (HTTP "+result.status+"); no recognised technical reason was returned.")+" Source: "+redactDiagnosticText(config.name||config.id)+". Model: "+redactDiagnosticText(body?.model||"unknown")+". API: "+api+"."+(requestId?" Request: "+requestId+".":"");
-        return new Response(JSON.stringify({ type: "error", error: { type: "api_error", code, message,
+        const contextOverflow = api === "messages" && ["context_length_exceeded", "context_window_exceeded"].includes(reason?.code);
+        const message=(contextOverflow ? "prompt is too long. " : "")+(reason?.message||"The source rejected the request (HTTP "+result.status+"); no recognised technical reason was returned.")+" Source: "+redactDiagnosticText(config.name||config.id)+". Model: "+redactDiagnosticText(body?.model||"unknown")+". API: "+api+"."+(requestId?" Request: "+requestId+".":"");
+        const errorType = api === "messages" && ["input_length_invalid", "context_length_exceeded", "context_window_exceeded"].includes(reason?.code) ? "invalid_request_error" : "api_error";
+        return new Response(JSON.stringify({ type: "error", error: { type: errorType, code, message,
           ...(reason ? { upstream_code: reason.code, ...(reason.parameter ? { param: reason.parameter } : {}), ...(reason.maximum ? { maximum: reason.maximum } : {}) } : {}) } }), { status: result.status, headers: safeHeaders });
       }
       return result;

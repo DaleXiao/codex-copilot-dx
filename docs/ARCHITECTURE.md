@@ -1191,7 +1191,7 @@ The image and input-suggestion panels share `codex-launch-control.mjs`. `codex-a
 
 The managed Codex catalog projects explicit source input modalities ahead of native templates and checks GitHub priority eligibility against the full live source registry. Unknown modality metadata keeps the prior fallback. Source identities, selected models and routing remain unchanged.
 
-`safe-upstream-error.mjs` reads only failed image or custom API responses, with a 64 KiB size bound, a 200 ms timer and four concurrent readers. Only fixed code/status pairs and local messages escape the reader. Original status, stable CCDX codes and validated Retry-After remain intact. Error-header callbacks normally release request admission before the optional body read; an eligible explicit compatibility rejection retains admission through its one retry. Image processing slots are released before their error read. Count-token singleflight forwards callbacks only to the appropriate waiters. Successful requests never invoke the reader.
+`safe-upstream-error.mjs` reads only failed image or custom API responses, with a 64 KiB size bound, a 200 ms timer and four concurrent readers. Default evidence exposes only fixed categories, validated parameter paths, numeric maxima and local messages. Original status, stable CCDX codes and validated Retry-After remain intact. Error-header callbacks normally release request admission before the optional body read; an eligible explicit compatibility rejection retains admission through its one retry. Image processing slots are released before their error read. Count-token singleflight forwards callbacks only to the appropriate waiters. Successful requests never invoke the reader.
 
 ## Client updates and streaming boundaries
 
@@ -1205,6 +1205,8 @@ Responses and Messages parsers, Chat line reading and the privacy restoration la
 ### API diagnostics, request purpose, cooldown and import
 
 `safe-upstream-error.mjs` reads failure bodies within existing time/size/concurrency bounds. Only fixed categories, allowlisted parameter paths and bounded technical maxima leave the reader. The API wrapper adds source/model/protocol and local request identity, retaining a safe upstream request ID. Default failure evidence excludes vendor messages and payloads.
+
+`upstream-error-capture.mjs` owns explicit, process-local one-shot consent shared by API instances. The existing same-origin settings action and `requests diagnose` command arm an enabled Messages source/model for ten minutes. The first matching 400/422 claims the capture before reading its body, using the existing reader bounds. Explicit diagnostic text removes the actual source key and common credential/content echoes before the 512-character bound. State retains the result even if an existing compatibility retry succeeds; cancellation invalidates in-flight completion. Capturing does not write settings, request bodies or transcripts, add timers or make model calls. Success paths do not scan diagnostic text.
 
 `model-capabilities.mjs` validates explicit limits and protocol-scoped supported-parameter lists. Unknown declarations remain absent. `provider-cooldown.mjs` holds three bounded interface states per API instance. Two confirmed transport failures or temporary server failures open a five-second cooldown, extended by bounded Retry-After. One real request becomes the recovery attempt; client cancellation leaves recovery available. Credential/config instance replacement resets this state. No traffic is switched or replayed by cooldown.
 

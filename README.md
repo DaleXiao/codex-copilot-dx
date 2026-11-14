@@ -55,6 +55,7 @@ Model availability depends on your account and service. Microsoft 365 also requi
 | Preview client setup | `ccdx app claude-app sync --preview` |
 | Set up Antigravity | `ccdx app antigravity status` / `enable` / `open` |
 | Inspect failures | `ccdx requests --failed` |
+| Capture one upstream error | `ccdx requests diagnose --source api_work --model model-id --yes` |
 | Read usage | `ccdx usage` / `ccdx usage --provider google --days 7` / `ccdx usage --purpose diagnostic` / `ccdx usage --scope run` |
 | Inspect preferences | `ccdx config show --effective` |
 | Inspect local masking | `ccdx config privacy status` |

@@ -32,7 +32,7 @@ export function apiCatalog(config, env = process.env) {
     supported_endpoints: model.protocols.map(api => paths[api]), model_picker_enabled: true, policy: { state: "enabled" },
     capability, protocol_capabilities }); });
 }
-export function createApiProvider({ config, secrets, env = process.env, platform = process.platform, networkFactory = createApiNetwork, modelDisplay = () => ({}), now = Date.now } = {}) {
+export function createApiProvider({ config, secrets, env = process.env, platform = process.platform, networkFactory = createApiNetwork, modelDisplay = () => ({}), now = Date.now, errorCapture } = {}) {
   const cooldowns = Object.fromEntries(["messages", "responses", "chat"].map(protocol => [protocol, createProviderCooldown({ now })]));
   const catalog = apiCatalog(config, env);
   const fingerprint = config.key_env ? createHash("sha256").update(env[config.key_env] || "").digest("hex") : "";
@@ -107,7 +107,16 @@ export function createApiProvider({ config, secrets, env = process.env, platform
         const schemaCandidate = api === "messages" && !options.countTokens && [400, 422].includes(result.status)
           && !options.compatibilityRetried && hasRootToolSchema(body);
         if (!adapted && !schemaCandidate) try { options.onUpstreamErrorHeaders?.(result.status); } catch { /* Optional admission release cannot hide the upstream response. */ }
-        const reason = await readSafeUpstreamReason(result, { signal: options.signal, missingCallId: Boolean(adapted), rootToolSchema: schemaCandidate });
+        const context = currentRequestContext();
+        const finishCapture = options.countTokens ? null : errorCapture?.claim(config.id, body?.model, api, result.status, context?.requestId);
+        let reason;
+        try {
+          reason = await readSafeUpstreamReason(result, { signal: options.signal, missingCallId: Boolean(adapted), rootToolSchema: schemaCandidate,
+            ...(finishCapture ? { diagnosticRedact: text => text.replaceAll(key, "[redacted]") } : {}) });
+        } finally {
+          const retained = finishCapture?.(reason?.diagnostic_message);
+          if (retained && reason?.diagnostic_message) context?.onHttpError?.({ diagnostic_message: reason.diagnostic_message });
+        }
         if (adapted && reason?.code === "ccdx_missing_call_id") {
           const recovered = await request(url, adapted, { ...options, bodyText: undefined, compatibilityRetried: true }, api);
           if (recovered.ok) Object.defineProperty(recovered, CALL_LESS_TOOL_RETRIED, { value: true });

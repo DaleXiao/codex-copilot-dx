@@ -2,6 +2,15 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readSafeUpstreamReason, classifyUpstreamError } from "../src/safe-upstream-error.mjs";
 
+test("explicit diagnostic consent retains a bounded message without changing the default reason", async () => {
+  const body = { error: { type: "invalid_request_error", message: "field invalid; key is private-literal; authorization=Bearer token-value; content: user echo" } };
+  const normal = await readSafeUpstreamReason(Response.json(body, { status: 400 }));
+  assert.equal(normal.diagnostic_message, undefined);
+  const detailed = await readSafeUpstreamReason(Response.json(body, { status: 400 }), { diagnosticRedact: text => text.replaceAll("private-literal", "[redacted]") });
+  assert.equal(detailed.code, normal.code);assert.equal(detailed.message, normal.message);
+  assert.ok(detailed.diagnostic_message.length <= 512);assert.doesNotMatch(detailed.diagnostic_message, /private-literal|token-value|user echo/);
+});
+
 test("specific failures retain only a safe field and bounded technical maximum", () => {
   const output = classifyUpstreamError({ error: { type: "invalid_request_error", message: "max_output_tokens invalid; at most 32,768. Private prompt: fixture-private", param: "max_output_tokens" } }, 400);
   assert.equal(output.code, "output_limit_invalid");assert.equal(output.parameter, "max_output_tokens");assert.equal(output.maximum, 32768);

@@ -59,6 +59,18 @@ function fixture() {
   const run = args => runManagementCommand(parseCliArgs(args), options);
   return { state, data, calls, output, options, run };
 }
+test("one-shot upstream diagnostics use the running service and validate writes before IO", async () => {
+  const f = fixture();f.options.request = async input => { f.calls.push(input);return { error_capture: { state: input.body ? "armed" : "off" } }; };
+  assert.equal(JSON.parse(await f.run(["requests", "diagnose", "--format", "json"])).state, "off");
+  f.calls.length = 0;
+  for (const args of [["--source", "api_work"], ["--cancel", "--model", "model"]]) await assert.rejects(f.run(["requests", "diagnose", ...args]));
+  await f.run(["requests", "diagnose", "--source", "api_work", "--model", "model", "--preview"]);
+  assert.equal(f.calls.length, 0);
+  await f.run(["requests", "diagnose", "--source", "api_work", "--model", "model", "--yes"]);
+  assert.deepEqual(f.calls.at(-1), { path: "settings", body: { action: "error_capture", operation: "arm", source: "api_work", model: "model" } });
+  await f.run(["requests", "diagnose", "--cancel", "--yes"]);
+  assert.deepEqual(f.calls.at(-1).body, { action: "error_capture", operation: "cancel" });
+});
 test("app list uses observed Gemini state without inspecting the native App",async()=>{
   const f=fixture();
   let rows=JSON.parse(await f.run(["app","list","--format","json"]));

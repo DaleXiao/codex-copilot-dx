@@ -1,9 +1,9 @@
 import { isMissingCallIdError } from "./responses-tool-output.mjs";
 import { isRootToolSchemaError } from "./messages-tool-schema.mjs";
-import { redactDiagnosticText } from "./diagnostic-text.mjs";
+import { redactDiagnosticText, boundedDiagnosticText } from "./diagnostic-text.mjs";
 
-// Only fixed, documented-shaped codes leave this module; vendor messages and
-// request data are never returned or logged.
+// Default evidence contains only fixed categories. A separately authorized
+// one-shot capture can retain a bounded, redacted technical message.
 const reasons = new Map([
   ["credit_balance_exhausted", { statuses: [429], message: "The source account has no remaining credits." }],
   ["insufficient_quota", { statuses: [429], message: "The source account has insufficient quota." }],
@@ -73,7 +73,7 @@ function readChunk(reader, signal) {
 
 // Failure responses only. A stalled body or a stalled cancellation cannot delay
 // the caller beyond the budget. The original request's cancellation wins.
-export async function readSafeUpstreamReason(response, { signal, timeoutMs = 200, maxBytes = 64 * 1024, missingCallId = false, rootToolSchema = false } = {}) {
+export async function readSafeUpstreamReason(response, { signal, timeoutMs = 200, maxBytes = 64 * 1024, missingCallId = false, rootToolSchema = false, diagnosticRedact } = {}) {
   if (signal?.aborted) {
     cancelBody(response?.body);
     signal.throwIfAborted();
@@ -99,10 +99,16 @@ export async function readSafeUpstreamReason(response, { signal, timeoutMs = 200
       chunks.push(chunk);
     }
     const text = Buffer.concat(chunks, bytes).toString("utf8");
-    if (missingCallId && isMissingCallIdError(response.status, text)) return { code: "ccdx_missing_call_id", message: "The source requires a tool call ID." };
-    if (rootToolSchema && isRootToolSchemaError(response.status, text)) return { code: "ccdx_tool_schema_root_unsupported", message: "The source rejected a tool's root schema." };
     let value;try { value = JSON.parse(text); } catch { value=text; }
-    return classifyUpstreamError(value,response.status);
+    const reason = missingCallId && isMissingCallIdError(response.status, text)
+      ? { code: "ccdx_missing_call_id", message: "The source requires a tool call ID." }
+      : rootToolSchema && isRootToolSchemaError(response.status, text)
+        ? { code: "ccdx_tool_schema_root_unsupported", message: "The source rejected a tool's root schema." }
+        : classifyUpstreamError(value,response.status);
+    if (!diagnosticRedact) return reason;
+    const error = value?.error ?? value, message = typeof error === "string" ? error : error?.message;
+    if (typeof message !== "string") return reason;
+    return { ...reason, diagnostic_message: boundedDiagnosticText(diagnosticRedact(message), { maxChars: 512 }) };
   } catch (error) {
     if (signal?.aborted) signal.throwIfAborted();
     return null;

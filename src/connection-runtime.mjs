@@ -33,6 +33,7 @@ import { inspectClaudeCapabilitySupport } from "./claude-capability-config.mjs";
 import { inspectClaudeAppContract, watchClaudeAppContract } from "./claude-app-contract.mjs";
 import { deploymentModelId, deploymentRevision } from "./model-capabilities.mjs";
 import { m365Paths } from "./m365-settings.mjs";
+import { createUpstreamErrorCapture } from "./upstream-error-capture.mjs";
 
 export function createConnectionRuntime({
   legacy,
@@ -64,6 +65,7 @@ export function createConnectionRuntime({
   });
   const memoryModel = createCodexMemoryModel({ ...options, corePort });
   const privacy = createLocalPrivacy(options);
+  const errorCapture = createUpstreamErrorCapture({ now });
   let settings = readAccessSettings(options),
     managed = fs.existsSync(accessSettingsPath(options)),
     serial = Promise.resolve(),
@@ -161,6 +163,7 @@ export function createConnectionRuntime({
       env: { ...env },
       platform,
       modelDisplay: model => modelDisplay.get(id, revision, model),
+      errorCapture,
     });
     instances.set(id, { signature, source, config, revision });
     lifecycle.rememberSource(source, config.secret_ref);
@@ -340,6 +343,14 @@ export function createConnectionRuntime({
     },
     source: getSource,
     connections: snapshot,
+    errorCaptureSnapshot: () => errorCapture.snapshot(),
+    captureUpstreamError({ operation, source, model }) {
+      if (operation === "cancel") return errorCapture.cancel();
+      const config = settings.apis.find(api => api.id === source && api.enabled);
+      if (operation !== "arm" || !config?.models.some(entry => entry.id === model && entry.protocols.includes("messages")))
+        throw accessError("ccdx_connections_action_invalid");
+      return errorCapture.arm(source, model);
+    },
     privateScopes: id =>
       [...new Set(plan(id).models.map(model => model.source_id))]
         .sort()

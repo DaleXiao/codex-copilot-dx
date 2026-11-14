@@ -50,6 +50,19 @@ test("settings browser API requires loopback, a same-origin write, bounded JSON 
   }
   const invalid = await invokeAdapter(options, { url: "/_ccdx/ui/settings", headers, body: { ...body, value: "false" } });assert.equal(invalid.status, 400);
 });
+test("settings diagnostics expose process-local state and preserve the same-origin boundary", async t => {
+  const f = fixture(t), calls = [];let state = { state: "off" };
+  const control = createServiceControl({ home: f.home, env: {}, providerRuntime: { snapshot: () => ({}), errorCaptureSnapshot: () => state,
+    captureUpstreamError(input) { calls.push(input);return state = { state: "armed" }; } } });
+  const options = { dashboardOptions: { serviceControl: control, env: {}, home: f.home } }, body = { action: "error_capture", operation: "arm", source: "api_work", model: "model" };
+  const headers = { host: "127.0.0.1:2026", "x-ccdx-dashboard": "1", origin: "http://127.0.0.1:2026" };
+  assert.equal(control.snapshot().error_capture.state, "off");
+  assert.equal((await invokeAdapter(options, { url: "/_ccdx/ui/settings", headers: { ...headers, origin: "https://evil.invalid" }, body })).status, 403);
+  assert.equal(calls.length, 0);
+  const result = await invokeAdapter(options, { url: "/_ccdx/ui/settings", headers, body });
+  assert.equal(result.status, 200);assert.equal(JSON.parse(result.text).error_capture.state, "armed");assert.equal(calls.length, 1);
+  await assert.rejects(control.action({ ...body, prompt: "not accepted" }));assert.equal(calls.length, 1);
+});
 
 test("generic preferences cannot activate masking before the model preparation transaction", async t => {
   const f = fixture(t), { settingsPreferencesSnapshot } = await import("../src/settings-preferences.mjs");

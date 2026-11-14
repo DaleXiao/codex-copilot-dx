@@ -183,6 +183,7 @@ export const MANAGED_COMMANDS = [
     "--limit": "integer",
   }),
   command("requests show <request>", "Show a retained request and its original diagnostic fields", read),
+  command("requests diagnose", "Capture one redacted upstream Messages error; expires after ten minutes", { ...read, ...confirm, "--source": "value", "--model": "value", "--cancel": "flag" }),
   command("status", "Show service state; expand diagnostics explicitly", { ...read, "--details": "flag" }),
   command("usage", "Show all recorded usage or this service run", {
     ...read,

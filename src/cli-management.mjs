@@ -112,6 +112,17 @@ export async function runManagementCommand(command, options = {}) {
       `Model requests: ${view.requests ?? "unknown"} total · ${view.active ?? "unknown"} active · ${view.outcomes.failed} failed`].join("\n");
   }
   if (group === "requests") {
+    if (action === "diagnose") {
+      if (flags.source || flags.model || flags.cancel) {
+        if (!flags.cancel && (!flags.source || !flags.model)) throw new Error("Use --source ID and --model ID together.");
+        if (flags.cancel && (flags.source || flags.model)) throw new Error("Use --cancel alone.");
+        if (flags.preview) return print({ source: flags.source, model: flags.model, operation: flags.cancel ? "cancel" : "arm", saved: false, error_limit: 512, expires_minutes: 10 });
+        await confirm(flags.cancel ? "Cancel the pending capture?" : "Capture one redacted technical error (up to 512 characters)? It may contain a request fragment; no prompt body is saved.");
+        const result = await request({ path: "settings", body: { action: "error_capture", operation: flags.cancel ? "cancel" : "arm", ...(flags.cancel ? {} : { source: flags.source, model: flags.model }) } });
+        return print(result.error_capture);
+      }
+      return print((await request({ path: "settings" })).error_capture || { state: "unsupported" });
+    }
     let rows = retainedRequests((await readStatus()).data);
     if (ids.request) {
       const found = rows.find(row => row.request_id === ids.request);if (!found) throw new Error("Request not retained. No full-history lookup is available.");return print(found);

@@ -32,6 +32,7 @@ export function createServiceControl({ env = process.env, home, providerRuntime,
     return { source: "service_settings", saved, theme, color_theme, preferences: settingsPreferencesSnapshot(options), local_privacy: localPrivacy,
       features: { prediction: { ...featureSnapshot(predictionControlSnapshot), bridge: prediction?.bridge || "stopped", active: prediction?.active === true }, image: { ...image, runtime: imageHostState.snapshot() } },
       decoded_body: decodedBodyLimitPreference(options), manual_update: { available: typeof manualUpdate === "function" }, last_operation: lastOperation,
+      ...(providerRuntime?.errorCaptureSnapshot ? { error_capture: providerRuntime.errorCaptureSnapshot() } : {}),
       nightly_update: { enabled, ...nightly, effect: enabled && !nightly ? "next_start" : "immediate" },
       effective: {
         privacy_enabled: { value: localPrivacy?.effective_enabled === true, state: !localPrivacy ? "unavailable" : !localPrivacy.enabled ? "off" : localPrivacy.state === "ready" ? "ready" : "not_ready" },
@@ -51,11 +52,15 @@ export function createServiceControl({ env = process.env, home, providerRuntime,
       prediction: ["action", "operation"], image: ["action", "operation", "model", "evidence", "confirmed"],
       codex_app: ["action", "operation", "intent", "confirmed"],
       update: ["action", "confirmed"], decoded_limit: ["action", "mib"],
+      error_capture: ["action", "operation", "source", "model"],
       preferences: ["action", "values", "revision"], reset_preferences: ["action", "revision", "backup_id", "scope"], restore_preferences: ["action", "revision", "backup_id", "scope"],
       provider: ["action", "operation", "provider", "model", "auto_review_model", "auto_review_effort", "account_id"] }[input.action];
     if (!allowed || Object.keys(input).some(key => !allowed.includes(key))) throw new Error("Unknown setting action or field");
     lastOperation = null;
-    if (input.action === "codex_app") {
+    if (input.action === "error_capture") {
+      if (!providerRuntime?.captureUpstreamError) throw new Error("This service cannot capture upstream errors.");
+      lastOperation = { feature: "error_capture", result: providerRuntime.captureUpstreamError(input) };
+    } else if (input.action === "codex_app") {
       lastOperation = { feature: "codex_app", result: await codexLaunchControl(input.operation, { ...options, host: adapterHost, port: adapterPort,
         integration: clientIntegration, state: imageHostState, intent: input.intent, confirmed: input.confirmed, models: providerRuntime?.imageModels?.().models || [] }) };
     } else if (input.action === "prediction") {

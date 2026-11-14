@@ -6,6 +6,26 @@ import { createAdapterHandler } from '../src/adapter.mjs';
 import { createRequestAdmission } from '../src/request-admission.mjs';
 import { invokeAdapterRequest } from '../test-support/adapter.mjs';
 import { Readable } from 'node:stream';
+import { createUpstreamErrorCapture } from '../src/upstream-error-capture.mjs';
+import { runWithRequestContext } from '../src/request-context.mjs';
+
+test('one-shot diagnostics stay on the original provider path and redact credentials before retention', async () => {
+  const capture = createUpstreamErrorCapture(), observed = [], key = 'fixture-private-literal';
+  const provider = createApiProvider({ config: { id: 'api_capture', name: 'Capture', base_url: 'https://example.test/v1',
+    endpoints: { messages: 'https://example.test/v1/messages' }, secret_ref: 'a'.repeat(32), auth_header: 'bearer', models: [{ id: 'kimi', protocols: ['messages'] }] },
+    env: {}, errorCapture: capture, secrets: { get: async () => key }, networkFactory: async () => ({ close() {}, fetch: async () =>
+      Response.json({ error: { type: 'invalid_request_error', message: 'Unexpected message field; key=' + key + '; content: private request echo' } }, { status: 400 }) }) });
+  const request = id => runWithRequestContext({ requestId: id, onHttpError: e => observed.push(e) }, () => provider.client.messages({ model: 'kimi', max_tokens: 32, messages: [] }));
+  try {
+    await request('before');assert.deepEqual(observed, []);
+    capture.arm('api_capture', 'kimi');const response = await request('chosen');
+    assert.equal(response.status, 400);assert.equal(capture.snapshot().state, 'captured');
+    assert.equal(capture.snapshot().request_id, 'chosen');assert.equal(observed.length, 1);
+    assert.doesNotMatch(JSON.stringify(observed) + JSON.stringify(capture.snapshot()), /fixture-private-literal|private request echo/);
+    assert.doesNotMatch(await response.text(), /Unexpected message field|fixture-private-literal|private request echo/);
+    await request('after');assert.equal(observed.length, 1);
+  } finally { provider.close(); }
+});
 
 test('Responses errors retain safe JSON and backoff in streaming and JSON requests', async () => {
   for (const stream of [false, true]) for (const status of [401, 403, 429, 500, 503]) {

@@ -92,6 +92,58 @@ test("withFileLock: serializes concurrent lock holders", async () => {
   assert.equal(fs.existsSync(lockPath), false);
 });
 
+test("withFileLock: Windows transient creation denial retries without replaying the protected write", async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-lock-delete-pending-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const lock = path.join(dir, "state.lock");let attempts = 0, writes = 0;
+  const fsImpl = new Proxy(fs, { get(target, key) {
+    if (key !== "openSync") return Reflect.get(target, key);
+    return (file, flags, ...args) => {
+      if (file === lock && flags === "wx" && ++attempts <= 2) throw Object.assign(new Error("delete pending"), { code: "EPERM", path: lock });
+      return target.openSync(file, flags, ...args);
+    };
+  } });
+  await withFileLock(lock, () => { writes++; }, { platform: "win32", fsImpl, timeoutMs: 100, pollMs: 1 });
+  assert.equal(attempts, 3);assert.equal(writes, 1);assert.equal(fs.existsSync(lock), false);
+});
+
+test("withFileLock: persistent Windows creation denial preserves its error at the original deadline", async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-lock-denied-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const lock = path.join(dir, "state.lock"), error = Object.assign(new Error("access denied"), { code: "EPERM", path: lock });
+  let time = 0, attempts = 0, writes = 0;
+  const fsImpl = new Proxy(fs, { get(target, key) {
+    if (key !== "openSync") return Reflect.get(target, key);
+    return (file, flags, ...args) => {
+      if (file === lock && flags === "wx") { attempts++;time += 10;throw error; }
+      return target.openSync(file, flags, ...args);
+    };
+  } });
+  await assert.rejects(withFileLock(lock, () => { writes++; }, {
+    platform: "win32", fsImpl, now: () => time, timeoutMs: 20, pollMs: 1,
+  }), actual => actual === error);
+  assert.equal(attempts, 2);assert.equal(writes, 0);assert.deepEqual(fs.readdirSync(dir), []);
+});
+
+test("withFileLock: other permission errors are immediate and never remove another owner", async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-lock-permissions-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const lock = path.join(dir, "state.lock"), owner = JSON.stringify({ pid: process.pid, owner: "live" });
+  fs.writeFileSync(lock, owner);
+  for (const [platform, code] of [["darwin", "EPERM"], ["win32", "EACCES"]]) {
+    let attempts = 0;
+    const fsImpl = new Proxy(fs, { get(target, key) {
+      if (key !== "openSync") return Reflect.get(target, key);
+      return (file, flags, ...args) => {
+        if (file === lock && flags === "wx") { attempts++;throw Object.assign(new Error("permission denied"), { code }); }
+        return target.openSync(file, flags, ...args);
+      };
+    } });
+    await assert.rejects(withFileLock(lock, () => assert.fail("must not acquire"), { platform, fsImpl }), { code });
+    assert.equal(attempts, 1);assert.equal(fs.readFileSync(lock, "utf8"), owner);
+  }
+});
+
 test("withFileLock: does not reclaim a live owner after the stale interval", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-lock-live-"));
   const lockPath = path.join(dir, "state.lock");

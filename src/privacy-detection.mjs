@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { hash } from "node:crypto";
 import { privacyFailure } from "./privacy-model.mjs";
 import { validatePrivacyFindings } from "./privacy-findings.mjs";
 
@@ -77,11 +77,12 @@ export function createPrivacyDetection(model, {
       if (!closed && turns.length) setImmediate(() => { for (let worker = running; worker < maxConcurrent && turns.length; worker++) void pump(); });
     }
   }
-  async function find(texts, { signal, onPlan } = {}) {
+  async function find(texts, { signal, onPlan, onKey } = {}) {
     if (closed) throw privacyFailure("engine_unavailable");if (signal?.aborted) throw signal.reason;
     const staged = new Map(), waiters = new Set(), results = [];let newBytes = 0, waitingBytes = 0;
     for (const text of texts) {
-      const key = createHash("sha256").update(text).digest("hex"), known = get(key);
+      const key = hash("sha256", text, "hex"), known = get(key);
+      onKey?.(text, key);
       if (known !== undefined) { results.push(Promise.resolve(known));continue; }
       let entry = flights.get(key) || staged.get(key);
       if (!entry) {

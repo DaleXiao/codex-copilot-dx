@@ -1,4 +1,4 @@
-import { createHash, createHmac } from "node:crypto";
+import { hash, createHmac } from "node:crypto";
 import { createPrivacyStream } from "./privacy-stream.mjs";
 export { createPrivacyStream };
 import { privacyFailure } from "./privacy-model.mjs";
@@ -118,9 +118,9 @@ function ruleSpans(text, personal) {
 export function createPrivacyRuleCache({ maxBytes = 1024 * 1024, maxEntries = 2048 } = {}) {
   const entries = new Map();let bytes = 0, hits = 0, scans = 0;
   return {
-    find(text, personal) {
+    find(text, personal, digest) {
       if (text.length < 256) { scans++;return ruleSpans(text, personal); }
-      const key = `${personal ? 1 : 0}:` + createHash("sha256").update(text).digest("hex");
+      const key = `${personal ? 1 : 0}:` + (digest ?? hash("sha256", text, "hex"));
       if (entries.has(key)) {
         const entry = entries.get(key);entries.delete(key);entries.set(key, entry);hits++;
         return entry.spans.map(span => ({ ...span }));

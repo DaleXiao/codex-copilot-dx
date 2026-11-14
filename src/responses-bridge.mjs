@@ -1,3 +1,4 @@
+import { markToolActivity } from "./stream-performance.mjs";
 import { randomUUID } from "node:crypto";
 import { chatCompletions } from "./copilot.mjs";
 import { webStreamLines } from "./stream.mjs";
@@ -383,6 +384,7 @@ export async function forwardToChat(chatReq, emitEvent, onDone, onError, options
   emitEvent = async (...args) => {
     const written = await configuredEmitEvent(...args);
     if (written === false) throw downstreamClosed;
+    if (args[1]?.item || args[1]?.response?.output) markToolActivity(args[1]);
     return written;
   };
   let performanceOutputSeen = false;

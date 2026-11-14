@@ -17,6 +17,7 @@ const ASSETS = new Map([
   ["/status.js", ["./dashboard/status.js", "text/javascript; charset=utf-8"]],
   ["/activity.js", ["./dashboard/activity.js", "text/javascript; charset=utf-8"]],
   ["/flow.js", ["./dashboard/flow.js", "text/javascript; charset=utf-8"]],
+  ["/tool-activity.js", ["./dashboard/tool-activity.js", "text/javascript; charset=utf-8"]],
   ["/usage.js", ["./dashboard/usage.js", "text/javascript; charset=utf-8"]],
   ["/context.js", ["./dashboard/context.js", "text/javascript; charset=utf-8"]],
   ["/updates.js", ["./dashboard/updates.js", "text/javascript; charset=utf-8"]],

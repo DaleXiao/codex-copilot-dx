@@ -1,3 +1,4 @@
+import { markToolActivity } from "./stream-performance.mjs";
 import { defaultGithubProvider } from "./providers/github.mjs";
 import { observeContextSession } from "./context-metrics.mjs";
 import {
@@ -484,6 +485,7 @@ export function createResponsesHandler(options) {
               return;
             }
             const response = chatToResponses(JSON.parse(data), model, { toolChoice, ...(carbonBridge ? { toolAdapter: carbonBridge } : {}) });
+            markToolActivity(response);
             markResponseTerminal(response.status, {
               model: response.model || model, origin: "chat_completion", reason: response.incomplete_details?.reason,
             });

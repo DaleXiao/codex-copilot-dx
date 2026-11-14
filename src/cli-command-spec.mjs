@@ -183,6 +183,7 @@ export const MANAGED_COMMANDS = [
     "--limit": "integer",
   }),
   command("requests show <request>", "Show a retained request and its original diagnostic fields", read),
+  command("requests tools", "Show observed tool-call metadata without arguments or outputs", { ...read, "--active": "flag" }),
   command("requests diagnose", "Capture one redacted upstream Messages error; expires after ten minutes", { ...read, ...confirm, "--source": "value", "--model": "value", "--cancel": "flag" }),
   command("compact status", "Show native and gateway compression observations without model calls", read),
   command("compact enable", "Enable bounded recovery using the current source and model; uses quota", { ...read, ...confirm }),
@@ -291,7 +292,7 @@ const extras = {
   config:
     "Only service and terminal preferences are in scope. Browser appearance stays in WebUI.\nReset keeps accounts, keys, model plans and chats and stores a pre-reset backup.\nSaved and effective values can differ; restart requirements remain explicit.",
   requests:
-    "Only retained records are available. Unknown clients are not guessed from an API route.\nApp filters: codex, claude-app, claude-code, antigravity.\n--failed filters failed model outcomes and structured HTTP/model errors.\nUsage records, HTTP calls and model outcomes are distinct counters.",
+    "Only retained records are available. Use requests tools to inspect observed tool metadata without model calls. Unknown clients are not guessed from an API route.\nApp filters: codex, claude-app, claude-code, antigravity.\n--failed filters failed model outcomes and structured HTTP/model errors.\nUsage records, HTTP calls and model outcomes are distinct counters.",
   status:
     "Default interactive status is brief; --details retains the complete diagnostic view.\nThe installed package version can differ from the running service.\nA listening gateway does not prove upstream model access.",
   usage:

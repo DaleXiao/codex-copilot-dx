@@ -14,7 +14,7 @@ export function observeContextSession(body, headers = {}, provider, protocol = "
     try { session = JSON.parse(body.metadata.user_id)?.session_id; }
     catch { session = /(?:^|_)session_([\w-]{8,128})$/.exec(body.metadata.user_id)?.[1]; }
   }
-  if (!bounded(session)) return;
+  if (!bounded(session)) { tracker.observeToolInput?.(body, protocol);return; }
   try {
     const profile = provider?.profileId?.(protocol);
     if (!bounded(profile)) return;
@@ -22,6 +22,7 @@ export function observeContextSession(body, headers = {}, provider, protocol = "
     const key = createHmac("sha256", salt).update(`${profile}\0${session}\0${bounded(agent) ? agent : ""}`).digest("hex");
     tracker.observeSession(key);
   } catch { /* Optional metadata cannot change request admission or routing. */ }
+  tracker.observeToolInput?.(body, protocol);
 }
 
 export function createContextMetrics() {

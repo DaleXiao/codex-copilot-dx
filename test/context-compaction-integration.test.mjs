@@ -12,6 +12,7 @@ import { maskPrivacyRequest, privacySessionMappings, restorePrivacyMappings } fr
 import { createLocalPrivacy } from "../src/local-privacy.mjs";
 import { clearResponseHistoryForTests } from "../src/response-history.mjs";
 import { userSettingsPath } from "../src/user-settings.mjs";
+import { createStreamPerformanceMetrics } from "../src/stream-performance.mjs";
 
 const key = "a".repeat(64), model = "gateway-model";
 const event = value => new Response("data: " + JSON.stringify(value) + "\n\n", { headers: { "content-type": "text/event-stream" } });
@@ -22,9 +23,27 @@ async function adapter(t, client, options = {}) {
     modelRegistry: { models: { data: [{ id: model, capabilities: { limits: { max_context_window_tokens: 16000 } } }] } }, ...options });
   const server = http.createServer(handler);await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
   t.after(async () => { server.closeAllConnections();await new Promise(resolve => server.close(resolve));handler.cleanup?.();clearResponseHistoryForTests(); });
-  const call = (url, body) => fetch(`http://127.0.0.1:${server.address().port}${url}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  const call = (url, body, headers = {}) => fetch(`http://127.0.0.1:${server.address().port}${url}`, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) });
   return { call, provider, records, compaction };
 }
+
+test("Responses JSON and SSE tool metadata stops waiting on the matching next input", async t => {
+  for (const stream of [false, true]) {
+    const metrics = createStreamPerformanceMetrics();let first = true;
+    const client = { getCachedModelEndpoints: () => ["/responses"], async responses() {
+      const output = first ? [{ type: "function_call", id: "item_one", call_id: "call_one", name: "read_file", arguments: "{}", status: "completed" }] : [];
+      first = false;const response = { id: "observed_response", object: "response", status: "completed", model, output };
+      return stream ? event({ type: "response.completed", response }) : Response.json(response);
+    } };
+    const f = await adapter(t, client, { streamPerformanceMetrics: metrics });
+    const headers = { session_id: `tool-session-${stream}`, "x-ccdx-client": "codex-app" };
+    const base = { model, stream, tools: [{ type: "function", name: "read_file", parameters: { type: "object", properties: {} } }] };
+    const response = await f.call("/v1/responses", { ...base, input: "observe tools" }, headers);assert.equal(response.status, 200);await response.text();
+    assert.equal(metrics.snapshot().tool_activity.items[0].state, "waiting");
+    const next = await f.call("/v1/responses", { ...base, input: [{ type: "function_call_output", call_id: "call_one", output: "not retained" }] }, headers);
+    assert.equal(next.status, 200);await next.text();assert.equal(metrics.snapshot().tool_activity.items[0].state, "returned");
+  }
+});
 
 test("Codex compact fallback produces resumable local state and expands it before the source", async t => {
   const sent = [];let native = 0;

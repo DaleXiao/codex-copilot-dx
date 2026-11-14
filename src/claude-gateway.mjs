@@ -9,7 +9,7 @@ import { isLoopbackAddress, isLoopbackHostHeader } from "./security.mjs";
 import { safeUpstreamResponseHeaders } from "./upstream-headers.mjs";
 import { runWithRequestContext, currentRequestContext, observeRequestedModel } from "./request-context.mjs";
 import { upstreamErrorEvidence, requestOptionsEvidence } from "./response-failures.mjs";
-import { createStreamPerformanceMetrics, isMessagesOutputDelta, markRequestObservation } from "./stream-performance.mjs";
+import { createStreamPerformanceMetrics, isMessagesOutputDelta, markRequestObservation, markToolActivity } from "./stream-performance.mjs";
 import { buildMessagesUsageRecord, recordUsage } from "./usage-store.mjs";
 import { redactDiagnosticText } from "./diagnostic-text.mjs";
 import { decodedBodyLimitPreference } from "./user-settings.mjs";
@@ -337,6 +337,7 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
           if (!upstream.ok) context.onHttpError?.({ ...upstreamErrorEvidence(raw, { status: upstream.status }),
             origin: context.countObservation?.cached ? "capability_cache" : "upstream_http", headers: upstream.headers });
           if (!countTokens && upstream.ok && value?.type === "message" && Array.isArray(value.content)) {
+            markToolActivity(value, "messages");
             if (value.content.some(hasMessageState)) await conversation?.commit?.({ tool: value.content.some(block => block?.type === "tool_use") });
             abort.signal.throwIfAborted();
             model = value.model || model;responseId = value.id;usage = value.usage;stopReason = value.stop_reason;
@@ -363,6 +364,7 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
               context.onHttpError?.({ ...evidence, code: evidence.code || evidence.error_type || "upstream_error", model_error: true, origin: "upstream_event", headers: upstream.headers });return;
             }
             if (sawStop || failedEvent) return;
+            if (event.type === "content_block_start") markToolActivity(event, "messages");
             if (event.type === "content_block_start" && hasMessageState(event.content_block)
               || event.type === "content_block_delta" && (isMessagesOutputDelta(event.delta) || event.delta?.type === "signature_delta" && event.delta.signature)) {
               if (!conversationCommitted) commitState = { tool: commitState?.tool === true || event.content_block?.type === "tool_use" };

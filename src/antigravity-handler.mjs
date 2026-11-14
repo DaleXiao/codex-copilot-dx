@@ -8,7 +8,7 @@ import {ANTIGRAVITY_MODEL_PREFIX,antigravityCopilotModels,mergeAntigravityModels
 import {createPrivacyTextFragments} from "./privacy-stream.mjs";
 import {createGoogleResponseObserver,googleUsageEvent} from "./antigravity-usage.mjs";
 import {currentRequestContext,observeRequestedModel} from "./request-context.mjs";
-import {markUpstreamStarted,markUpstreamHeaders,markFirstOutput,markOutputTokens,markRequestObservation,markResponseModel,markResponseTerminal} from "./stream-performance.mjs";
+import {markUpstreamStarted,markUpstreamHeaders,markFirstOutput,markOutputTokens,markRequestObservation,markResponseModel,markResponseTerminal,markToolActivity} from "./stream-performance.mjs";
 import {isCompactionRequest} from "./context-compaction.mjs";
 import {compactionSummarizer} from "./context-compaction-wire.mjs";
 import {requestPurpose} from "./request-context.mjs";
@@ -85,6 +85,7 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
           usageModel=body.model;usageProvider="google";usageMode=method==="streamGenerateContent"?"sse":"json";
           if(context){context.provider="google";context.streamPerformance?.setProvider?.("google")}
           observeContextSession(null,{session_id:body.request?.labels?.root_cascade_id||body.request?.labels?.cascade_id},{profileId:()=>"google:gemini-native"},"gemini");
+          context?.streamPerformance?.observeToolInput?.(body.request,"gemini");
           markRequestObservation({usage_state:"pending"});
         }
         const open=async(value,options={})=>{
@@ -107,6 +108,7 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
         const nativeStreaming=/text\/event-stream/i.test(upstream.headers.get("content-type")||"");
         if(generation)usageMode=nativeStreaming?"sse":"json";
         const observer=generation&&upstream.ok?createGoogleResponseObserver({streaming:nativeStreaming,onEvent:value=>{
+          markToolActivity(value,"gemini");
           const response=value?.response||value,event=googleUsageEvent(value);if(event)captureUsage(event);
           const candidates=response?.candidates||[];
           if(candidates.some(candidate=>candidate.content?.parts?.some(part=>part.functionCall||!part.thought&&typeof part.text==="string"&&part.text)))markFirstOutput("delta");
@@ -145,6 +147,7 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
       observed=true;counts.copilot++;
       if(context){context.provider="github";context.streamPerformance?.setProvider?.("github")}
       observeContextSession(null,{session_id:body.request?.labels?.root_cascade_id||body.request?.labels?.cascade_id},{profileId:()=>"github:codex"},"chat");
+      context?.streamPerformance?.observeToolInput?.(body.request,"gemini");
       const request=body.request;
       if(body.requestType==="web_search"){
         counts.search++;if(!searchFn)throw httpError("Copilot search is unavailable",503);
@@ -177,7 +180,7 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
       if(!upstream.ok){await upstream.body?.cancel();throw httpError("Copilot generation was refused (HTTP "+upstream.status+")",upstream.status)}
       if(!stream){
         const data=JSON.parse(await readBoundedResponseText(upstream,{maxBytes:MAX_REPLY,signal:abort.signal,label:"Copilot response"}));captureUsage(data);
-        const result=chatToAntigravity(data,converted.originalNames);
+        const result=chatToAntigravity(data,converted.originalNames);markToolActivity(result,"gemini");
         outcome=result.candidates[0].finishReason==="STOP"?"completed":"incomplete";markResponseTerminal(outcome);
         res.writeHead(200,{"Content-Type":"application/json"});res.end(JSON.stringify({response:session.restoreValue(result)}));return;
       }
@@ -185,6 +188,7 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
       res.writeHead(200,{"Content-Type":"text/event-stream","Cache-Control":"no-cache"});
       const emit=chunk=>writeOrDrain(res,"data: "+JSON.stringify(chunk)+"\n\n",{signal:abort.signal});
       for await(const chunk of chatStreamToAntigravity(upstream,converted.originalNames,{onChunk:()=>abort.setTimeout(streamIdleTimeoutMs,"stream_idle_timeout"),onUsage:captureUsage})){
+        markToolActivity(chunk,"gemini");
         const candidate=chunk.response?.candidates?.[0];
         for(const part of candidate?.content?.parts||[]){
           if(part.functionCall||typeof part.text==="string"&&part.text&&!part.thought)markFirstOutput("delta");

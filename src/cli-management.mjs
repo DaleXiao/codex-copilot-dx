@@ -122,6 +122,13 @@ export async function runManagementCommand(command, options = {}) {
     return print(result.compaction);
   }
   if (group === "requests") {
+    if (action === "tools") {
+      const { data } = await readStatus();
+      const parts = [data.stream_performance, (data.providers?.claude || data.providers?.m365?.claude)?.requests?.performance].filter(Boolean);
+      if (!parts.some(part => part.tool_activity)) throw new Error("This command needs the updated running service; no settings changed.");
+      const items = parts.flatMap(part => part.tool_activity?.items || []).filter(row => !flags.active || ["preparing", "waiting"].includes(row.state));
+      return print(items, [["application", "Client"], ["provider", "Source"], ["model", "Model"], ["name", "Tool"], ["state", "State"]]);
+    }
     if (action === "diagnose") {
       if (flags.source || flags.model || flags.cancel) {
         if (!flags.cancel && (!flags.source || !flags.model)) throw new Error("Use --source ID and --model ID together.");

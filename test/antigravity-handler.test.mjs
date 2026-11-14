@@ -13,6 +13,26 @@ import {createContextCompactionService} from "../src/context-compaction.mjs";
 const catalog={data:["gemini-4-carbon","gemini-4-argon"].map(id=>({id,supported_endpoints:["/chat/completions"],capabilities:{supports:{vision:true,reasoning_effort:["low","medium","high"]},limits:{max_context_window_tokens:1000000,max_output_tokens:64000}}}))};
 const alias=antigravityCopilotModels(catalog)[2].id;
 
+test("native Google and Copilot tool results update the same isolated activity contract",async()=>{
+  for(const native of [true,false]){
+    let first=true;const performance=createStreamPerformanceMetrics({routeNames:["antigravity"]});
+    const f=fixture({fetchGoogle:async()=>Response.json({response:{candidates:[{content:{role:"model",parts:first?(first=false,[{functionCall:{id:"native-tool",name:"read_file",args:{private:"not retained"}}}]):[{text:"continued"}]},finishReason:"STOP"}]}}),
+      client:{chatCompletions:async()=>{const message=first?(first=false,{tool_calls:[{id:"tool-one",type:"function",function:{name:"read_file",arguments:"{}"}}]}):{content:"continued"};return Response.json({choices:[{message,finish_reason:message.tool_calls?"tool_calls":"stop"}]});}}});
+    const call=async value=>{
+      const tracker=performance.begin("antigravity",{application:"gemini_app"});
+      const result=await runWithRequestContext({streamPerformance:tracker},()=>invoke(f.handler,value,{url:"/antigravity/v1internal:generateContent"}).done);
+      tracker.finish({statusCode:result.status});return result;
+    };
+    const initial=body(native?"native-model":alias);initial.request.labels={root_cascade_id:"observed-tool-session"};
+    initial.request.tools=[{functionDeclarations:[{name:"read_file",parameters:{type:"OBJECT",properties:{}}}]}];
+    const response=await call(initial);assert.equal(response.status,200);assert.equal(performance.snapshot().tool_activity.items[0].state,"waiting");
+    const issued=JSON.parse(response.text).response.candidates[0].content.parts.find(part=>part.functionCall).functionCall;
+    const next=structuredClone(initial);next.request.contents.push({role:"model",parts:[{functionCall:issued}]},{role:"user",parts:[{functionResponse:{id:issued.id,name:issued.name,response:{result:"not retained"}}}]});
+    assert.equal((await call(next)).status,200);assert.equal(performance.snapshot().tool_activity.items[0].state,"returned");
+    assert.doesNotMatch(JSON.stringify(performance.snapshot().tool_activity),/not retained|observed-tool-session/);
+  }
+});
+
 test("known Google compaction stays on Google and recovers within the same model",async()=>{
   const calls=[],records=[],compaction=createContextCompactionService({recordUsageFn:record=>records.push(record)});
   const f=fixture({compaction,resolveCompactionSource:()=>({source:"google",model:"native-bound-model"}),fetchGoogle:async(url,request)=>{

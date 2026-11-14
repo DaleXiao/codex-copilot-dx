@@ -56,6 +56,7 @@ Model availability depends on your account and service. Microsoft 365 also requi
 | Set up Antigravity | `ccdx app antigravity status` / `enable` / `open` |
 | Inspect compression | `ccdx compact status` / `ccdx compact enable` / `ccdx compact disable` |
 | Inspect failures | `ccdx requests --failed` |
+| Inspect observed tool calls | `ccdx requests tools` / `ccdx requests tools --active` |
 | Capture one upstream error | `ccdx requests diagnose --source api_work --model model-id --yes` |
 | Read usage | `ccdx usage` / `ccdx usage --provider google --days 7` / `ccdx usage --purpose diagnostic` / `ccdx usage --scope run` |
 | Inspect preferences | `ccdx config show --effective` |

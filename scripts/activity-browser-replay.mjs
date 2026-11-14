@@ -1,3 +1,4 @@
+import {checkToolActivity} from "./tool-activity-browser-checks.mjs";
 // Real browser/SSE replay; synthetic observers only, no accounts or model calls.
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -29,6 +30,7 @@ try{
   console.log(`Activity replay: ${engine}`);
   const context=await browser.newContext({viewport:{width:1280,height:1000}}),page=await context.newPage(),errors=[];page.on('pageerror',e=>errors.push(String(e)));page.setDefaultTimeout(15000);const watchdog=setTimeout(()=>{console.error(`Activity replay timed out: ${engine}`);process.exit(1)},120000);watchdog.unref();
   await page.goto(base+'/#requests');await page.waitForFunction(()=>document.querySelector('#request-flow').dataset.state==='idle',{timeout:10000});
+  const toolReceipt=await checkToolActivity({page,codex,metrics,performanceCheck:options.get('--tool-performance')==='true'});console.log(JSON.stringify({tool_activity:toolReceipt}));
   const finish=[begin('codex_app','gpt-one','responses'),begin('claude_app','claude-two','messages'),begin('claude_code','claude-three','messages')];
   await page.waitForFunction(()=>document.querySelector('#request-flow').dataset.state==='active'&&document.querySelector('#flow-models').children.length===3);
   assert.match(writes.at(-1),/Active/);if(options.get('--output'))await page.screenshot({path:options.get('--output'),fullPage:true});

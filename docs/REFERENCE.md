@@ -39,6 +39,7 @@ For installation and first use, start with the [README](../README.md). This refe
 | `ccdx config reset --preview` / `restore` | Preview defaults or restore the pre-reset backup |
 | `ccdx requests [--failed] [--active]` | Inspect retained requests |
 | `ccdx requests show <request_id>` | Read one retained request |
+| `ccdx requests tools [--active]` | Read observed tool-call metadata; no arguments or outputs |
 | `ccdx usage [--scope all\|run] [--provider ID] [--model ID] [--purpose VALUE] [--days N\|all]` | Read filtered retained usage or current-run totals |
 | `ccdx doctor [--online] [--compat] [--fix] [--json]` | Check local setup; optional access checks and repairs |
 | `ccdx doctor config` / `network` / `report` | Read configuration, routing or a redacted local report |
@@ -112,6 +113,14 @@ Messages observes the selected model's effective capability snapshot after alias
 Only explicit, bounded session IDs can link requests. Local display identifiers replace native IDs and titles; account/profile, app, source, model and declared subagent identities remain separate. Unidentified requests appear individually. Concurrent observations are points rather than a connected conversation curve. Compaction records cover observed Responses compact calls and explicitly classified Claude/Antigravity compression tasks, and their elapsed time includes the whole gateway request. No before/after size is invented from summary output tokens.
 
 Each protocol observer retains at most 64 series of 64 request points and 16 compaction records, plus 20 unidentified requests. These numeric observations are memory-only and reset on restart. The page reads them on demand and after observed request completion through the existing dashboard refresh controller; ordinary status payloads do not include them. There is no prompt storage, text tokenization, transcript scan, extra provider request, content breakdown or compression control.
+
+## Observed tool calls
+
+**Requests → Tool calls** uses the existing activity stream for Codex, Claude and Antigravity. Choose Grid, Beam ring, Orbit rings, Woven field or Off; this browser remembers the choice. Captions change with observed call preparation, waiting and returned results. Motion runs at a faster presentation cadence, independent of event frequency; it is not a progress percentage or a call counter. System reduced motion, hidden/off-screen views and Off stop continuous drawing. Returned results have at most a 0.9-second finish cue; failure, cancellation and unavailable evidence stop continuous motion.
+
+Calls are correlated using their IDs and the existing app/profile/session scope. A model emitting a tool call does not prove that the client executed it. Only a matching returned result ends the wait; ambiguous name-only Gemini results stay unconfirmed. Without a reliable session, completed requests show unconfirmed tool state. After 90 seconds without observable tool or response activity, the UI pauses and shows that fresh status is needed. Late results can update retained unconfirmed observations for another five minutes. These display deadlines never cancel tools or change source timeouts.
+
+The service retains at most 128 metadata observations per protocol observer, shows at most 32, and captures at most 32 calls per request. Finished observations remain for 15 seconds. It keeps safe tool names and local display IDs in memory, not arguments, outputs or raw conversation/call IDs. Input correlation checks a bounded recent suffix rather than scanning a transcript. It adds no provider calls, tokenization, activity connections or polling. `ccdx requests tools --format json` and the TUI Requests menu expose the same observations; `--active` selects preparing/waiting calls. Restarting clears these diagnostic observations.
 
 ## Sources and client access
 

@@ -59,6 +59,13 @@ function fixture() {
   const run = args => runManagementCommand(parseCliArgs(args), options);
   return { state, data, calls, output, options, run };
 }
+test("tool observations are read-only and keep unknown service support explicit", async () => {
+  const f = fixture();await assert.rejects(f.run(["requests", "tools"]), /updated running service/);
+  f.data.stream_performance.tool_activity = { items: [{ id: "one", name: "read_file", state: "waiting" }, { id: "two", name: "run_command", state: "returned" }] };
+  assert.equal(JSON.parse(await f.run(["requests", "tools", "--format", "json"])).length, 2);
+  assert.deepEqual(JSON.parse(await f.run(["requests", "tools", "--active", "--format", "json"])).map(row => row.id), ["one"]);
+  assert.equal(f.calls.length, 0);assert.match(cliHelp("ccdx", "requests"), /tools/);
+});
 test("compression commands share the running preference without sending model requests", async () => {
   const f = fixture();let enabled = true;f.options.request = async input => { f.calls.push(input);if (input.body) enabled = input.body.value;return { compaction: { enabled, active_recoveries: 0 } }; };
   assert.equal(JSON.parse(await f.run(["compact", "status", "--format", "json"])).enabled, true);

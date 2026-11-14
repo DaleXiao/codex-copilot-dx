@@ -1,3 +1,4 @@
+import { markToolActivity } from "./stream-performance.mjs";
 import { responses as copilotResponses } from "./copilot.mjs";
 import {
   logRequestFailure,
@@ -124,6 +125,7 @@ function inspectResponseSseEvent(state, eventName, data) {
     );
   }
   const eventType = event.type || (event.error ? "error" : eventName);
+  if (event.item || event.response?.output) markToolActivity(event);
   const previousSequence = state.lastSequence;
   state.lastSequence = event.sequence_number ?? previousSequence + 1;
   if (event.response && typeof event.response === "object" && !Array.isArray(event.response)) {
@@ -673,6 +675,7 @@ export async function proxyCopilotResponses(reqContext, req, res, upstream = cop
         data,
       );
       response = reqContext.protectCompactionResult?.(response) || response;
+      markToolActivity(response);
       rememberResponseHistory(reqContext, reqContext.privacyRestore?.(response) || response);
       if (!resp[COMPACTION_USAGE_RECORDED]) recordResponsesUsage({
         surface: reqContext.surface,
@@ -722,6 +725,7 @@ export async function proxyCopilotResponses(reqContext, req, res, upstream = cop
           continue;
         }
       }
+      markToolActivity(response);
       rememberResponseHistory(reqContext, reqContext.privacyRestore?.(response) || response);
       if (!reqContext.compactionUsageRecorded) recordResponsesUsage({
         surface: reqContext.surface,

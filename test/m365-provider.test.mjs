@@ -19,6 +19,15 @@ function fixture(t) { const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-m
 function auth(identity = account) { return { getToken: async () => ({ token: "synthetic_entra_secret", account: identity, expiresAt: Date.now() + 3600000 }),
   snapshot: () => ({ token_cached: true, reason: null }), reset() {} }; }
 
+test("M365 model lists fill duplicate metadata without overriding restrictions", () => {
+  const first = { id: "gpt-shared", publisher: "OpenAI", model_picker_enabled: false };
+  const payload = { data: [first, { ...first, model_picker_enabled: true, supported_endpoints: ["/responses"] }] };
+  const normalized = m365Catalog(payload);assert.equal(normalized.data.length, 1);
+  assert.equal(normalized.data[0].model_picker_enabled, false);assert.deepEqual(normalized.data[0].supported_endpoints, ["/responses"]);
+  assert.deepEqual(m365Models(normalized, "gpt"), []);assert.equal(payload.data[0].supported_endpoints, undefined);
+  assert.throws(() => m365Catalog({ data: [first] }), { code: "m365_catalog_invalid" });
+});
+
 test("explicit directory refresh replaces an old five-model cache with the actual network list", async t => {
   const home = fixture(t), paths = m365Paths({ home }), { M365_API_ORIGIN } = await import("../src/providers/m365-endpoint.mjs");
   const gpt = Array.from({ length: 5 }, (_, i) => ({ id: `gpt-example-${i}`, publisher: "OpenAI", supported_endpoints: ["/responses"] }));
@@ -153,7 +162,7 @@ test("M365 header and conversation mapping use fixed fields and isolated stable 
 });
 
 test("M365 rejects invalid catalogs and unsupported fast without a silent downgrade", async t => {
-  assert.throws(() => m365Catalog({ data: [catalog.data[0], catalog.data[0]] }), { code: "m365_catalog_invalid" });
+  assert.throws(() => m365Catalog({ data: [{ ...catalog.data[0], supported_endpoints: "invalid" }] }), { code: "m365_catalog_invalid" });
   assert.deepEqual(m365Models({ data: [{ id: "claude-injected", publisher: "OpenAI", supported_endpoints: ["/v1/messages"] }] }, "claude"), []);
   assert.deepEqual(m365Models({ data: [{ ...catalog.data[0], publisher: 42 }] }, "claude"), []);
   for (const denied of [{ policy: { state: "disabled" } }, { model_picker_enabled: false }]) {

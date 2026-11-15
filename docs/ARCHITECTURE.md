@@ -683,6 +683,12 @@ load only when requested. Allowed function lists retain their
 restriction and returned Chat calls are checked before completion. Chat cache
 fields are forwarded only when the catalog explicitly advertises each field.
 
+Loaded Carbon tool declarations use last-value replacement by type/namespace/name while retaining the first offered Map slot and alias. The initial list keeps its conflicting-definition check; input-carried additions and search results resolve against the effective inventory. This adopts the narrow dynamic-declaration behavior from [Floway](https://github.com/Menci/Floway/commit/2e5a4bed646f02e1054e71089232c63036c21f2f).
+
+`model-catalog.mjs` normalizes one source/account list at ingestion and public projection. Unique lists retain their original reference. Duplicate IDs retain order and explicit first values, including false and empty arrays; copy-on-write nested merges fill only absent/null/empty-string metadata. Copilot live reads, old cache reads/writes, M365 directories and serial API discovery use this rule. API limits still count raw entries and repeated pagination cursors fail. Credentials, configured deployments and cross-source lists never enter the merge. The bounded catalog change follows [Magpie's directory normalization](https://github.com/yetone/magpie/commit/97e6ac36c9704455e2505d58f673308c0611edad).
+
+The cache-preservation principle from [LiteLLM](https://github.com/BerriAI/litellm/pull/51796) applies to CCDX's existing Responses-to-Chat direction, without adding a reverse bridge. Catalog-advertised cache fields gate block conversion, optional caller cache options remain separately gated, and leading system order remains unchanged. Native source protocols retain their fields. Mixed thought/answer and HTTP-200 terminal-error cases remain explicit stream-contract coverage. Following [Magpie's sealed-task protection](https://github.com/yetone/magpie/commit/c747ecfa68eb095a2269771f1b6382205e9facbd), encrypted retry cleanup never strips agent-message bodies; Chat rejects opaque task content before a request is sent.
+
 For an explicit root-combiner schema validation failure, the custom Messages
 provider may send a bounded, model-facing object schema while retaining the
 original validator for the response. Guarded tool frames are buffered until the

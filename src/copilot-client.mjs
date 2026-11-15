@@ -1,4 +1,5 @@
 import { createCopilotTokenSession } from "./copilot-token-session.mjs";
+import { normalizeModelList, uniqueModelEntries } from "./model-catalog.mjs";
 import { MAX_UPSTREAM_MODEL_CATALOG_BYTES, readBoundedResponseText } from "./http-transport.mjs";
 import { prepareResponsesPayload, summarizeReqBody } from "./image-optimization.mjs";
 import { debugLog } from "./log.mjs";
@@ -66,7 +67,7 @@ export function createCopilotClientRuntime({
     const data = Array.isArray(models) ? models : models?.data;
     if (!Array.isArray(data)) return false;
     const next = new Map();
-    for (const model of data) {
+    for (const model of uniqueModelEntries(data)) {
       const id = String(model?.id || "").trim();
       if (id && Array.isArray(model?.supported_endpoints)) next.set(id, [...model.supported_endpoints]);
     }
@@ -120,12 +121,16 @@ export function createCopilotClientRuntime({
       headers,
       signal,
     }, { fetchImpl, ...retryOptions });
-    const body = await readBoundedResponseText(response, {
+    let body = await readBoundedResponseText(response, {
       maxBytes: MAX_UPSTREAM_MODEL_CATALOG_BYTES,
       label: "Copilot model catalog",
     });
     if (response.ok) {
-      try { cacheModelEndpoints(JSON.parse(body)); } catch {}
+      try {
+        const parsed = JSON.parse(body), models = normalizeModelList(parsed);
+        cacheModelEndpoints(models);
+        if (models !== parsed) body = JSON.stringify(models);
+      } catch {}
     }
     return { status: response.status, body };
   }

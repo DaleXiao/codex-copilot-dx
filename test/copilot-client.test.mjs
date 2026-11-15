@@ -43,7 +43,7 @@ test("createCopilotClient: isolated clients keep credentials, API bases, refresh
     if (target.endsWith("/models")) {
       const enterprise = target.startsWith("https://enterprise.example");
       return Response.json({
-        data: [{
+        data: [{ id: "shared-model" }, {
           id: "shared-model",
           supported_endpoints: enterprise ? ["/responses"] : ["/chat/completions"],
         }],
@@ -70,10 +70,13 @@ test("createCopilotClient: isolated clients keep credentials, API bases, refresh
     readGithubIdentity: () => ({ login: "secondary-user", id: 2 }),
   });
 
-  await Promise.all([
+  const catalogs = await Promise.all([
     primary.listModels({ fetchImpl }),
     secondary.listModels({ fetchImpl }),
   ]);
+
+  for (const result of catalogs) assert.equal(JSON.parse(result.body).data.length, 1);
+  primary.cacheModelEndpoints({ data: [{ id: "shared-model", supported_endpoints: ["/responses"] }, { id: "shared-model", supported_endpoints: ["/chat/completions"] }] });
 
   assert.equal(primary.getApiBase(), "https://enterprise.example");
   assert.equal(secondary.getApiBase(), "https://secondary.example");

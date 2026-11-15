@@ -86,6 +86,20 @@ test("HTTP Chat forwards explicitly advertised cache fields and does not inject 
   assert.equal(sent[1].prompt_cache_key, "cache-key");assert.equal(sent[1].prompt_cache_retention, "24h");
 });
 
+test("HTTP Chat preserves marked cache blocks beside tools and reasoning only on its declared model", async () => {
+  const codexModelRegistry = { models: { data: [{ id: "synthetic-chat", capabilities: { supports: { prompt_cache_breakpoint: true } } }] } };
+  const sent = [], body = { model: "synthetic-chat", input: [{ role: "system", content: "keep first" }, { role: "user", content: [{ type: "input_text", text: "cached", cache_control: { type: "ephemeral" } }] }],
+    tools: [{ type: "function", name: "read", parameters: { type: "object" } }], reasoning: { effort: "high" } };
+  const chatCompletionsFn = async value => { sent.push(value);return Response.json({ choices: [{ message: { content: "OK" }, finish_reason: "stop" }] }); };
+  for (const model of ["synthetic-chat", "other-chat"]) {
+    const result = await invokeAdapter({ codexModelRegistry, chatCompletionsFn }, { body: { ...body, model } });assert.equal(result.status, 200);
+  }
+  assert.deepEqual(sent[0].messages[0], { role: "system", content: "keep first" });
+  assert.deepEqual(sent[0].messages[1].content[0].prompt_cache_breakpoint, { mode: "explicit" });
+  assert.equal(sent[0].reasoning_effort, "high");assert.equal(sent[0].tools.length, 1);
+  assert.equal(sent[1].messages[1].content, "cached");assert.equal(JSON.stringify(sent[1]).includes("prompt_cache_breakpoint"), false);
+});
+
 test("HTTP non-stream Responses conversion preserves upstream error status", async () => {
   const streamPerformanceMetrics = createStreamPerformanceMetrics();
   const response = await invokeAdapter({

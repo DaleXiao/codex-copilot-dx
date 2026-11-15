@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { readBoundedFileSync, MAX_MODEL_CACHE_FILE_BYTES } from "./bounded-file.mjs";
+import { normalizeModelList } from "./model-catalog.mjs";
 
 export const MODEL_CACHE_SOFT_TTL_MS = 2 * 60 * 60 * 1000;
 export const MODEL_CACHE_HARD_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -50,7 +51,7 @@ export function loadModelCacheEntry({
     const ageMs = Math.max(0, now() - savedAt);
     if (ageMs > resolvedHardTtlMs) return null;
     return {
-      models: parsed.models,
+      models: normalizeModelList(parsed.models),
       savedAtMs: savedAt,
       ageMs,
       state: ageMs > resolvedSoftTtlMs ? "stale" : "fresh",
@@ -74,7 +75,7 @@ export function saveModelCache(models, {
   if (typeof isCurrent === "function" && !isCurrent()) return false;
   const filePath = modelCachePath(home);
   const tempPath = `${filePath}.${process.pid}.tmp`;
-  const payload = { saved_at: new Date(now()).toISOString(), models };
+  const payload = { saved_at: new Date(now()).toISOString(), models: normalizeModelList(models) };
   const fingerprint = String(credentialFingerprint || "").trim();
   if (fingerprint) payload.credential_fingerprint = fingerprint;
   fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });

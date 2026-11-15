@@ -98,3 +98,14 @@ test("model cache accepts only non-empty lists with a model id", () => {
   assert.equal(saveModelCache({ data: [] }, { home }), false);
   assert.equal(saveModelCache({ data: [{ id: "gpt-test" }] }, { home }), true);
 });
+
+test("old and newly written caches normalize duplicates inside the bound account", t => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-model-cache-duplicates-"));t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const file = modelCachePath(home), models = { data: [{ id: "gpt-shared" }, { id: "gpt-shared", supported_endpoints: ["/responses"] }] };
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify({ saved_at: new Date().toISOString(), credential_fingerprint: "account-one", models }));
+  assert.deepEqual(loadModelCache({ home, credentialFingerprint: "account-one" }), { data: [{ id: "gpt-shared", supported_endpoints: ["/responses"] }] });
+  assert.equal(loadModelCache({ home, credentialFingerprint: "account-two" }), null);
+  assert.equal(saveModelCache(models, { home, credentialFingerprint: "account-one" }), true);
+  assert.equal(JSON.parse(fs.readFileSync(file)).models.data.length, 1);assert.equal(models.data.length, 2);
+});

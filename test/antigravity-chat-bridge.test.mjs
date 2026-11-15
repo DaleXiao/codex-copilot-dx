@@ -19,6 +19,16 @@ const declaration = { name: "view_file", description: "Read a file", parameters:
   AbsolutePath: { type: "STRING" }, offset: { type: "INTEGER" }, mode: { type: "STRING", enum: ["UPPER", "lower"] },
 }, required: ["AbsolutePath"] } };
 
+test("Antigravity keeps thought and answer fragments from the same upstream chunk", async () => {
+  const events = [{ choices: [{ delta: { reasoning_content: "working", content: "19" } }] },
+    { choices: [{ delta: { content: " items" }, finish_reason: "stop" }] }, { choices: [], usage: { prompt_tokens: 3, completion_tokens: 5, total_tokens: 8 } }];
+  const response = new Response(events.map(event => "data: " + JSON.stringify(event) + "\n\n").join("") + "data: [DONE]\n\n");
+  const parts = [];let usage;
+  for await (const event of chatStreamToAntigravity(response, new Map(), { onUsage: value => { if (value.usage) usage = value.usage; } })) parts.push(...(event.response?.candidates?.[0]?.content?.parts || []));
+  assert.equal(parts.filter(part => !part.thought).map(part => part.text).join(""), "19 items");
+  assert.equal(parts.filter(part => part.thought).map(part => part.text).join(""), "working");assert.equal(usage.total_tokens, 8);
+});
+
 test("Gemini history retains tool IDs, large integers, images, and declared schema", () => {
   const request = parseAntigravityJSON(`{"systemInstruction":{"role":"user","parts":[{"text":"system"}]},"contents":[
     {"role":"user","parts":[{"text":"inspect"},{"inlineData":{"mimeType":"image/png","data":"aGVsbG8="}}]},

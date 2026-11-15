@@ -10,6 +10,17 @@ function jsonRequest(body, contentEncoding, headers = {}) {
   return req;
 }
 
+test("HTTP model discovery and its fallback share a completed unique catalog", async () => {
+  const models = { object: "list", data: [{ id: "gpt-shared", name: "First name" }, { id: "gpt-shared", supported_endpoints: ["/responses"] }] };
+  const original = structuredClone(models), registry = {};
+  const response = await invokeAdapter({ modelRegistry: registry, listModelsFn: async () => ({ status: 200, body: JSON.stringify(models) }) }, { method: "GET", url: "/v1/models" });
+  assert.equal(response.status, 200);const normalized = JSON.parse(response.text);assert.equal(normalized.data.length, 1);
+  assert.equal(normalized.data[0].name, "First name");assert.deepEqual(normalized.data[0].supported_endpoints, ["/responses"]);
+  assert.deepEqual(registry.models, normalized);assert.deepEqual(models, original);
+  const fallback = await invokeAdapter({ modelRegistry: { models }, listModelsFn: async () => { throw Error("offline"); } }, { method: "GET", url: "/v1/models" });
+  assert.equal(fallback.status, 200);assert.deepEqual(JSON.parse(fallback.text), normalized);
+});
+
 test("HTTP models route updates and falls back to last-known-good model metadata", async () => {
   const cached = { data: [{ id: "gpt-cached", supported_endpoints: ["/responses"] }] };
   const live = { data: [{ id: "gpt-live", supported_endpoints: ["/responses"] }] };

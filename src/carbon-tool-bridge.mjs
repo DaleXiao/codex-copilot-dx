@@ -125,9 +125,11 @@ export function prepareCarbonToolBridge(body, currentInputStart = 0) {
         parameters: structuredClone(tool.parameters), strict: tool.strict };
     }
     const existing = offered.get(entry.key);
-    if (existing && JSON.stringify(existing) !== JSON.stringify(converted)) {
+    if (existing && !loaded && JSON.stringify(existing) !== JSON.stringify(converted)) {
       throw requestError("Carbon received conflicting definitions for the same tool");
     }
+    // Loaded Responses declarations replace the value without moving its slot
+    // or changing the alias used by earlier calls and tool-choice constraints.
     offered.set(entry.key, converted);
   }
 

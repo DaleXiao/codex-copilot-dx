@@ -138,6 +138,8 @@ Manual APIs require HTTPS. Codex requires Responses; Claude requires Messages. C
 
 A running request stays with its original source, credential revision and capabilities. Refreshing a catalog does not select models or change defaults. Failed reads keep last-good data with failure evidence; they do not trigger inference, re-login or source switching. Normal API refresh uses a 30-minute cache and a one-minute minimum interval after explicit reads or failures.
 
+Within one source/account, repeated upstream model IDs keep their first position and existing values; later entries fill missing metadata. Explicit false values and empty capability arrays remain authoritative. Live catalogs, compatible old caches and public model details use this normalization. Source and account boundaries stay separate, and duplicate deployments in user configuration remain invalid. Existing source-model CLI/TUI commands read the same normalized catalogs.
+
 Codex selections containing only GitHub models keep native OpenAI mode and readable names. Other selections use the client's private local gateway credential. Paused access is rejected before credential validation. CCDX does not write or clear native ChatGPT sign-in data. When models are missing after a client update, check the selected models and run `ccdx doctor`; fully quit and reopen the app before changing credentials.
 
 Old conversations keep their recorded provider identity. Codex 0.166 requires the currently selected provider to match that identity; a per-resume override does not bypass this check. Continue a legacy custom-provider chat with its original provider selected. CCDX retains the inactive, unchanged legacy provider table and does not silently rewrite chat metadata or switch the global native default back to a custom provider.
@@ -868,12 +870,18 @@ Changing the model or transport of a continuation can require removing incompati
 
 Native Responses forwards Codex `agent_message` items unchanged. When a model requires Chat Completions, CCDX frames them as messages from another agent, not human input or approval, retaining author/recipient, typed text/refusal/reasoning and representable image/screenshot content. Content unsupported by Chat, including file, audio or opaque encrypted parts, receives an explicit compatibility error instead of being serialized into ordinary text. This projection does not introduce another model request or change native Responses, Fast, Auto-review or compaction routing.
 
+Encrypted-state cleanup preserves complete agent messages, including their sealed task body. An upstream refusal never authorizes removing that task body to retry only its visible header.
+
 GitHub Copilot's `gemini-4-carbon` uses Chat Completions. CCDX maps Codex custom,
 namespaced and client-side tool-search calls to function tools and restores their
 original identities in the reply and conversation history. The upstream receives
 ordinary function tools; free-form grammar constraints are included in the tool
 description rather than enforced by the Chat protocol. Other models retain their
 existing routing and compatibility checks.
+
+For Carbon, input `additional_tools` and client `tool_search_output` declarations take effect in order. A later loaded definition replaces the same type/namespace/name without changing its original offered slot or alias. Explicit tool-choice restrictions still apply; conflicting definitions inside the initial tool list remain invalid.
+
+On the existing Responses-to-Chat route, per-model catalog flags under `capabilities.supports` control cache forwarding. `cache_control: true` preserves caller cache controls; `prompt_cache_breakpoint: true` preserves explicit breakpoints and maps caller cache controls to explicit breakpoints without inventing a TTL. `prompt_cache_options: true` separately permits caller request options. Messages keep their order, including marked system messages. Unmarked requests and undeclared fields keep their existing behavior. Native Responses and Messages retain their own cache fields. These controls do not establish a measured cache hit or latency benefit.
 
 Carbon's standalone web search uses the current GitHub Copilot account. Only
 search queries and requested constraints are sent to its search endpoint; the

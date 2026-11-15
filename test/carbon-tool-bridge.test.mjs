@@ -14,6 +14,26 @@ const search = { type: "tool_search", execution: "client", description: "Find to
 const fn = name => ({ type: "function", name, description: "Look up information",
   parameters: { type: "object", properties: { n: { type: "string" } }, additionalProperties: false } });
 
+test("Carbon applies the latest loaded declaration without moving aliases or broadening tool choice", () => {
+  const updated = { ...fn("lookup"), description: "Latest definition", strict: true,
+    parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"], additionalProperties: false } };
+  const body = { model: "gemini-4-carbon", tools: [search, fn("lookup"), { type: "namespace", name: "docs", tools: [fn("lookup")] }, custom],
+    input: [{ type: "additional_tools", tools: [{ type: "namespace", name: "docs", tools: [{ ...updated, description: "Intermediate" }] }] },
+      { type: "tool_search_call", execution: "client", call_id: "search-one", arguments: { query: "docs" } },
+      { type: "tool_search_output", execution: "client", call_id: "search-one", tools: [{ type: "namespace", name: "docs", tools: [updated] }] }],
+    tool_choice: { type: "allowed_tools", mode: "required", tools: [{ type: "function", name: "lookup", namespace: "docs" }] } };
+  const original = structuredClone(body), bridge = prepareCarbonToolBridge(body), tools = responsesToChat(bridge.body).tools;
+  assert.deepEqual(body, original);
+  assert.deepEqual(tools.map(tool => tool.function.name), ["tool_search", "lookup", "docs__lookup", "exec"]);
+  assert.equal(tools[1].function.description, fn("lookup").description);
+  assert.equal(tools[2].function.description, updated.description);assert.deepEqual(tools[2].function.parameters, updated.parameters);
+  assert.equal(tools[2].function.strict, true);
+  assert.deepEqual(bridge.body.tool_choice, { type: "allowed_tools", mode: "required", tools: [{ type: "function", name: "docs__lookup" }] });
+  assert.equal(bridge.outputItem({ id: "returned", name: "docs__lookup", arguments: '{"query":"one"}' }).namespace, "docs");
+  assert.throws(() => prepareCarbonToolBridge({ ...body, tool_choice: { type: "function", name: "lookup", namespace: "other" } }), { code: "ccdx_carbon_tool_incompatible" });
+  assert.throws(() => prepareCarbonToolBridge({ tools: [fn("lookup"), updated] }), { code: "ccdx_carbon_tool_incompatible" });
+});
+
 test("Carbon converts custom, namespaced, searched and historical tools without changing the source", () => {
   const body = { model: "gemini-4-carbon", tools: [custom, search,
     { type: "namespace", name: "docs", tools: [fn("lookup"), { ...custom, name: "patch" }] },

@@ -18,6 +18,7 @@ import { limitM365CacheTtl } from "./m365-messages-policy.mjs";
 import { createM365ConversationGuard } from "./m365-conversation-accounts.mjs";
 import { catalogFailure, m365CatalogDiagnostic, m365CatalogRead } from "./m365-catalog-diagnostic.mjs";
 import { m365NetworkDiagnostic } from "./m365-network-diagnostic.mjs";
+import { uniqueModelEntries } from "../model-catalog.mjs";
 
 import { M365_API_BASE, M365_API_ORIGIN } from "./m365-endpoint.mjs";
 export { M365_API_BASE } from "./m365-endpoint.mjs";
@@ -53,13 +54,13 @@ export function m365ConversationId(body, headers = {}, profile = "m365") {
 
 export function m365Catalog(payload) {
   if (!payload || !Array.isArray(payload.data) || payload.data.length > 1000) throw m365Error("m365_catalog_invalid");
-  const seen = new Set();
   for (const model of payload.data) {
     if (!model || typeof model.id !== "string" || !/^[A-Za-z0-9][\w.-]{0,127}$/.test(model.id)
-      || seen.has(model.id) || !Array.isArray(model.supported_endpoints)) throw m365Error("m365_catalog_invalid");
-    seen.add(model.id);
+      || model.supported_endpoints != null && !Array.isArray(model.supported_endpoints)) throw m365Error("m365_catalog_invalid");
   }
-  return { data: payload.data };
+  const data = uniqueModelEntries(payload.data);
+  if (data.some(model => !Array.isArray(model.supported_endpoints))) throw m365Error("m365_catalog_invalid");
+  return { data };
 }
 
 export function m365Models(catalog, family) {

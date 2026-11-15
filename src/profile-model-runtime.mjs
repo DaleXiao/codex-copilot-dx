@@ -9,6 +9,7 @@ import {
 } from "./models.mjs";
 import { initializeModelRegistry } from "./startup.mjs";
 import { status } from "./status.mjs";
+import { normalizeModelList } from "./model-catalog.mjs";
 
 const DEFAULT_TIMEOUT_MS = 5000;
 
@@ -29,7 +30,7 @@ function parsedCatalog(result) {
   if (!isValidModelList(models)) {
     throw new Error("Copilot models response contained no valid models");
   }
-  return models;
+  return normalizeModelList(models);
 }
 
 function createModelRegistry() {

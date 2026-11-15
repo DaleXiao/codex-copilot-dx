@@ -64,3 +64,27 @@ test("repeated and invalid pagination fail without partial catalogs or following
     finally { provider.close(); }
   }
 });
+
+test("API discovery deduplicates across pages before extracting missing metadata", async () => {
+  let calls = 0;
+  const first = { id: native.id, display_name: "First name", supported_endpoints: ["/v1/messages"], capabilities: { thinking: { supported: false } } };
+  const pages = [{ data: [first], has_more: true, last_id: first.id }, { data: [native, { id: "second-model" }], has_more: false }];
+  const provider = createApiProvider({ config, secrets: { get: async () => "synthetic-only" }, networkFactory: async () => ({ close() {}, fetch: async () => Response.json(pages[calls++]) }) });
+  try {
+    const models = await provider.discover();assert.equal(calls, 2);assert.deepEqual(models.map(model => model.id), [native.id, "second-model"]);
+    assert.deepEqual(models[0].protocols, ["messages"]);assert.equal(models[0].metadata.protocols.messages.max_output_tokens, 16000);
+    assert.deepEqual(models[0].metadata.protocols.messages.thinking_modes, ["disabled"]);
+    assert.deepEqual(pages[0].data[0], first);assert.equal(pages[0].data[0].max_tokens, undefined);
+  } finally { provider.close(); }
+});
+
+test("native Messages and Responses keep caller cache markers without translating protocols", async () => {
+  const sent = [], provider = createApiProvider({ config: { ...config, models: [{ id: "native", protocols: ["messages", "responses"] }] },
+    secrets: { get: async () => "synthetic-only" }, networkFactory: async () => ({ close() {}, fetch: async (_url, init) => { sent.push(JSON.parse(init.body));return Response.json({}); } }) });
+  const responses = { model: "native", input: [{ role: "system", content: [{ type: "input_text", text: "cached", prompt_cache_breakpoint: { mode: "explicit" } }] }], prompt_cache_options: { mode: "explicit", ttl: "30m" } };
+  const messages = { model: "native", max_tokens: 32, system: [{ type: "text", text: "cached", cache_control: { type: "ephemeral" } }], messages: [{ role: "user", content: "question" }] };
+  try {
+    await (await provider.client.responses(responses)).text();await (await provider.client.messages(messages)).text();
+    assert.deepEqual(sent, [responses, messages]);
+  } finally { provider.close(); }
+});

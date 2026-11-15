@@ -93,6 +93,18 @@ test("native Responses preserve sealed main/subagent/reply items and Unicode acr
   } finally { clearResponseHistoryForTests(); }
 });
 
+test("a rejected sealed task is neither stripped for retry nor lowered to Chat", async () => {
+  const task = { type: "agent_message", author: "root", recipient: "worker", content: [{ type: "input_text", text: "NEW_TASK" }, { type: "encrypted_content", encrypted_content: "whole-task" }] };
+  for (const endpoints of [["/responses"], ["/chat/completions"]]) {
+    const sent = [];let chatCalls = 0;
+    const result = await invokeAdapter({ getCachedModelEndpointsFn: () => endpoints,
+      responsesFn: async body => { sent.push(structuredClone(body));return Response.json({ error: { message: "The encrypted content could not be verified.", code: "invalid_encrypted_content" } }, { status: 400 }); },
+      chatCompletionsFn: async () => { chatCalls++;throw Error("task must remain sealed"); } }, { body: { model: "synthetic-task", input: [task] } });
+    assert.equal(result.status, 400);assert.equal(chatCalls, 0);assert.equal(sent.length, endpoints.includes("/responses") ? 1 : 0);
+    if (sent.length) assert.deepEqual(sent[0].input, [task]);
+  }
+});
+
 test("positional tools stay native on a dual-endpoint model and remain isolated from image filtering", async () => {
   for (const type of ["additional_tools", "tool_search_output"]) {
     let sent;

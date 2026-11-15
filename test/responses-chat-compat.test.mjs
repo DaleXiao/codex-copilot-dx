@@ -145,3 +145,27 @@ test("Chat cache fields pass only when their specific capability is advertised",
     assert.equal(responsesToChat({ ...body, prompt_cache_retention: value }, { cacheSupport: { prompt_cache_retention: true } }).prompt_cache_retention, undefined);
   }
 });
+
+test("marked content keeps cache boundaries and system order only for explicitly capable Chat sources", () => {
+  const body = { model: "m", instructions: "first", reasoning: { effort: "high" }, tools: [{ type: "function", name: "read", parameters: { type: "object" } }],
+    prompt_cache_options: { mode: "explicit", ttl: "30m" }, input: [
+      { role: "system", content: "second", cache_control: false },
+      { role: "system", content: "third" },
+      { role: "user", content: [{ type: "input_text", text: "question", cache_control: { type: "ephemeral", ttl: "1h" } },
+        { type: "input_image", image_url: "https://example.test/image", prompt_cache_breakpoint: { mode: "explicit" } }] },
+    ] };
+  const original = structuredClone(body), support = { prompt_cache_breakpoint: true, prompt_cache_options: true };
+  const marked = responsesToChat(body, { cacheSupport: support });
+  assert.deepEqual(marked.messages.slice(0, 3), [{ role: "system", content: "first" }, { role: "system", content: [{ type: "text", text: "second", prompt_cache_breakpoint: { mode: "explicit" } }] }, { role: "system", content: "third" }]);
+  assert.deepEqual(marked.messages[3].content[0], { type: "text", text: "question", prompt_cache_breakpoint: { mode: "explicit" } });
+  assert.deepEqual(marked.messages[3].content[1].prompt_cache_breakpoint, { mode: "explicit" });
+  assert.deepEqual(marked.prompt_cache_options, body.prompt_cache_options);assert.equal(marked.reasoning_effort, "high");assert.equal(marked.tools.length, 1);
+  assert.equal(JSON.stringify(marked).includes('"ttl":"1h"'), false);
+  const unmarked = responsesToChat(body);assert.equal(JSON.stringify(unmarked).includes("prompt_cache_"), false);assert.equal(unmarked.messages[1].content, "second");
+  const native = responsesToChat(body, { cacheSupport: { cache_control: true } });assert.deepEqual(native.messages[3].content[0].cache_control, { type: "ephemeral", ttl: "1h" });
+  assert.equal(native.messages[1].content[0].cache_control, false);assert.deepEqual(body, original);
+});
+
+test("Chat conversion cannot discard a top-level sealed agent task", () => {
+  assert.throws(() => responsesToChat({ input: [{ type: "agent_message", author: "root", recipient: "worker", encrypted_content: "opaque-task", content: [{ type: "input_text", text: "NEW_TASK" }] }] }), { code: "ccdx_responses_chat_incompatible" });
+});

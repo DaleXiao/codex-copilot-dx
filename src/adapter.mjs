@@ -5,6 +5,7 @@ import { createNativeImagesHandler } from "./native-images.mjs";
 import { defaultCopilotClient } from "./copilot.mjs";
 import { buildCodexModelResponse } from "./codex-model-catalog.mjs";
 import { isValidModelList } from "./model-cache.mjs";
+import { normalizeModelList } from "./model-catalog.mjs";
 import {
   ADAPTER_STATUS_PATH,
   classifyAdapterRoute,
@@ -148,7 +149,7 @@ async function sendModelList(res, models, {
 
 async function sendLastKnownGoodModels(res, modelRegistry, options = {}) {
   if (!isValidModelList(modelRegistry?.models) || res.destroyed || res.writableEnded) return false;
-  await sendModelList(res, modelRegistry.models, {
+  await sendModelList(res, normalizeModelList(modelRegistry.models), {
     ...options,
     headers: { "X-CCDX-Model-Source": "last-known-good" },
   });
@@ -415,7 +416,10 @@ export function createAdapterHandler(options = {}) {
           abort.clearTimeout();
           if (status >= 200 && status < 300) {
             let models;
-            try { models = JSON.parse(body); } catch {}
+            try {
+              const parsed = JSON.parse(body);models = normalizeModelList(parsed);
+              if (models !== parsed) body = JSON.stringify(models);
+            } catch {}
             if (isValidModelList(models)) {
               if (selectedRegistry) {
                 selectedRegistry.models = models;

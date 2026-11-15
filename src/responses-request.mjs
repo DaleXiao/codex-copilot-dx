@@ -128,6 +128,9 @@ function stripEncryptedReasoningValue(value, state) {
 }
 
 function stripEncryptedReasoningInputValue(item, state) {
+  // A sealed agent message may contain the entire delegated task. Removing
+  // opaque parts would turn a rejected task into an unrelated plaintext ask.
+  if (item?.type === "agent_message") return item;
   if (!isResponsesToolOutputItem(item)) {
     const out = stripEncryptedReasoningValue(item, state);
     if (item?.type === "message"

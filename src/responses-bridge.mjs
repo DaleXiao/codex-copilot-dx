@@ -89,26 +89,38 @@ export function responsesToChat(body, { reasoningEfforts, cacheSupport } = {}) {
   const messages = [];
   if (body.instructions) messages.push({ role: "system", content: body.instructions });
 
-  const messageContent = (content) => {
-    if (typeof content === "string") return content;
+  const cacheFields = value => {
+    if (cacheSupport?.prompt_cache_breakpoint === true) {
+      if (value?.prompt_cache_breakpoint != null) return { prompt_cache_breakpoint: cloneJson(value.prompt_cache_breakpoint) };
+      if (value?.cache_control != null) return { prompt_cache_breakpoint: { mode: "explicit" } };
+    }
+    return cacheSupport?.cache_control === true && value?.cache_control != null ? { cache_control: cloneJson(value.cache_control) } : null;
+  };
+  const messageContent = (content, owner) => {
+    const ownerCache = cacheFields(owner);
+    if (typeof content === "string") return ownerCache ? [{ type: "text", text: content, ...ownerCache }] : content;
     if (content === null) return null;
     if (!Array.isArray(content)) throw chatCompatibilityError("message content", typeof content);
-    if (content.length === 1 && ["input_text", "output_text", "text"].includes(content[0]?.type) && typeof content[0].text === "string") return content[0].text;
+    if (!ownerCache && content.length === 1 && ["input_text", "output_text", "text"].includes(content[0]?.type) && typeof content[0].text === "string" && !cacheFields(content[0])) return content[0].text;
     const parts = [];
     for (const part of content) {
       if (!part || typeof part !== "object") throw chatCompatibilityError("message content", part?.type);
       if (["input_text", "output_text", "text"].includes(part.type)) {
         if (typeof part.text !== "string") throw chatCompatibilityError("message content", part.type);
-        parts.push({ type: "text", text: part.text });
+        parts.push({ type: "text", text: part.text, ...cacheFields(part) });
       } else if (["input_image", "image_url", "image"].includes(part.type)) {
         const imagePart = chatImagePart(part);
-        if (imagePart) parts.push(imagePart);
+        if (imagePart) parts.push({ ...imagePart, ...cacheFields(part) });
         else throw chatCompatibilityError("message content", part.type);
       } else {
         throw chatCompatibilityError("message content", part.type);
       }
     }
-    if (parts.length === 1 && parts[0].type === "text") return parts[0].text;
+    if (ownerCache) {
+      if (!parts.length) parts.push({ type: "text", text: "" });
+      const last = parts.length - 1;parts[last] = { ...ownerCache, ...parts[last] };
+    }
+    if (parts.length === 1 && parts[0].type === "text" && !Object.hasOwn(parts[0], "cache_control") && !Object.hasOwn(parts[0], "prompt_cache_breakpoint")) return parts[0].text;
     return parts;
   };
 
@@ -121,9 +133,9 @@ export function responsesToChat(body, { reasoningEfforts, cacheSupport } = {}) {
         && ["user", "assistant", "system", "developer"].includes(item?.role)
         && Object.prototype.hasOwnProperty.call(item, "content");
       if (item?.type === "message" || isEasyMessage) {
-        messages.push({ role: item.role, content: messageContent(item.content) });
+        messages.push({ role: item.role, content: messageContent(item.content, item) });
       } else if (item?.type === "agent_message") {
-        if (typeof item.author !== "string" || typeof item.recipient !== "string" || !Array.isArray(item.content)) {
+        if (typeof item.author !== "string" || typeof item.recipient !== "string" || !Array.isArray(item.content) || item.encrypted_content != null) {
           throw chatCompatibilityError("input item", "agent_message");
         }
         const escape = (value) => value.replaceAll("&", "&amp;").replaceAll("<", "&lt;")
@@ -192,6 +204,9 @@ export function responsesToChat(body, { reasoningEfforts, cacheSupport } = {}) {
     }
     if (cacheSupport.prompt_cache_retention === true && ["in_memory", "24h"].includes(body.prompt_cache_retention)) {
       chatReq.prompt_cache_retention = body.prompt_cache_retention;
+    }
+    if (cacheSupport.prompt_cache_options === true && body.prompt_cache_options && typeof body.prompt_cache_options === "object" && !Array.isArray(body.prompt_cache_options)) {
+      chatReq.prompt_cache_options = cloneJson(body.prompt_cache_options);
     }
   }
   const maxTok = body.max_output_tokens ?? body.max_tokens ?? body.max_completion_tokens;

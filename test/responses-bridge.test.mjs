@@ -219,6 +219,20 @@ test("forwardToChat: emits stable mixed text and tool output indexes with usage"
   });
 });
 
+test("mixed reasoning and answer chunks retain the first answer fragment and final usage", async () => {
+  const chunks = [
+    { choices: [{ delta: { reasoning_content: "internal", content: "19" } }] },
+    { choices: [{ delta: { reasoning_content: "more", content: " items" }, finish_reason: "stop" }] },
+    { choices: [], usage: { prompt_tokens: 3, completion_tokens: 5, total_tokens: 8 } },
+  ];
+  const source = structuredClone(chunks), events = [];
+  const result = await forwardToChat({ model: "m", messages: [], stream: true }, async (type, data) => events.push({ type, data }), () => {}, () => { throw Error("stream should succeed"); },
+    { chatCompletionsFn: async () => new Response(chunks.map(chunk => "data: " + JSON.stringify(chunk) + "\n\n").join("") + "data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } }) });
+  assert.equal(result, true);assert.equal(events.filter(event => event.type === "response.output_text.delta").map(event => event.data.delta).join(""), "19 items");
+  const completed = events.find(event => event.type === "response.completed").data.response;
+  assert.equal(completed.output[0].content[0].text, "19 items");assert.equal(completed.usage.total_tokens, 8);assert.deepEqual(chunks, source);
+});
+
 test("forwardToChat: preserves streaming upstream errors", async () => {
   let failure;
   await forwardToChat(

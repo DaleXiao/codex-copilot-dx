@@ -3,6 +3,7 @@ import { sourceModels } from "./client-model-plan.mjs";
 import { isImageModel, imageModelCatalog } from "./image-models.mjs";
 import os from "node:os";
 import { publicModelCatalog } from "./provider-metadata.mjs";
+import { uniqueModelEntries } from "./model-catalog.mjs";
 import { createAbortAwareSingleflight } from "./bounded-result-cache.mjs";
 import { githubTokenFingerprint } from "./github-identity.mjs";
 import { validateGithubToken } from "./auth.mjs";
@@ -33,7 +34,8 @@ function endpointLabels(model) {
 }
 
 export function selectableCopilotModels(payload) {
-  const data = Array.isArray(payload) ? payload : payload?.data;
+  const raw = Array.isArray(payload) ? payload : payload?.data;
+  const data = Array.isArray(raw) ? uniqueModelEntries(raw) : raw;
   if (!Array.isArray(data)) throw new Error("Copilot models response contained no model list");
 
   const models = [];
@@ -63,10 +65,10 @@ export function selectableCopilotModels(payload) {
 }
 
 export function publicCopilotModelCatalog(payload) {
-  const data=Array.isArray(payload)?payload:payload.data;
+  const data=uniqueModelEntries(Array.isArray(payload)?payload:payload.data);
   const codex=new Set(sourceModels({id:"github",registry:{models:{data}}},"codex")
     .filter(model=>model.model_picker_enabled!==false&&(!model.policy?.state||model.policy.state==="enabled")).map(model=>model.id));
-  const antigravity=new Set(antigravityCopilotModels(payload).map(model=>model.model));
+  const antigravity=new Set(antigravityCopilotModels({data}).map(model=>model.model));
   return publicModelCatalog(data,{
     selectable:model=>codex.has(model.id)||antigravity.has(model.id)||imageModelCatalog([model]).length>0,
     clients:model=>[...(codex.has(model.id)||isImageModel(model)?["codex"]:[]),...(antigravity.has(model.id)?["antigravity"]:[])],

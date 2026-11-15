@@ -12,6 +12,17 @@ import { isResponsesToolOutputItem } from "../src/responses-content.mjs";
 
 const ENCRYPTED_TOOL_OUTPUT_MARKER = "[CCDX: encrypted tool output omitted because upstream could not decrypt it.]";
 
+test("encrypted retry cleanup preserves delegated task bodies in current and historical agent messages", () => {
+  const task = { type: "agent_message", author: "root", recipient: "worker", content: [{ type: "input_text", text: "NEW_TASK" }, { type: "encrypted_content", encrypted_content: "whole-task" }] };
+  const reasoning = { type: "reasoning", encrypted_content: "unavailable-reasoning" };
+  for (const historicalOnly of [false, true]) {
+    const body = { model: "m", input: [task, reasoning, task] }, context = { body, currentInputStart: 2, historyInputItems: body.input };
+    const before = structuredClone(context), cleaned = sanitizeEncryptedReasoningRequest(context, { historicalOnly });
+    assert.deepEqual(cleaned.body.input, [task, task]);assert.deepEqual(context, before);
+  }
+  assert.equal(sanitizeEncryptedReasoningRequest({ body: { input: [task] }, currentInputStart: 0 }), null);
+});
+
 test("prepareResponsesRequest: expands previous response history locally", () => {
   clearResponseHistoryForTests();
 

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { createRoutePlan } from "../route-plan.mjs";
 import { accessError } from "../access-settings.mjs";
 import { publicModelCatalog } from "../provider-metadata.mjs";
+import { uniqueModelEntries } from "../model-catalog.mjs";
 import { claudeModelEntries } from "../claude-models.mjs";
 import { prepareResponsesPayload } from "../image-optimization.mjs";
 import { enforceResponsesPayloadByteBudget } from "../responses-byte-budget.mjs";
@@ -190,7 +191,7 @@ export function createApiProvider({ config, secrets, env = process.env, platform
         clients: model => allowed.filter(id => model.supported_endpoints.includes(id === "codex" ? paths.responses : paths.messages)) }).map(model => ({ ...model,
           capability: catalog.find(entry => entry.id === model.id)?.capability, auto_review_efforts: [...(catalog.find(entry => entry.id === model.id)?.protocol_capabilities.responses?.values.reasoning_efforts || [])] })) }; },
     async discover({ signal } = {}) {
-      const models = [], ids = new Set(), checked_at = new Date().toISOString();let url = modelsUrl, bytes = 0;
+      const models = [], cursors = new Set(), checked_at = new Date().toISOString();let url = modelsUrl, bytes = 0;
       for (let page = 0; page < 25; page++) {
       const response = await request(url, undefined, { signal }, config.endpoints.responses ? "responses" : "messages");
       if (!response.ok) {
@@ -201,14 +202,15 @@ export function createApiProvider({ config, secrets, env = process.env, platform
       const text = await readBoundedResponseText(response, { maxBytes: MAX_UPSTREAM_MODEL_CATALOG_BYTES - bytes, label: "API model catalog", signal });bytes += Buffer.byteLength(text);
       let value;try { value = JSON.parse(text); } catch { throw accessError("ccdx_api_catalog_invalid", 502); }
       if (!Array.isArray(value.data) || models.length + value.data.length > 500) throw accessError("ccdx_api_catalog_invalid", 502);
-      for (const model of value.data) { if (!model || typeof model.id !== "string" || !/^[\w][\w./:@+-]{0,159}$/.test(model.id) || model.id.includes("..") || model.id.includes("//") || ids.has(model.id)) throw accessError("ccdx_api_catalog_invalid", 502);ids.add(model.id); }
+      for (const model of value.data) { if (!model || typeof model.id !== "string" || !/^[\w][\w./:@+-]{0,159}$/.test(model.id) || model.id.includes("..") || model.id.includes("//")) throw accessError("ccdx_api_catalog_invalid", 502); }
       // A catalog listing is not evidence that every model supports every API.
-      models.push(...value.data.map(model => ({ id: model.id, display: apiModelDisplay(model), metadata: apiModelMetadata(model, { checked_at, deployment: deploymentRevision(config, env) }), protocols: Array.isArray(model.supported_endpoints)
-        ? Object.entries(paths).filter(([, endpoint]) => model.supported_endpoints.includes(endpoint) || model.supported_endpoints.includes(endpoint.slice(3))).map(([api]) => api).filter(api => config.endpoints[api]) : [] })));
-      if (value.has_more !== true) return models;
+      models.push(...value.data);
+      if (value.has_more !== true) return uniqueModelEntries(models).map(model => ({ id: model.id, display: apiModelDisplay(model), metadata: apiModelMetadata(model, { checked_at, deployment: deploymentRevision(config, env) }), protocols: Array.isArray(model.supported_endpoints)
+        ? Object.entries(paths).filter(([, endpoint]) => model.supported_endpoints.includes(endpoint) || model.supported_endpoints.includes(endpoint.slice(3))).map(([api]) => api).filter(api => config.endpoints[api]) : [] }));
       // Follow only the native cursor on the configured origin, never an
       // upstream next-page URL that could disclose this source's credential.
-      if (!value.data.length || value.last_id !== value.data.at(-1).id || bytes >= MAX_UPSTREAM_MODEL_CATALOG_BYTES) throw accessError("ccdx_api_catalog_invalid", 502);
+      if (!value.data.length || value.last_id !== value.data.at(-1).id || cursors.has(value.last_id) || bytes >= MAX_UPSTREAM_MODEL_CATALOG_BYTES) throw accessError("ccdx_api_catalog_invalid", 502);
+      cursors.add(value.last_id);
       const next = new URL(modelsUrl);next.searchParams.set("after_id", value.last_id);url = next.href;
       }
       throw accessError("ccdx_api_catalog_limit", 502);

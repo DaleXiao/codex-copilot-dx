@@ -89,9 +89,14 @@ test("inference rejects browser origins before reading bodies while native and L
       assert.equal(JSON.parse(response.text).error.code, "ccdx_browser_origin_forbidden");
     }
     for (const remoteAddress of ["127.0.0.1", "::1", "192.168.1.2"]) {
+      const lan = remoteAddress === "192.168.1.2";
+      const localAddress = lan ? "192.168.1.10" : remoteAddress;
       const req = jsonRequest(Buffer.from(JSON.stringify({ model: "gpt-5.6-sol", input: "native", stream: false })));
-      Object.assign(req, { method: "POST", url, socket: { remoteAddress } });
-      const response = await invokeAdapterRequest({ responsesFn: async () => Response.json({ id: "resp_native", status: "completed", output: [] }),
+      Object.assign(req, { method: "POST", url,
+        headers: { host: lan ? `${localAddress}:2026` : remoteAddress === "::1" ? "[::1]:2026" : "127.0.0.1:2026" },
+        socket: { remoteAddress, localAddress } });
+      const response = await invokeAdapterRequest({ env: { CCDX_ALLOW_LAN: "1" },
+        responsesFn: async () => Response.json({ id: "resp_native", status: "completed", output: [] }),
         responsesCompactFn: async () => Response.json({ id: "resp_compact_native", object: "response.compaction", output: [{ type: "compaction", encrypted_content: "fixture" }] }) }, req);
       assert.equal(response.status, 200, response.text);
     }

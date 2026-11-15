@@ -331,7 +331,7 @@
     }
     function renderActivity(data) {
       globalThis.ccdxDashboardActivity?.update(data.model_activity, { live: true });
-      globalThis.ccdxDashboardFlow?.update(data, { live: true });globalThis.ccdxToolActivity?.update(data);
+      globalThis.ccdxDashboardFlow?.update(data, { live: true });globalThis.ccdxToolActivity?.update(data, { live: true });
       text("version", `v${data.version || "?"}`);
       text("uptime", "pid_pid_uptime_duration", { pid: number(data.pid), duration: duration(data.uptime_ms) });
       text("requests", number(data.requests?.total));

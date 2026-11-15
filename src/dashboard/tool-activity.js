@@ -1,15 +1,16 @@
 (() => {
   const root = document.getElementById("tool-activity");if (!root) return;
   const el = id => document.getElementById(id), canvas = el("tool-canvas"), ctx = canvas.getContext?.("2d");
-  const styles = new Set(["grid", "halo", "orbit", "weave", "off"]), storageKey = "ccdx.dashboard.toolMotionStyle";
+  const styles = new Set(["halo", "grid", "busy", "speed", "assembly", "off"]), storageKey = "ccdx.dashboard.toolMotionStyle";
   const pending = state => ["preparing", "waiting"].includes(state);
   const phrase = (key, values = {}) => globalThis.ccdxLanguage.format(key, values);
   const text = (id, key, values) => globalThis.ccdxLanguage.set(el(id), key, values);
-  const state = { scene: "idle", style: "grid", intensity: .8, reduce: false };
+  const state = { scene: "idle", style: "halo", intensity: .8, reduce: false };
   try { const saved = localStorage.getItem(storageKey);if (styles.has(saved)) state.style = saved; } catch {}
   const motion = globalThis.matchMedia?.("(prefers-reduced-motion: reduce)") || { matches: false, addEventListener() {} };
   let records = [], fresh = false, supported = false, visible = true, raf = 0, last = 0, start = performance.now(), expiry = null;
-  let signature = "", box = { width: 0, height: 0 }, color = "", omitted = 0;
+  let signature = "", box = { width: 0, height: 0 }, color = "", omitted = 0, requests = [], requestDeadline = 0;
+  const animating = () => ["calling", "parallel", "waiting", "processing", "responding"].includes(state.scene);
   const shown = () => document.visibilityState === "visible" && !root.closest("[hidden]") && visible;
   function measure() {
     box = canvas.getBoundingClientRect();color = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim();
@@ -21,8 +22,8 @@
       if(canvas.width!==Math.round(w*dpr)||canvas.height!==Math.round(h*dpr)){canvas.width=Math.round(w*dpr);canvas.height=Math.round(h*dpr);}
       ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,w,h);
       const cx=w/2,cy=h/2,r=Math.min(w,h)*.31;
-      const reduced=motion.matches||state.reduce,t=reduced?0:(now-start)/1000,active=['calling','parallel'].includes(state.scene),waiting=state.scene==='waiting',returned=state.scene==='returned';
-      const quiet=state.scene==='idle'||state.scene==='responding',power=quiet?.12:waiting?.5:returned?.5:state.intensity;
+      const reduced=motion.matches||state.reduce,t=reduced?0:(now-start)/1000,active=['calling','parallel','processing','responding'].includes(state.scene),waiting=state.scene==='waiting',returned=state.scene==='returned';
+      const quiet=!active&&!waiting&&!returned,power=quiet?.12:waiting?.5:returned?.5:state.intensity;
       ctx.strokeStyle=color;ctx.fillStyle=color;ctx.lineWidth=.8;
       function arc(radius,a,b,alpha){ctx.globalAlpha=alpha;ctx.beginPath();ctx.arc(cx,cy,radius,a,b);ctx.stroke();}
       if(state.style==='grid'){
@@ -32,6 +33,39 @@
           const index=row*cols+(row%2?cols-col-1:col),distance=(head-index+cols*rows)%(cols*rows),wave=Math.max(0,1-distance/8);
           ctx.globalAlpha=quiet?.1:returned?.16+Math.max(0,1-(now-start)/900)*.42:.1+wave*power;
           ctx.fillRect(left+col*(size+gap),top+row*(size+gap),size,size);
+        }
+        ctx.globalAlpha=1;return;
+      }
+      if(state.style==='busy'){
+        const n=7,bw=12,gap=11,left=cx-(n*bw+(n-1)*gap)/2;
+        for(let i=0;i<n;i++){
+          const wave=active||waiting?(Math.sin(t*(waiting?6:11)-i*.8)+1)/2:.2;
+          const bh=quiet?12:returned?22:14+wave*54;
+          ctx.globalAlpha=quiet?.15:returned?.55:.18+wave*power;ctx.fillRect(left+i*(bw+gap),cy-bh/2,bw,bh);
+        }
+        ctx.globalAlpha=1;return;
+      }
+      if(state.style==='speed'){
+        const span=Math.min(w-36,220),left=cx-span/2;
+        for(let i=0;i<7;i++){
+          const phase=(t*(waiting?1.5:3.3)+i*.173)%1,len=20+(i%3)*16,y=cy+(i-3)*13;
+          const x=active||waiting?left+phase*(span+len)-len:left+span*.43;
+          ctx.globalAlpha=quiet?.12:returned?.5:Math.sin(phase*Math.PI)*power;
+          ctx.lineWidth=i===3?3:1.5;ctx.beginPath();ctx.moveTo(Math.max(left,x),y);ctx.lineTo(Math.min(left+span,x+len),y);ctx.stroke();
+        }
+        ctx.globalAlpha=1;return;
+      }
+      if(state.style==='assembly'){
+        const span=Math.min(w-32,218),left=cx-span/2,rail=cy+23;
+        ctx.globalAlpha=quiet?.12:.26;ctx.lineWidth=1;
+        ctx.beginPath();ctx.moveTo(left,rail);ctx.lineTo(left+span,rail);ctx.moveTo(left,rail+8);ctx.lineTo(left+span,rail+8);ctx.stroke();
+        for(let i=0;i<3;i++){
+          const x=left+span*(i+.5)/3,phase=(t*(waiting?1.5:3.2)-i/3+9)%1,press=active||waiting?Math.max(0,1-Math.abs(phase-.5)*5):0;
+          ctx.globalAlpha=quiet?.16:.58;ctx.fillRect(x-14,cy-36,28,8);ctx.fillRect(x-2,cy-28,4,16+press*16);ctx.fillRect(x-9,cy-14+press*16,18,4);
+        }
+        for(let i=0;i<5;i++){
+          const phase=active||waiting?(t*(waiting?.7:1.6)+i/5)%1:(i+.5)/5,x=left+phase*span;
+          ctx.globalAlpha=quiet?.12:returned?.55:.2+Math.sin(phase*Math.PI)*power;ctx.fillRect(x-5,rail-12,10,10);
         }
         ctx.globalAlpha=1;return;
       }
@@ -45,17 +79,16 @@
           ctx.beginPath();ctx.moveTo(cx+Math.cos(a)*r*1.17,cy+Math.sin(a)*r*1.17);ctx.lineTo(cx+Math.cos(a)*(r*1.17+length),cy+Math.sin(a)*(r*1.17+length));ctx.stroke();
         }
       }
-      if(state.style==='weave'||state.style==='halo'){
-        ctx.lineWidth=.65;const strands=state.style==='weave'?62:28;
+      if(state.style==='halo'){
+        ctx.lineWidth=.65;const strands=28;
         for(let i=0;i<strands;i++){
-          const a=i/strands*Math.PI*2+spin*.6,b=a+2.35+Math.sin(i*.68+t*1.7)*.48,inner=r*(state.style==='weave'?.84:.68);
+          const a=i/strands*Math.PI*2+spin*.6,b=a+2.35+Math.sin(i*.68+t*1.7)*.48,inner=r*.68;
           ctx.globalAlpha=(.1+power*.2)*(quiet?.45:1);ctx.beginPath();ctx.moveTo(cx+Math.cos(a)*inner,cy+Math.sin(a)*inner);ctx.quadraticCurveTo(cx+Math.sin(t*1.3+i)*r*.35,cy+Math.cos(i*.5+t*.7)*r*.3,cx+Math.cos(b)*inner,cy+Math.sin(b)*inner);ctx.stroke();
         }
       }
       for(let i=0;i<3;i++){
-        const a=spin*(i%2?-1:1)+i*2.08,track=r*(state.style==='orbit'?.58+i*.25:.89+i*.06);
+        const a=spin*(i%2?-1:1)+i*2.08,track=r*(.89+i*.06);
         ctx.lineWidth=1.3;arc(track,a,a+(active?1.25:waiting?.75:.18),quiet?.15:.75);
-        if(state.style==='orbit'){arc(track,0,Math.PI*2,.12);ctx.globalAlpha=quiet?.2:.8;ctx.beginPath();ctx.arc(cx+Math.cos(a)*track,cy+Math.sin(a)*track,active?2.8:2,0,Math.PI*2);ctx.fill();}
       }
       if(active||waiting){for(let i=0;i<3;i++){const q=(t*.85+i/3)%1;arc(r*(.55+q*.5),0,Math.PI*2,(1-q)*.12*power);}}
       if(returned&&!reduced){const q=Math.min((now-start)/850,1);arc(r*(1+q*.32),0,Math.PI*2,(1-q)*.5);}
@@ -64,13 +97,13 @@
 
   function animate(now) {
     raf = 0;
-    if (!shown() || motion.matches || state.style === "off" || !["calling", "parallel", "waiting"].includes(state.scene) && !(state.scene === "returned" && now - start < 900)) return;
+    if (!shown() || motion.matches || state.style === "off" || !animating() && !(state.scene === "returned" && now - start < 900)) return;
     if (now - last >= 1000 / 30) { last = now;draw(now); }raf = requestAnimationFrame(animate);
   }
   function refreshAnimation() {
     cancelAnimationFrame(raf);raf = 0;root.dataset.paused = String(!shown() || motion.matches);
     if (!shown() || state.style === "off") return;
-    draw();if (!motion.matches && (["calling", "parallel", "waiting"].includes(state.scene) || state.scene === "returned" && performance.now() - start < 900)) raf = requestAnimationFrame(animate);
+    draw();if (!motion.matches && (animating() || state.scene === "returned" && performance.now() - start < 900)) raf = requestAnimationFrame(animate);
   }
   function category(name) {
     const value = String(name || "").toLowerCase().split(/__|\./).at(-1);
@@ -86,34 +119,43 @@
   function render(force = false) {
     if (root.closest("[hidden]")) { signature = "";refreshAnimation();return; }
     const time = performance.now();
+    if (requestDeadline && time >= requestDeadline) { requests = [];requestDeadline = 0;fresh = false; }
     for (const row of records) if (row.until <= time && pending(row.state)) { row.state = "unknown";row.until = time + 300000; }
     records = records.filter(row => row.until > time);
     const rows = records.slice(0, 32).map(row => fresh || !pending(row.state) ? row : { ...row, state: "unknown" });
-    const next = JSON.stringify([fresh, supported, state.style, omitted, rows.map(({ until, ...row }) => row)]);
+    const agents = fresh ? requests : [];
+    const next = JSON.stringify([fresh, supported, state.style, omitted, agents, rows.map(({ until, ...row }) => row)]);
     clearTimeout(expiry);expiry = null;
-    if (records.length) expiry = setTimeout(() => render(), Math.max(1, Math.min(...records.map(row => row.until - time))));
+    const deadlines = records.map(row => row.until);if (requestDeadline) deadlines.push(requestDeadline);
+    if (deadlines.length) expiry = setTimeout(() => render(), Math.max(1, Math.min(...deadlines) - time));
     if (!force && next === signature) return;
     signature = next;
     const active = rows.filter(row => pending(row.state)), preparing = active.some(row => row.state === "preparing");
-    const scene = active.length ? preparing ? active.length > 1 ? "parallel" : "calling" : "waiting"
+    const responding = agents.some(row => row.responding);
+    const scene = !fresh ? "idle" : active.length ? preparing ? active.length > 1 ? "parallel" : "calling" : "waiting"
+      : agents.length ? responding ? "responding" : "processing"
       : rows.some(row => row.state === "returned") && !rows.some(row => ["failed", "cancelled", "unknown"].includes(row.state)) ? "returned" : "idle";
     if (scene !== state.scene) start = performance.now();state.scene = scene;
     const key = !supported || !fresh ? "flow_status_unknown" : active.length ? preparing ? active.length > 1 ? "tool_preparing_many" : "tool_preparing" : "tool_waiting"
+      : agents.length ? agents.length > 1 ? "tool_requests_many" : responding ? "tool_responding" : "tool_processing"
       : rows.some(row => row.state === "failed") ? "tool_failed" : rows.some(row => row.state === "cancelled") ? "tool_cancelled"
         : rows.some(row => row.state === "unknown") ? "flow_status_unknown" : rows.length ? "tool_returned" : "tool_idle";
-    text("tool-state", key, { count: active.length });
-    canvas.setAttribute("aria-label", phrase(key, { count: active.length }));
+    const count = active.length || agents.length;
+    text("tool-state", key, { count });
+    canvas.setAttribute("aria-label", phrase(key, { count }));
     el("tool-style").value = state.style;el("tool-stage").dataset.style = state.style;
-    el("tool-cursor").hidden = !active.length || state.style === "off" || !fresh;
-    const groups = new Map(rows.map(row => [`${row.application}:${row.provider}:${row.model}`, row]));
-    el("tool-context").hidden = !rows.length;
-    el("tool-context").textContent = groups.size === 1 ? `${appName(rows[0].application)} · ${rows[0].model === "other" ? phrase("flow_model_pending") : rows[0].model}` : phrase("tool_groups", { count: groups.size });
+    el("tool-cursor").hidden = !count || state.style === "off" || !fresh;
+    const displayed = active.length ? rows : agents.length ? agents : rows;
+    const groups = new Map(displayed.map(row => [`${row.application}:${row.provider}:${row.model}`, row]));
+    el("tool-context").hidden = !displayed.length;
+    el("tool-context").textContent = groups.size === 1 ? `${appName(displayed[0].application)} · ${displayed[0].model === "other" ? phrase("flow_model_pending") : displayed[0].model}` : phrase("tool_groups", { count: groups.size });
     const list = el("tool-list");list.replaceChildren();
-    for (const row of rows.slice(0, 6)) {
-      const item = document.createElement("div");item.className = "tool-entry";item.dataset.state = row.state;
+    for (const row of displayed.slice(0, 6)) {
+      const agent = row.responding !== undefined;
+      const item = document.createElement("div");item.className = "tool-entry";item.dataset.state = agent ? "preparing" : row.state;
       const mark = document.createElement("span");mark.className = "tool-mark";mark.setAttribute("aria-hidden", "true");
-      const name = document.createElement("span");name.className = "tool-name";name.textContent = phrase(category(row.name));
-      const status = document.createElement("span");status.textContent = phrase(`tool_row_${row.state}`);
+      const name = document.createElement("span");name.className = "tool-name";name.textContent = phrase(agent ? row.responding ? "tool_response_action" : "tool_processing_action" : category(row.name));
+      const status = document.createElement("span");status.textContent = phrase(agent ? "tool_row_active" : `tool_row_${row.state}`);
       item.append(mark, name, status);list.append(item);
     }
     el("tool-details").hidden = !rows.length;
@@ -136,17 +178,21 @@
   new IntersectionObserver(entries => { visible = entries[0].isIntersecting;refreshAnimation(); }, { threshold: .05 }).observe(canvas);
   new MutationObserver(() => render(true)).observe(document.documentElement, { attributes: true, attributeFilter: ["lang", "data-theme", "data-palette"] });
   globalThis.ccdxToolActivity = {
-    update(data) {
+    update(data, { live = false } = {}) {
       const parts = [data?.stream_performance, (data?.providers?.claude || data?.providers?.m365?.claude)?.requests?.performance].filter(Boolean);
       const views = parts.map(part => part.tool_activity).filter(value => Array.isArray(value?.items));
-      supported = views.length > 0;fresh = supported;const time = performance.now();
+      supported = views.length > 0 || parts.some(part => Array.isArray(part.active_requests));fresh = supported;const time = performance.now();
+      requests = parts.flatMap(part => (Array.isArray(part.active_requests) ? part.active_requests.slice(0, 128) : []).filter(row => row?.purpose === "conversation" && row.terminal_outcome == null
+        && typeof row.model === "string" && ["received", "admission", "body", "history", "images", "serialization", "upstream_connection", "upstream_response", "upstream_stream"].includes(row.phase))
+        .map(row => ({ application: row.application || "api", provider: row.provider, model: row.model.slice(0, 160), responding: Number.isFinite(row.first_output_ms) && row.first_output_ms >= 0 }))).slice(0, 128);
+      requestDeadline = live || !requests.length ? 0 : time + 6000;
       const merged = views.flatMap((view, index) => view.items.slice(0, 32).filter(row => row && typeof row.id === "string" && ["preparing", "waiting", "returned", "failed", "cancelled", "unknown"].includes(row.state)
         && Number.isFinite(row.expires_in_ms) && row.expires_in_ms > 0).map(row => ({ id: `${index}-${row.id}`, application: row.application || "api", provider: row.provider, model: row.model || "other", name: row.name,
           state: row.state, until: time + Math.min(row.expires_in_ms, 300000) })));
       merged.sort((a, b) => Number(pending(b.state)) - Number(pending(a.state)));records = merged.slice(0, 32);
       omitted = Math.max(0, merged.length - records.length) + views.reduce((sum, view) => sum + (Number.isSafeInteger(view.omitted) ? view.omitted : 0), 0);render();
     },
-    unavailable() { fresh = false;render(); },
+    unavailable() { fresh = false;requests = [];requestDeadline = 0;render(); },
     visibilityChanged() { render();refreshAnimation(); },
   };
   render();

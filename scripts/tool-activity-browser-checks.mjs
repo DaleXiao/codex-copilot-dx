@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { comparePerformancePairs } from "./privacy-performance-analysis.mjs";
 
 export async function checkToolActivity({ page, codex, metrics, performanceCheck = false, advanceToolClock }) {
   await page.evaluate(() => {
@@ -11,6 +12,8 @@ export async function checkToolActivity({ page, codex, metrics, performanceCheck
       }
     });
   });
+  assert.equal(await page.locator("#tool-style").inputValue(), "halo");
+  assert.deepEqual(await page.locator("#tool-style option").evaluateAll(options => options.map(option => option.value)), ["halo", "grid", "busy", "speed", "assembly", "off"]);
   const tracker = codex.begin("responses", { requestId: "tool-browser", application: "codex_app" });
   const complete = metrics.begin("responses");tracker.setProvider("github");tracker.setModel("tool-model");tracker.observeSession("d".repeat(64));
   tracker.upstreamStarted();tracker.firstOutput();tracker.observeToolOutput({ output: ["read_file", "search_files", "run_command"].map((name, i) => ({ type: "function_call", call_id: `tool-${i}`, name })) }, "responses");
@@ -21,7 +24,7 @@ export async function checkToolActivity({ page, codex, metrics, performanceCheck
   const before = await page.evaluate(() => window.__toolFrameCount);await page.waitForTimeout(120);
   assert.ok(await page.evaluate(() => window.__toolFrameCount) > before, "Waiting activity animates without new model events");
   const subscriptionRequests = await page.evaluate(() => performance.getEntriesByType("resource").filter(row => row.name.includes("/_ccdx/activity")).length);
-  for (const style of ["halo", "orbit", "weave", "grid"]) {
+  for (const style of ["halo", "busy", "speed", "assembly", "grid"]) {
     await page.selectOption("#tool-style", style);
     assert.equal(await page.locator("#tool-state").textContent(), "Waiting for tool results");
     assert.equal(await page.locator("#tool-stage").getAttribute("data-style"), style);
@@ -31,7 +34,7 @@ export async function checkToolActivity({ page, codex, metrics, performanceCheck
     const pairs = [], benchmarkStarted = Date.now();
     for (let pair = 0; pair < 20; pair++) {
       const result = {};
-      for (const style of pair % 2 ? ["weave", "off"] : ["off", "weave"]) {
+      for (const style of pair % 2 ? ["halo", "off"] : ["off", "halo"]) {
         await page.selectOption("#tool-style", style);
         const start = await page.evaluate(() => ({ sum: window.__toolFrames.reduce((a, b) => a + b, 0), length: window.__toolFrames.length }));
         await page.waitForTimeout(200);
@@ -43,9 +46,11 @@ export async function checkToolActivity({ page, codex, metrics, performanceCheck
     const p95 = samples[Math.floor(samples.length * .95)] || 0;
     assert.ok(p95 <= 2, `Fixed-host animation callback p95 exceeded 2ms: ${p95}`);
     assert.ok(pairs.every(pair => pair.off.frames === 0), "Disabled style schedules no continuing animation frames");
-    Object.assign(performanceReceipt, { paired_samples: pairs, callback_p95_ms: p95, frame_budget_ms: 2 });
+    const comparison = comparePerformancePairs(pairs.map(pair => ({ before_ms: 200 + pair.off.cpu_ms, after_ms: 200 + pair.halo.cpu_ms })), { tolerance: .025, absoluteToleranceMs: 5 });
+    assert.equal(comparison.decision, "pass", "Paired callback overhead must stay within 5ms per 200ms window");
+    Object.assign(performanceReceipt, { paired_samples: pairs, comparison, callback_p95_ms: p95, frame_budget_ms: 2 });
     console.log(JSON.stringify({tool_performance:performanceReceipt,elapsed_ms:Date.now()-benchmarkStarted,backend_states:codex.snapshot().tool_activity.items.map(row=>({state:row.state,expires_in_ms:row.expires_in_ms})),connection:await page.locator("#connection").textContent()}));
-    assert.ok(pairs.every(pair=>pair.weave.frames>0), "Visible active style must actually animate throughout the performance sample");
+    assert.ok(pairs.every(pair=>pair.halo.frames>0), "Visible active style must actually animate throughout the performance sample");
   }
   await page.selectOption("#tool-style", "grid");
   await page.emulateMedia({ reducedMotion: "reduce" });await page.waitForTimeout(80);
@@ -73,8 +78,27 @@ export async function checkToolActivity({ page, codex, metrics, performanceCheck
   assert.equal(await page.evaluate(() => window.__toolFrameCount), stale, 'Expired evidence does not remain animated');
   await page.setViewportSize({ width: 320, height: 900 });
   assert.ok(await page.locator("#tool-activity").evaluate(el => el.scrollWidth <= el.clientWidth));
+  for (const style of ["halo", "busy", "speed", "assembly", "grid"]) {
+    await page.selectOption("#tool-style", style);
+    assert.ok(await page.locator("#tool-activity").evaluate(el => el.scrollWidth <= el.clientWidth));
+  }
   await page.setViewportSize({ width: 1280, height: 1000 });
+  const agent = codex.begin("responses", { requestId: "agent-browser", application: "codex_app" });agent.setProvider("github");agent.setModel("agent-model");
+  await page.waitForFunction(() => document.querySelector('#tool-state').textContent === '正在处理请求');
+  agent.upstreamStarted();agent.firstOutput();
+  await page.waitForFunction(() => document.querySelector('#tool-state').textContent === '正在生成回复');
+  for (const style of ["halo", "busy", "speed", "assembly", "grid"]) {
+    await page.selectOption("#tool-style", style);const before = await page.evaluate(() => window.__toolFrameCount);await page.waitForTimeout(100);
+    assert.ok(await page.evaluate(() => window.__toolFrameCount) > before);
+  }
+  await page.selectOption("#tool-style", "off");assert.equal(await page.locator("#tool-state").isVisible(), true);
+  const disabled = await page.evaluate(() => window.__toolFrameCount);await page.waitForTimeout(100);assert.equal(await page.evaluate(() => window.__toolFrameCount), disabled);
+  agent.terminal("cancelled");agent.finish({ aborted: true });await page.waitForFunction(() => document.querySelector('#tool-state').textContent === '状态待更新');
+  for (const style of ["halo", "busy", "speed", "assembly", "grid"]) {
+    await page.selectOption("#tool-style", style);const before = await page.evaluate(() => window.__toolFrameCount);await page.waitForTimeout(100);
+    assert.equal(await page.evaluate(() => window.__toolFrameCount), before, 'Terminal requests leave no continuing animation');
+  }
   await page.locator("#language-toggle").click();await page.selectOption("#tool-style", "grid");
   assert.equal(await page.evaluate(() => performance.getEntriesByType("resource").filter(row => row.name.includes("/_ccdx/activity")).length), subscriptionRequests, "Styles reuse the existing activity subscription");
-  return { styles: 4, parallel_tools: 3, genuine_results: true, stopped: true, reduced_motion: true, small_screen: true, ...performanceReceipt };
+  return { styles: 5, agent_phases: true, parallel_tools: 3, genuine_results: true, stopped: true, reduced_motion: true, small_screen: true, ...performanceReceipt };
 }

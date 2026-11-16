@@ -81,10 +81,19 @@ try {
     const model = models.find(model => model.id === "sparse"), start = calls.length;
     const reply = await run(executable, ["--bare", "-p", `Reply with ${marker}.`, "--model", model.public_id, "--tools", "", "--no-session-persistence", "--output-format", "json", "--max-turns", "1"], { env: isolated, cwd: home, timeout: 60000, maxBuffer: 2 * 1024 * 1024 });
     assert.match(reply.stdout, new RegExp(marker));const requests = calls.slice(start);
-    assert.ok(requests.some(request => request.model === model.id && request.effort === "xhigh"), "An omitted native effort uses the exact declared CCDX default");
-    const observed = runtime.snapshot().claude.requests.performance.recent_requests.filter(row => row.model === model.id);
+    assert.ok(requests.some(request => request.model === model.id && request.effort === "high"), "The fixed native host supplies high even without --effort; preserve it");
+    let observed = runtime.snapshot().claude.requests.performance.recent_requests.filter(row => row.model === model.id);
+    assert.ok(observed.some(row => row.context?.reasoning_effort_requested === "high" && row.context?.reasoning_effort_sent === "high"));
+    results.push({ model: model.id, effort: "high", native_default_preserved: true, requests, marker_received: true });
+    const omittedStart = calls.length;
+    const response = await fetch(`http://127.0.0.1:${port}/anthropic/v1/messages`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${readClientGatewayKeys({ home, env })[clientId]}` },
+      body: JSON.stringify({ model: model.public_id, messages: [{ role: "user", content: `Reply with ${marker}.` }], max_tokens: 64000 }), signal: AbortSignal.timeout(60000) });
+    assert.equal(response.status, 200);assert.equal((await response.json()).content[0].text, marker);
+    const omittedRequests = calls.slice(omittedStart);assert.equal(omittedRequests.length, 1);
+    assert.equal(omittedRequests[0].model, model.id);assert.equal(omittedRequests[0].effort, "xhigh", "A genuinely omitted field uses the exact declared CCDX default");
+    observed = runtime.snapshot().claude.requests.performance.recent_requests.filter(row => row.model === model.id);
     assert.ok(observed.some(row => row.context?.reasoning_effort_requested === undefined && row.context?.reasoning_effort_sent === "xhigh"));
-    results.push({ model: model.id, effort: "xhigh", gateway_default: true, requests, marker_received: true });
+    results.push({ model: model.id, effort: "xhigh", gateway_default: true, requests: omittedRequests, marker_received: true });
   }
   console.log(JSON.stringify({ version, client: clientId, host_context: settings.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, host_output: settings.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS,
     results, live_provider_calls: 0, tools_executed: 0 }));

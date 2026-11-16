@@ -56,7 +56,7 @@ For scripts, source access accepts `--apps codex,claude-app` with `--edit`; edit
 
 An app model file contains `deployments: [{"source":"github","model":"<model-id>"}]`, with optional `default_model` and `auto_sync`. An explicit empty array clears the default and pauses access. A file without `deployments` is rejected. Unavailable saved selections remain visible until the user changes them.
 
-Claude App deployments may also specify `reasoning_effort`, for example `{"source":"api_work","model":"reasoner","reasoning_effort":"xhigh"}`. Omit it to follow the App. `app claude-app models --edit` and the TUI expose the source's declared choices for models needing CCDX control, and preserve existing defaults during other model edits. This preference belongs to that client's source/model binding, not to the source shared with Codex or Claude Code.
+Claude App deployments may also specify `reasoning_effort`, for example `{"source":"api_work","model":"reasoner","reasoning_effort":"xhigh"}`. Omit it to follow the App. A client can send an automatic level even without a visible selection; CCDX preserves that supplied value. The fallback applies only when the request omits the field. `app claude-app models --edit` and the TUI expose the source's declared choices for models needing CCDX control, and preserve existing defaults during other model edits. This preference belongs to that client's source/model binding, not to the source shared with Codex or Claude Code.
 
 ## Antigravity in Gemini App
 

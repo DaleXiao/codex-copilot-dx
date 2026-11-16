@@ -104,6 +104,58 @@ async function save(r, options = {}) {
   const state = await r.manageConnections({ operation: "save_api", config, allowed: ["codex", "claude_app", "claude_code"], key: "synthetic-key-only", ...options });
   const savedId = state.providers.find(p => !p.builtin).id;await r.manageConnections({ operation: "discover", id: savedId });return savedId;
 }
+
+test("adaptive effort stays source-bound, preserves explicit app values and leaves Code untouched", async t => {
+  const s = runtime(t), { id: _id, enabled: _enabled, secret_ref: _ref, ...config } = structuredClone(apiConfig);
+  config.models[0].capabilities = { reasoning: true, reasoning_efforts: ["low", "high", "xhigh"], reasoning_format: "messages" };
+  const id = await save(s.runtime, { config }), keys = readClientGatewayKeys({ home: s.home, env: {} });
+  const choose = (client, deployments) => s.runtime.manageConnections({ operation: "client", id: client, enabled: true, allowed: [id], deployments });
+  await choose("claude_app", [{ source: id, model: "any-message-model", reasoning_effort: "xhigh" }]);
+  await choose("claude_code", [{ source: id, model: "any-message-model" }]);
+  const headers = { authorization: `Bearer ${keys.claude_app}` };
+  assert.equal((await invoke(s.runtime.handleClaude, { headers })).status, 200);
+  assert.equal(JSON.parse(s.calls.at(-1).init.body).output_config.effort, "xhigh");
+  const body = { model: "any-message-model", messages: [{ role: "user", content: "synthetic" }], max_tokens: 4, output_config: { effort: "low" } };
+  assert.equal((await invoke(s.runtime.handleClaude, { headers, body })).status, 200);assert.equal(JSON.parse(s.calls.at(-1).init.body).output_config.effort, "low");
+  const before = s.calls.length;
+  assert.equal((await invoke(s.runtime.handleClaude, { headers, body: { ...body, output_config: { effort: "medium" } } })).status, 400);
+  assert.equal(s.calls.length, before, "Unsupported explicit values are not mapped to another level");
+  assert.equal((await invoke(s.runtime.handleClaude, { headers: { authorization: `Bearer ${keys.claude_code}`, "x-ccdx-client": "claude-app" } })).status, 200);
+  assert.equal(JSON.parse(s.calls.at(-1).init.body).output_config, undefined);
+  await assert.rejects(choose("claude_code", [{ source: id, model: "any-message-model", reasoning_effort: "low" }]), { code: "ccdx_connections_invalid" });
+  await assert.rejects(choose("claude_app", [{ source: id, model: "any-message-model", reasoning_effort: "medium" }]), { code: "ccdx_client_effort_unavailable" });
+  const app = s.runtime.connections().clients.find(client => client.id === "claude_app");
+  assert.equal(app.deployments[0].reasoning_effort, "xhigh");assert.equal(app.model_plan.models[0].reasoning_effort, "xhigh");
+  assert.equal(app.model_plan.available[0].effort_control, "gateway");
+});
+
+test("adaptive effort retains a removed preference for correction and rejects its application", async t => {
+  const s = runtime(t), { id: _id, enabled: _enabled, secret_ref: _ref, ...config } = structuredClone(apiConfig);
+  config.models[0].capabilities = { reasoning_efforts: ["low", "high", "xhigh"] };
+  const id = await save(s.runtime, { config }), keys = readClientGatewayKeys({ home: s.home, env: {} });
+  await s.runtime.manageConnections({ operation: "client", id: "claude_app", enabled: true, allowed: [id], deployments: [{ source: id, model: "any-message-model", reasoning_effort: "xhigh" }] });
+  config.models[0].capabilities.reasoning_efforts = ["low", "high"];
+  await s.runtime.manageConnections({ operation: "save_api", id, config, allowed: ["codex", "claude_app", "claude_code"] });
+  const state = s.runtime.connections().clients.find(client => client.id === "claude_app");assert.equal(state.deployments[0].reasoning_effort, "xhigh");
+  const result = await invoke(s.runtime.handleClaude, { headers: { authorization: `Bearer ${keys.claude_app}` } });
+  assert.equal(result.status, 400);assert.equal(s.calls.length, 0);assert.match(result.body, /ccdx_client_effort_unavailable/);
+  await s.runtime.manageConnections({ operation: "client", id: "claude_app", enabled: true, allowed: [id], deployments: [{ source: id, model: "any-message-model" }] });
+  assert.equal((await invoke(s.runtime.handleClaude, { headers: { authorization: `Bearer ${keys.claude_app}` } })).status, 200);
+  assert.equal(JSON.parse(s.calls.at(-1).init.body).output_config, undefined);
+});
+
+test("adaptive effort does not add generation controls to count-token requests", async t => {
+  const sent = [], s = runtime(t, { createApi: options => createApiProvider({ ...options, networkFactory: async () => ({ close() {}, async fetch(url, init) {
+    if (!init.body) return Response.json({ data: [] });
+    sent.push({ url, body: JSON.parse(init.body) });return Response.json({ input_tokens: 4 });
+  } }) }) }), { id: _id, enabled: _enabled, secret_ref: _ref, ...config } = structuredClone(apiConfig);
+  config.models[0].capabilities = { reasoning_efforts: ["low", "high", "xhigh"] };
+  const id = await save(s.runtime, { config }), keys = readClientGatewayKeys({ home: s.home, env: {} });
+  await s.runtime.manageConnections({ operation: "client", id: "claude_app", enabled: true, allowed: [id], deployments: [{ source: id, model: "any-message-model", reasoning_effort: "xhigh" }] });
+  const result = await invoke(s.runtime.handleClaude, { url: "/v1/messages/count_tokens", headers: { authorization: `Bearer ${keys.claude_app}` } });
+  assert.equal(result.status, 200);assert.equal(JSON.parse(result.body).input_tokens, 4);assert.equal(sent.length, 1);
+  assert.equal(sent[0].body.output_config, undefined);
+});
 test("error capture requires an enabled Messages deployment and never changes saved settings", async t => {
   const s = runtime(t), source = await save(s.runtime), file = accessSettingsPath(s), before = fs.readFileSync(file, "utf8");
   assert.deepEqual(s.runtime.errorCaptureSnapshot(), { state: "off" });

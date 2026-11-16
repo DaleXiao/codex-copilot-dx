@@ -56,6 +56,8 @@ For scripts, source access accepts `--apps codex,claude-app` with `--edit`; edit
 
 An app model file contains `deployments: [{"source":"github","model":"<model-id>"}]`, with optional `default_model` and `auto_sync`. An explicit empty array clears the default and pauses access. A file without `deployments` is rejected. Unavailable saved selections remain visible until the user changes them.
 
+Claude App deployments may also specify `reasoning_effort`, for example `{"source":"api_work","model":"reasoner","reasoning_effort":"xhigh"}`. Omit it to follow the App. `app claude-app models --edit` and the TUI expose the source's declared choices for models needing CCDX control, and preserve existing defaults during other model edits. This preference belongs to that client's source/model binding, not to the source shared with Codex or Claude Code.
+
 ## Antigravity in Gemini App
 
 The **Antigravity** page and `ccdx app antigravity status|models|enable|disable|open`
@@ -158,6 +160,10 @@ On macOS, CCDX reads bounded declarations and their consumers from the installed
 Verified newer contracts keep stable source-qualified model IDs. Both the native profile and `/v1/models` publish the same behavior hint and maximum effort. Legacy conversation IDs remain accepted. Model order, 1M preferences, manual settings and the existing automatic-sync choice retain their ownership protection. Shared capability maps merge unchanged managed entries and preserve manual entries. A changed native configuration requires a normal Claude restart; CCDX does not interrupt running conversations.
 
 Capability declarations, successful synchronization and an observed outgoing effort are separate facts. `ccdx app claude-app status --details`, sync preview and retained request details expose these facts. A missing effort on one request is not proof of missing support. An unverified contract preserves affected existing settings. A non-contiguous set such as low/high/max stays declared and is reported as limited when the native picker cannot express it exactly; CCDX does not invent an intermediate level or silently remap the selection.
+
+CCDX renders the complete declared set independently of the native menu. When the current verified App contract can express the exact set, the existing native presentation stays in use. Otherwise, the Reasoning cell provides a native-styled CCDX selector, such as `low / high / xhigh`, without adding a missing `medium` or creating model variants. An unknown App contract can still use this CCDX-side control when source capabilities are known. Refresh and navigation keep the draft; Save and Discard use the existing form.
+
+A saved fallback is applied as Messages `output_config.effort` only when the App omits that field. Effort and thinking mode stay separate; the gateway does not enable, disable or rewrite `thinking`. Explicit App values are retained and pass through the existing capability validation; unsupported values are never mapped to nearby levels. Existing output-format fields, model IDs, history and tool permissions are preserved. Count-token requests and other clients do not receive the fallback. If the source stops advertising the saved level, the value remains visible as unavailable and generation needing that default fails with `ccdx_client_effort_unavailable` until it is corrected or cleared. Native configuration synchronization remains independent of this request preference; changing the preference does not add native model metadata or require an App restart for the parameter itself.
 
 ## API import and request validation
 
@@ -819,6 +825,8 @@ The old external image provider, Qwen-specific generation/editing, `/mcp/image`,
 | `CCDX_USAGE_MAX_BYTES` | `33554432` | Rotate the usage log at this size and retain one `.1` backup; set to `0` to disable rotation |
 | `CCDX_DISABLE_USAGE` | unset | Set to `1` to disable usage logging |
 | `CCDX_SHUTDOWN_TIMEOUT_MS` | `5000` | Time to drain active HTTP connections before forcing shutdown |
+
+Antigravity starts the body deadline after queue admission. Its generation requests release body reservations after the final upstream response opens, while keeping response-restoration state until completion. Queue exhaustion or timeout returns `503`; a body timeout returns `408`; upstream and compaction timeouts return `504`. Client cancellation releases queued or active reservations. These limits and queue ordering remain unchanged.
 
 ## Usage logging
 

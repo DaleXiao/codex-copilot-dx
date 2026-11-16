@@ -134,7 +134,8 @@ export function checkedAccessSettings(value) {
       || client.auto_sync !== undefined && typeof client.auto_sync !== "boolean"
       || client.default_model !== undefined && client.default_model !== null && !modelId(client.default_model)
       || client.deployments !== undefined && client.deployments !== null && (!Array.isArray(client.deployments) || client.deployments.length > 1000
-        || client.deployments.some(item => !fields(item, ["source", "model"]) || !client.allowed.includes(item.source) || !modelId(item.model))
+        || client.deployments.some(item => !fields(item, ["source", "model", "reasoning_effort"]) || !client.allowed.includes(item.source) || !modelId(item.model)
+          || item.reasoning_effort !== undefined && (id !== "claude_app" || !["none", "minimal", "low", "medium", "high", "xhigh", "max"].includes(item.reasoning_effort)))
         || new Set(client.deployments.map(item => item.source + "\0" + item.model)).size !== client.deployments.length)
       || client.history_isolation !== undefined && typeof client.history_isolation !== "boolean"
       || client.auto_review_effort !== undefined && client.auto_review_effort !== null && !["none", "minimal", "low", "medium", "high", "xhigh", "max"].includes(client.auto_review_effort)) throw accessError("ccdx_connections_invalid");

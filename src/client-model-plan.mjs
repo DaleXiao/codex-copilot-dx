@@ -50,7 +50,8 @@ export function compileClientModels({ client, binding, source, enabled, names = 
     if (client === "claude_app" && explicit) entry.client_id = claudeDeploymentId(entry, route, { desktopEffortAliases });
     const publicId = explicit ? entry.client_id : client === "codex" ? model.id : claudeModelEntries([entry], { desktopAliases: client === "claude_app" && provider.id.startsWith("api_") })[0].name;
     entry.public_id = publicId;
-    const record = { provider, model: entry, source: item.source, upstreamModel: model.id, publicId };
+    const record = { provider, model: entry, source: item.source, upstreamModel: model.id, publicId,
+      effortDefault: client === "claude_app" ? item.reasoning_effort : undefined };
     if (routes.has(publicId)) throw Object.assign(new Error("Model routes collide"), { code: "ccdx_model_route_collision", statusCode: 503 });
     routes.set(publicId, record);routes.set(route, record);
     if (client === "claude_app" && explicit) for (const alias of claudeRouteAliases(entry, route, true).slice(2)) routes.set(alias, record);

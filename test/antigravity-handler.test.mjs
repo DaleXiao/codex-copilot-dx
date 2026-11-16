@@ -9,6 +9,8 @@ import {runWithRequestContext} from "../src/request-context.mjs";
 import {createStreamPerformanceMetrics} from "../src/stream-performance.mjs";
 import {createGoogleResponseObserver} from "../src/antigravity-usage.mjs";
 import {createContextCompactionService} from "../src/context-compaction.mjs";
+import {createRequestAdmission} from "../src/request-admission.mjs";
+import {gzipSync} from "node:zlib";
 
 const catalog={data:["gemini-4-carbon","gemini-4-argon"].map(id=>({id,supported_endpoints:["/chat/completions"],capabilities:{supports:{vision:true,reasoning_effort:["low","medium","high"]},limits:{max_context_window_tokens:1000000,max_output_tokens:64000}}}))};
 const alias=antigravityCopilotModels(catalog)[2].id;
@@ -86,13 +88,110 @@ function fixture(options={}){
     client:{chatCompletions:async(value,options)=>{copilot.push({value,options});return sse()}},...options});
   return {handler,google,copilot,records};
 }
-function invoke(handler,value,{url="/antigravity/v1internal:streamGenerateContent?alt=sse",raw,headers={},onWrite}={}){
-  const req=Readable.from([Buffer.from(raw??JSON.stringify(value))]);req.method="POST";req.url=url;req.headers={host:"127.0.0.1:2026","content-type":"application/json",authorization:"Bearer GOOGLE_FIXTURE",...headers};req.socket={remoteAddress:"127.0.0.1"};
+function invoke(handler,value,{url="/antigravity/v1internal:streamGenerateContent?alt=sse",raw,headers={},onWrite,input}={}){
+  const req=input||Readable.from([Buffer.from(raw??JSON.stringify(value))]);req.method="POST";req.url=url;req.headers={host:"127.0.0.1:2026","content-type":"application/json",authorization:"Bearer GOOGLE_FIXTURE",...headers};req.socket={remoteAddress:"127.0.0.1"};
   const res=new EventEmitter(),chunks=[];Object.assign(res,{destroyed:false,writableEnded:false,headersSent:false,statusCode:200,headers:{},
     writeHead(status,headers){this.statusCode=status;this.headers=headers;this.headersSent=true;return this},
     write(value){chunks.push(Buffer.from(value));onWrite?.(value);return true},end(value){if(value)this.write(value);this.writableEnded=true;this.emit("finish")}});
   const done=handler(req,res).then(()=>({status:res.statusCode,text:Buffer.concat(chunks).toString(),res}));return {done,req,res};
 }
+
+async function bounded(promise){
+  let timer;try{return await Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error("fixture did not settle")),1500)})])}finally{clearTimeout(timer)}
+}
+
+test("held Google and Copilot streams release body admission before another client enters",async()=>{
+  for(const native of [true,false])for(const compressed of [true,false]){
+    const gate=createRequestAdmission({maxBytes:4096,waitTimeoutMs:500}),opened=Promise.withResolvers();
+    let responseBody,privacySession,restorationReleased=0;
+    const response=new Response(new ReadableStream({start(controller){responseBody=controller}}),{headers:{"content-type":"text/event-stream"}});
+    const f=fixture({acquireRequest:gate,privacy:{prepareSession:async value=>(privacySession={body:value,count:0,restoreValue:value=>value,restoreToolValue:value=>value,release(){restorationReleased++}})},
+      fetchGoogle:async()=>response,client:{chatCompletions:async()=>response}});
+    const request=body(native?"native-model":alias);request.request.contents[0].parts[0].text="private history ".repeat(80);
+    const raw=compressed?gzipSync(JSON.stringify(request)):JSON.stringify(request);
+    const headers=compressed?{"content-encoding":"gzip"}:{};
+    const call=invoke(f.handler,request,{raw,headers,onWrite:()=>opened.resolve()});
+    responseBody.enqueue(new TextEncoder().encode(native?'data: {"response":{"candidates":[{"content":{"parts":[{"text":"partial"}]}}]}}\n\n':'data: {"choices":[{"delta":{"content":"partial"}}]}\n\n'));
+    try{
+      await bounded(opened.promise);
+      assert.equal(call.res.writableEnded,false);assert.equal(f.handler.snapshot().active,1);
+      assert.equal(gate.diagnostics().activeBytes,0);assert.equal(gate.diagnostics().decodedBodyBytes,0);
+      if(!native){assert.equal(privacySession.body,null);assert.equal(restorationReleased,0,"Response restoration stays alive until stream completion")}
+      const releaseOther=await bounded(gate({headers:{"content-length":"2"}}));releaseOther();
+      assert.equal(gate.diagnostics().timedOut,0);
+    }finally{
+      responseBody.enqueue(new TextEncoder().encode(native?'data: {"response":{"candidates":[{"finishReason":"STOP"}]}}\n\n':'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n'));
+      responseBody.close();await bounded(call.done);
+    }
+    assert.equal(gate.diagnostics().activeRequests,0);if(!native)assert.equal(restorationReleased,1);
+  }
+});
+
+test("preparation and compaction retain input admission until their last upstream request completes",async()=>{
+  for(const native of [true,false]){
+    const gate=createRequestAdmission({maxBytes:4096,waitTimeoutMs:500}),preparing=Promise.withResolvers(),prepared=Promise.withResolvers(),recovering=Promise.withResolvers(),recovered=Promise.withResolvers();
+    const f=fixture({acquireRequest:gate,guardSource:async()=>{preparing.resolve();await prepared.promise},resolveCompactionSource:()=>({source:native?"google":"github",model:native?"native-model":alias}),
+      compaction:{run:async({body:input,native:open,options})=>{recovering.resolve();await recovered.promise;assert.ok(input.request||input.messages);return open(input,options)}}});
+    const value=body(native?"native-model":alias);value.requestType="summarization";value.request.labels={root_cascade_id:"admission-fixture"};
+    const call=invoke(f.handler,value);let other;
+    try{
+      await bounded(preparing.promise);assert.equal(gate.diagnostics().activeBytes,4096);
+      other=gate({headers:{"content-length":"2"}});assert.equal(gate.diagnostics().queued,1);
+      prepared.resolve();await bounded(recovering.promise);assert.equal(gate.diagnostics().activeBytes,4096);assert.equal(gate.diagnostics().queued,1);
+    }finally{prepared.resolve();recovered.resolve();await bounded(call.done);if(other)(await bounded(other))()}
+    assert.equal(gate.diagnostics().activeBytes,0);
+  }
+});
+
+test("admission timeout stays local 503 and does not consume the request-body deadline",async()=>{
+  const gate=createRequestAdmission({maxBytes:4096,waitTimeoutMs:40}),held=await gate({headers:{}}),errors=[];
+  const performance=createStreamPerformanceMetrics({routeNames:["antigravity"]}),tracker=performance.begin("antigravity");
+  const f=fixture({acquireRequest:gate,requestBodyTimeoutMs:5});
+  try{
+    const result=await bounded(runWithRequestContext({streamPerformance:tracker,onHttpError:value=>errors.push(value)},()=>invoke(f.handler,body()).done));
+    tracker.finish({statusCode:result.status});
+    assert.equal(result.status,503);assert.equal(f.copilot.length+f.google.length,0);
+    assert.equal(gate.diagnostics().timedOut,1);assert.equal(gate.diagnostics().aborted,0);assert.equal(gate.diagnostics().queued,0);
+    assert.equal(errors[0].origin,"transport");assert.equal(errors[0].code,"ccdx_request_admission_unavailable");
+    const recent=performance.snapshot().recent_requests[0];assert.ok(recent.timings_ms.admission>=5);assert.equal(recent.upstream_attempts,0);
+  }finally{held()}
+});
+
+test("body, upstream and compaction deadlines return their own status and release all admission",async()=>{
+  for(const reason of ["body","upstream","compaction"]){
+    const gate=createRequestAdmission({maxBytes:4096,waitTimeoutMs:500}),errors=[];
+    const waitForAbort=signal=>new Promise((_,reject)=>{if(signal.aborted)reject(signal.reason);else signal.addEventListener("abort",()=>reject(signal.reason),{once:true})});
+    const f=fixture({acquireRequest:gate,requestBodyTimeoutMs:20,upstreamTimeoutMs:20,streamIdleTimeoutMs:20,
+      ...(reason==="compaction"?{compaction:{run:async({options,onActivity})=>{onActivity();return waitForAbort(options.signal)}}}:{}),client:{chatCompletions:async(_,{signal})=>waitForAbort(signal)}});
+    const value=body();if(reason==="compaction")value.requestType="summarization";
+    const call=runWithRequestContext({onHttpError:value=>errors.push(value)},()=>invoke(f.handler,value,reason==="body"?{input:new Readable({read(){}})}:{}));
+    const result=await bounded(call.done);
+    assert.equal(result.status,reason==="body"?408:504);assert.equal(errors[0].origin,"transport");
+    assert.equal(errors[0].code,reason==="body"?"request_body_timeout":reason==="compaction"?"compaction_idle_timeout":"upstream_timeout");
+    assert.equal(gate.diagnostics().activeRequests,0);assert.equal(gate.diagnostics().decodedBodyBytes,0);assert.equal(f.handler.snapshot().active,0);
+  }
+});
+
+test("queued client cancellation is 499 and leaves no reservation or upstream call",async()=>{
+  const gate=createRequestAdmission({maxBytes:4096,waitTimeoutMs:500}),held=await gate({headers:{}}),errors=[];
+  const f=fixture({acquireRequest:gate});
+  const call=runWithRequestContext({onHttpError:value=>errors.push(value)},()=>invoke(f.handler,body()));
+  try{
+    assert.equal(gate.diagnostics().queued,1);call.req.emit("aborted");
+    assert.equal((await bounded(call.done)).status,499);assert.equal(errors[0].origin,"client_disconnect");
+    assert.equal(gate.diagnostics().aborted,1);assert.equal(gate.diagnostics().queued,0);assert.equal(f.copilot.length+f.google.length,0);
+  }finally{held()}
+  assert.equal(gate.diagnostics().activeRequests,0);
+});
+
+test("invalid plain and compressed bodies release every reservation before returning",async()=>{
+  for(const headers of [{},{"content-encoding":"gzip"}]){
+    const gate=createRequestAdmission({maxBytes:4096,waitTimeoutMs:500}),f=fixture({acquireRequest:gate});
+    const result=await invoke(f.handler,null,{raw:"invalid JSON or gzip",headers}).done;
+    assert.equal(result.status,400);assert.equal(f.google.length+f.copilot.length,0);
+    const state=gate.diagnostics();assert.equal(state.activeRequests,0);assert.equal(state.decodedBodyBytes,0);assert.equal(state.decompressionsActive,0);
+  }
+});
 
 test("catalog merging preserves native models, defaults, and quotas without enum collisions",()=>{
   const native={models:{native:{model:"MODEL_PLACEHOLDER_M500",quotaInfo:{remaining:10}}},defaultAgentModelId:"native",agentModelSorts:[{groups:[{modelIds:["native"]}]}],entitlements:{keep:true}};

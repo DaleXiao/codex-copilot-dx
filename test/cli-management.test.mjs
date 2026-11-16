@@ -66,6 +66,18 @@ test("tool observations are read-only and keep unknown service support explicit"
   assert.deepEqual(JSON.parse(await f.run(["requests", "tools", "--active", "--format", "json"])).map(row => row.id), ["one"]);
   assert.equal(f.calls.length, 0);assert.match(cliHelp("ccdx", "requests"), /tools/);
 });
+
+test("Claude App model editing preserves or selects source-declared fallback reasoning", async () => {
+  for (const [answer,expected] of [["", "high"], ["xhigh", "xhigh"], ["follow-app", undefined]]) {
+    const f=fixture(),client=f.state.clients.find(item=>item.id==="claude_app");
+    client.deployments=[{source:"m365",model:"sparse-reasoner",reasoning_effort:"high"}];
+    client.model_plan={models:[{source:"m365",id:"sparse-reasoner"}],available:[{source:"m365",id:"sparse-reasoner",effort_control:"gateway",capability:{values:{reasoning_efforts:["low","high","xhigh"]}}}],unavailable:[]};
+    const answers=["","",answer];f.options.prompt=async()=>answers.shift()??"";
+    await f.run(["app","claude-app","models","--edit","--yes"]);
+    const write=f.calls.find(call=>call.body?.operation==="client");
+    assert.equal(write.body.deployments[0].reasoning_effort,expected);assert.equal(answers.length,0);
+  }
+});
 test("compression commands share the running preference without sending model requests", async () => {
   const f = fixture();let enabled = true;f.options.request = async input => { f.calls.push(input);if (input.body) enabled = input.body.value;return { compaction: { enabled, active_recoveries: 0 } }; };
   assert.equal(JSON.parse(await f.run(["compact", "status", "--format", "json"])).enabled, true);

@@ -4,6 +4,7 @@ import { CLIENT_IDS, CLIENT_NAMES } from "./access-settings.mjs";
 import { publicModelCatalog } from "./provider-metadata.mjs";
 import { sourceModels, clientModelExclusion } from "./client-model-plan.mjs";
 import { deploymentModelId, resolveModelCapabilities, deploymentRevision } from "./model-capabilities.mjs";
+import { claudeEffortControl } from "./client-effort.mjs";
 
 export function createConnectionView({ legacy, env, binding, plan, getSource, enabled, editable, modelDisplay, discoveries,
   setup, credentialStates, lastClients, memoryModel, capabilitySupport, sharedSync, isManaged, getSettings, corePort, permitted }) {
@@ -55,6 +56,7 @@ export function createConnectionView({ legacy, env, binding, plan, getSource, en
           public_id: model.public_id,
           route_id: model.route_id,
           capability: model.capability,
+          ...(id === "claude_app" ? { effort_control: claudeEffortControl(model.capability, capabilitySupport), reasoning_effort: compiled.routes.get(model.public_id)?.effortDefault ?? null } : {}),
         })),
         unavailable: (config.clients[id].deployments || [])
           .filter(
@@ -75,6 +77,7 @@ export function createConnectionView({ legacy, env, binding, plan, getSource, en
               display_name: model.display_name || model.name || model.id,
               route_id: deploymentModelId(source, model.id),
               capability: model.capability || resolveModelCapabilities(model, { builtin: true }),
+              ...(id === "claude_app" ? { effort_control: claudeEffortControl(model.capability || resolveModelCapabilities(model, { builtin: true }), capabilitySupport) } : {}),
             }))
           ),
         sync: sharedSync(),

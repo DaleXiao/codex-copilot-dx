@@ -1,6 +1,6 @@
 import {randomUUID,createHash} from "node:crypto";
 import {buildResponsesUsageRecord,recordUsage} from "./usage-store.mjs";
-import {createRequestAbort,readJsonBody,readBoundedResponseText,writeOrDrain,httpError,sendJsonError} from "./http-transport.mjs";
+import {createRequestAbort,abortErrorStatusCode,readJsonBody,readBoundedResponseText,writeOrDrain,httpError,sendJsonError} from "./http-transport.mjs";
 import {safeUpstreamResponseHeaders} from "./upstream-headers.mjs";
 import {isLoopbackAddress,isLoopbackHostHeader} from "./security.mjs";
 import {antigravityToChat,chatToAntigravity,chatStreamToAntigravity,parseAntigravityJSON} from "./antigravity-chat-bridge.mjs";
@@ -8,7 +8,7 @@ import {ANTIGRAVITY_MODEL_PREFIX,antigravityCopilotModels,mergeAntigravityModels
 import {createPrivacyTextFragments} from "./privacy-stream.mjs";
 import {createGoogleResponseObserver,googleUsageEvent} from "./antigravity-usage.mjs";
 import {currentRequestContext,observeRequestedModel} from "./request-context.mjs";
-import {markUpstreamStarted,markUpstreamHeaders,markFirstOutput,markOutputTokens,markRequestObservation,markResponseModel,markResponseTerminal,markToolActivity} from "./stream-performance.mjs";
+import {measureRequestStageAsync,markUpstreamStarted,markUpstreamHeaders,markFirstOutput,markOutputTokens,markRequestObservation,markResponseModel,markResponseErrorOrigin,markResponseTerminal,markToolActivity} from "./stream-performance.mjs";
 import {isCompactionRequest} from "./context-compaction.mjs";
 import {compactionSummarizer} from "./context-compaction-wire.mjs";
 import {requestPurpose} from "./request-context.mjs";
@@ -42,7 +42,11 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
   let active=0,observed=false,catalogModels=null;const nativeWindows=new Map();
   const counts={total:0,google:0,copilot:0,search:0,images:0,failed:0};
   const handler=async(req,res)=>{
-    const abort=createRequestAbort(req,res);let release=()=>{},session,usageEvent=null,usageModel=null,outcome=null,usageMode,usageProvider;
+    const abort=createRequestAbort(req,res);let release=()=>{},session,body,request,converted,phase="validation",usageEvent=null,usageModel=null,outcome=null,usageMode,usageProvider;
+    const releaseInput=()=>{
+      body=null;request=null;if(converted)converted.chat=null;if(session)session.body=null;
+      const done=release;release=()=>{};done();
+    };
     const captureUsage=event=>{
       if(!event?.usage&&!event?.copilot_usage)return;
       const known=value=>Number.isSafeInteger(value)&&value>=0,u={...usageEvent?.usage},incoming=event.usage;
@@ -66,9 +70,11 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
       const match=/^\/v1internal(?::|\/)([A-Za-z][A-Za-z0-9]*)$/.exec(route);
       if(!local.pathname.startsWith(PREFIX+"/")||!match)throw httpError("Unknown Antigravity endpoint",404);
       const method=match[1];
-      abort.setTimeout(requestBodyTimeoutMs,"request_body_timeout");release=await acquireRequest(req,{signal:abort.signal});
       if(req.method==="POST"&&!/^application\/json(?:;|$)/i.test(req.headers["content-type"]||""))throw httpError("Antigravity requires JSON",415);
-      let body=req.method==="POST"?await readJsonBody(req,{admission:release,signal:abort.signal,parse:parseBody}):null;
+      phase="admission";release=await measureRequestStageAsync("admission",()=>acquireRequest(req,{signal:abort.signal}));
+      phase="body";abort.setTimeout(requestBodyTimeoutMs,"request_body_timeout");
+      body=req.method==="POST"?await measureRequestStageAsync("body",()=>readJsonBody(req,{admission:release,signal:abort.signal,parse:parseBody})):null;
+      phase="preparation";
       const context=currentRequestContext();if(context)context.application="gemini_app";
       const compacting=isCompactionRequest("gemini",body);
       if(compacting&&context){context.purpose=requestPurpose(req.headers["x-ccdx-purpose"],"compaction");context.streamPerformance?.setPurpose(context.purpose)}
@@ -95,9 +101,12 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
             ...(value?{body:JSON.stringify(value)}:{}),signal:options.signal||abort.signal,redirect:"error"});
           if(generation)markUpstreamHeaders(result.status);return result;
         };
+        phase="upstream";
         const upstream=compacting&&compaction?await compaction.run({body,protocol:"gemini",scope:JSON.stringify(["gemini","google",createHash("sha256").update(req.headers.authorization||"").update(String(body.project||"")).digest("hex")]),
           source:"google",client:"gemini",model:body.model,inputLimit:nativeWindows.get(body.model),outputAllowance:body.request?.generationConfig?.maxOutputTokens||0,native:open,options:{signal:abort.signal},
           summarize:compactionSummarizer(body,"gemini",(value,options)=>open(value,{...options,internal:true})),onActivity:()=>abort.setTimeout(streamIdleTimeoutMs,"compaction_idle_timeout")}):await open(body);
+        releaseInput();
+        if(!upstream.ok)markResponseErrorOrigin("upstream_http");
         if(method==="fetchAvailableModels"&&upstream.ok){
           const value=JSON.parse(await readBoundedResponseText(upstream,{maxBytes:8*1024*1024,signal:abort.signal,label:"Google model catalog"}));
           nativeWindows.clear();for(const[id,entry]of Object.entries(value.models||{}).slice(0,256))if(Number.isSafeInteger(entry?.maxTokens)&&entry.maxTokens>0){nativeWindows.set(id,entry.maxTokens);if(typeof entry.model==="string")nativeWindows.set(entry.model,entry.maxTokens)}
@@ -125,7 +134,7 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
           }
         }finally{if(observer?.finish().unavailable&&!usageEvent)markRequestObservation({usage_state:"unavailable"})}
         if(generation&&!upstream.ok)outcome="failed";
-        if(outcome)markResponseTerminal(outcome);
+        if(outcome)markResponseTerminal(outcome,upstream.ok?undefined:{origin:"upstream_http"});
         res.end();
       };
       if(!generation){
@@ -148,7 +157,7 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
       if(context){context.provider="github";context.streamPerformance?.setProvider?.("github")}
       observeContextSession(null,{session_id:body.request?.labels?.root_cascade_id||body.request?.labels?.cascade_id},{profileId:()=>"github:codex"},"chat");
       context?.streamPerformance?.observeToolInput?.(body.request,"gemini");
-      const request=body.request;
+      request=body.request;
       if(body.requestType==="web_search"){
         counts.search++;if(!searchFn)throw httpError("Copilot search is unavailable",503);
         const query=searchQuery(request),input={id:randomUUID(),commands:{search_query:[{q:query}]}};
@@ -169,15 +178,17 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
       const target=body.requestType==="agent"||compactBinding&&!compactBinding.background?selected:copilotModels.find(model=>model.model==="gemini-4-carbon"&&model.effort==="low");
       if(!target)throw httpError("Copilot Carbon is unavailable for Antigravity background tasks",503);
       const stream=method==="streamGenerateContent";usageModel=target.model;usageMode=stream?"sse":"json";usageProvider="github";
-      const converted=antigravityToChat(request,{model:target.model,effort:target.effort,reasoningEfforts:target.effort?[target.effort]:[],stream});
+      converted=antigravityToChat(request,{model:target.model,effort:target.effort,reasoningEfforts:target.effort?[target.effort]:[],stream});
       markResponseModel(target.model);markRequestObservation({usage_state:"pending"});
       session=privacy?.prepareSession?await privacy.prepareSession(converted.chat,{protocol:"chat",client:"gemini",signal:abort.signal}):passthrough(converted.chat);
       const callOptions={signal:abort.signal,retryOptions:{retries:0},onUpstreamStart:()=>abort.setTimeout(upstreamTimeoutMs,"upstream_timeout")};
+      phase="upstream";
       const upstream=compacting&&compaction?await compaction.run({body:session.body,protocol:"chat",scope:JSON.stringify(["gemini","github",compactionProfile()]),source:"github",client:"gemini",
         inputLimit:target.maxTokens,outputAllowance:session.body.max_completion_tokens||session.body.max_tokens||0,native:client.chatCompletions,options:callOptions,
         summarize:compactionSummarizer(session.body,"chat",client.chatCompletions),onActivity:()=>abort.setTimeout(streamIdleTimeoutMs,"compaction_idle_timeout")}):await client.chatCompletions(session.body,callOptions);
+      releaseInput();
       markUpstreamHeaders(upstream.status);
-      if(!upstream.ok){await upstream.body?.cancel();throw httpError("Copilot generation was refused (HTTP "+upstream.status+")",upstream.status)}
+      if(!upstream.ok){markResponseErrorOrigin("upstream_http");await upstream.body?.cancel();throw httpError("Copilot generation was refused (HTTP "+upstream.status+")",upstream.status)}
       if(!stream){
         const data=JSON.parse(await readBoundedResponseText(upstream,{maxBytes:MAX_REPLY,signal:abort.signal,label:"Copilot response"}));captureUsage(data);
         const result=chatToAntigravity(data,converted.originalNames);markToolActivity(result,"gemini");
@@ -200,13 +211,17 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
       }
       res.end();
     }catch(error){
+      if(abort.reason)error=Object.assign(httpError(error.message,abortErrorStatusCode(abort.reason)),{code:abort.reason});
+      else if(phase==="admission")error=Object.assign(httpError(error.message,error.statusCode||503),{code:"ccdx_request_admission_unavailable"});
       if(typeof error.code==="string"&&error.code.startsWith("ccdx_compaction_"))res.setHeader("x-should-retry","false");
       counts.failed++;
-      outcome=abort.signal.aborted&&["client_closed","client_aborted"].includes(abort.reason)?"cancelled":"failed";markResponseTerminal(outcome);
+      outcome=abort.signal.aborted&&["client_closed","client_aborted"].includes(abort.reason)?"cancelled":"failed";
+      const origin=outcome==="cancelled"?"client_disconnect":currentRequestContext()?.errorOrigin||(abort.reason||phase==="admission"?"transport":error.origin==="privacy"?"privacy":error.statusCode<500?"client_validation":"transport");
+      markResponseErrorOrigin(origin);markResponseTerminal(outcome,{origin});
       if(res.headersSent&&!res.writableEnded&&!res.destroyed){res.end("data: "+JSON.stringify({error:{code:error.statusCode||502,message:error.message}})+"\n\n");}
       else sendJsonError(res,error,error.statusCode||502);
     }finally{
-      session?.release();release();abort.cleanup();active--;
+      releaseInput();session?.release();abort.cleanup();active--;
       if(usageEvent){
         const u=usageEvent.usage,record=buildResponsesUsageRecord({surface:"antigravity",mode:usageMode,model:usageModel,
           response:{id:usageEvent.id,model:usageEvent.model||usageModel,usage:u?{input_tokens:u.prompt_tokens,output_tokens:u.completion_tokens,

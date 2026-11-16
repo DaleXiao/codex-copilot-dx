@@ -23,6 +23,7 @@ import { MESSAGES_TOOL_GUARD } from "./messages-tool-schema.mjs";
 import { isCompactionRequest, compactionScope } from "./context-compaction.mjs";
 import { compactionSummarizer } from "./context-compaction-wire.mjs";
 import { requestPurpose } from "./request-context.mjs";
+import { messagesWithEffortDefault } from "./client-effort.mjs";
 
 function observeMessagesWindow(provider, model, capability, entry) {
   try {
@@ -234,7 +235,7 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
     if (!resolveRequest) tracker?.setProvider(provider.id);
     const abort = createRequestAbort(req, res);
     let release = () => {}, conversation, outcome = "failed", model = null, configuredModel = null, clientModel = null, responseId = null, usage = null, stopReason = null, streamed = false, sawStop = false, failedEvent = false;
-    let selectedModel, selectedCapability;
+    let selectedModel, selectedCapability, selectedEffortDefault;
     let terminalOrigin = "client_validation", failureStatus = null, countDeadline = null, rejectionReason;
     if (!countTokens) { stats.total++;stats.active++;stats.last_request_at = new Date().toISOString(); }
     const context = parent || { requestId, purpose: req.headers["x-ccdx-purpose"] };
@@ -259,6 +260,7 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
           selectedProvider = resolved.provider;finishProvider = resolved.finish || finishProvider;
           configuredModel = resolved.model;clientModel = body.model === configuredModel ? null : body.model;
           selectedCapability = resolved.capability;
+          selectedEffortDefault = resolved.effortDefault;
           body = { ...body, model: configuredModel };tracker?.setProvider(selectedProvider.id);
           const context = currentRequestContext();if (context) context.provider = selectedProvider.id;
         }
@@ -271,10 +273,12 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
         }
         if (desktopAliases && !configuredModel) throw Object.assign(new Error("The selected model is unavailable"), { code: "ccdx_api_model_unavailable", statusCode: 400 });
         if (desktopAliases && configuredModel !== model) { clientModel = model;model = configuredModel;body = { ...body, model }; }
+        const requestedEffort = body.output_config?.effort;
+        if (!countTokens) body = messagesWithEffortDefault(body, selectedEffortDefault, selectedCapability);
         stats.last_model = model;
         context.model = configuredModel || model;
         if (!countTokens) {
-          markRequestObservation({ max_output_tokens_requested: body.max_tokens, reasoning_effort_requested: body.output_config?.effort });
+          markRequestObservation({ max_output_tokens_requested: body.max_tokens, reasoning_effort_requested: requestedEffort });
           observeMessagesWindow(selectedProvider, configuredModel || model, selectedCapability, selectedModel);
         }
         tracker?.setModel(configuredModel || model, { configured: Boolean(configuredModel) });

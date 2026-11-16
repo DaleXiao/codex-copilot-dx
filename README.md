@@ -6,6 +6,8 @@ On macOS, the optional Gemini integration adds compatible Copilot Gemini models 
 
 Connect GitHub Copilot, Microsoft 365 or your own API. Choose which apps can use each source, then select their models. CI and prebuilt releases cover **macOS on Apple Silicon** and **Windows on x64/ARM64**. Intel Mac code remains available, without CI coverage or new prebuilt assets.
 
+Claude App keeps its native reasoning menu when it can represent the source's levels exactly. Otherwise, choose a declared fallback level in CCDX. It applies only when the App omits a level; model names and existing client choices stay unchanged.
+
 Optional local masking is off by default. Enable it in Settings → Local masking to download the model and component. Checks run locally and may add delay or mistake ordinary text; an unfinished check holds the request back. See [local masking](docs/REFERENCE.md#local-masking).
 
 ## Install and start

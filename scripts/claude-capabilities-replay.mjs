@@ -19,7 +19,7 @@ const [flag, executable, clientFlag, clientValue] = process.argv.slice(2);assert
 const clientId = clientFlag === "--client" ? clientValue : "claude_code", app = clientId === "claude_app";
 assert.ok((clientFlag === undefined || clientFlag === "--client") && ["claude_app", "claude_code"].includes(clientId), "Use --client claude_app or claude_code");
 const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-native-capabilities-")), env = { CCDX_M365: "0" }, calls = [], stored = new Map();let handler;
-const samples = [["small", 128000, 16000], ["large", 1000000, 64000], ...(app ? [["gapped", 1000000, 64000]] : [])];
+const samples = [["small", 128000, 16000], ["large", 1000000, 64000], ...(app ? [["gapped", 1000000, 64000], ["sparse", 1000000, 64000]] : [])];
 process.env.CCDX_DISABLE_USAGE = "1";
 process.env.CCDX_USAGE_PATH = path.join(home, "usage.jsonl");
 const server = http.createServer((req, res) => handler(req, res));await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
@@ -29,7 +29,7 @@ const runtime = createProviderRuntime({ home, env, platform: "linux", appVersion
   createApi: options => createApiProvider({ ...options, networkFactory: async () => ({ close() {}, async fetch(url, init) {
     const body = init.body ? JSON.parse(init.body) : null;
     if (!body) return Response.json({ data: samples.map(([id, max_input_tokens, max_tokens]) => ({ id, type: "model", max_input_tokens, max_tokens,
-      capabilities: { thinking: { supported: true }, effort: { supported: true, low: { supported: true }, medium: { supported: true }, high: { supported: true }, ...(id === "gapped" ? { max: { supported: true } } : {}) } } })) });
+      capabilities: { thinking: { supported: true }, effort: { supported: true, low: { supported: true }, medium: { supported: id !== "sparse" }, high: { supported: true }, ...(id === "gapped" ? { max: { supported: true } } : {}), ...(id === "sparse" ? { xhigh: { supported: true } } : {}) } } })) });
     if (url.endsWith("count_tokens")) return Response.json({ input_tokens: 100 });
     calls.push({ model: body.model, max_tokens: body.max_tokens, effort: body.output_config?.effort, thinking: body.thinking?.type });
     const message = { id: "msg_replay_" + calls.length, type: "message", role: "assistant", model: body.model, content: [], usage: { input_tokens: 100, output_tokens: 1 } };
@@ -46,7 +46,7 @@ try {
   // Saving is independent of the catalog read; join it before inspecting the
   // capability plan used to configure the isolated native client.
   await runtime.manageConnections({ operation: "discover", id: source });
-  await runtime.manageConnections({ operation: "client", id: clientId, enabled: true, allowed: client.allowed, deployments: samples.map(([model]) => ({ source, model })) });
+  await runtime.manageConnections({ operation: "client", id: clientId, enabled: true, allowed: client.allowed, deployments: samples.map(([model]) => ({ source, model, ...(app && model === "sparse" ? { reasoning_effort: "xhigh" } : {}) })) });
   const compiled = runtime.connections().clients.find(c => c.id === clientId).model_plan.models;
   const models = compiled.map(model => {
     const publicId = app ? claudeDeploymentId(model, model.route_id, { desktopEffortAliases: true }) : model.public_id;
@@ -68,7 +68,7 @@ try {
   for (const key of ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY", "NODE_OPTIONS"]) delete isolated[key];
   isolated.ANTHROPIC_CUSTOM_HEADERS = `X-CCDX-Client: ${app ? "claude-app" : "claude-code"}`;
   const version = (await run(executable, ["--version"], { env: isolated, cwd: home, timeout: 15000 })).stdout.trim(), results = [];
-  for (const model of models) for (const effort of app ? ["low", "medium", "high"] : ["high"]) {
+  for (const model of models.filter(model => model.id !== "sparse")) for (const effort of app ? ["low", "medium", "high"] : ["high"]) {
     const start = calls.length, reply = await run(executable, ["--bare", "-p", `Reply with ${marker}.`, "--model", model.public_id, "--effort", effort, "--tools", "", "--no-session-persistence", "--output-format", "json", "--max-turns", "1"], { env: isolated, cwd: home, timeout: 60000, maxBuffer: 2 * 1024 * 1024 });
     assert.match(reply.stdout, new RegExp(marker));const value = JSON.parse(reply.stdout), requests = calls.slice(start);
     assert.ok(requests.some(request => request.model === model.id && request.effort === effort && request.max_tokens === model.capability.values.max_output_tokens));
@@ -76,6 +76,15 @@ try {
     results.push({ model: model.id, effort, declared_context: model.capability.values.context_window, client_context: usage?.contextWindow || null,
       client_output_limit: usage?.maxOutputTokens || null, configured_budget: settings.modelSettings?.[model.public_id]?.autoCompactWindow,
       requests, marker_received: true });
+  }
+  if (app) {
+    const model = models.find(model => model.id === "sparse"), start = calls.length;
+    const reply = await run(executable, ["--bare", "-p", `Reply with ${marker}.`, "--model", model.public_id, "--tools", "", "--no-session-persistence", "--output-format", "json", "--max-turns", "1"], { env: isolated, cwd: home, timeout: 60000, maxBuffer: 2 * 1024 * 1024 });
+    assert.match(reply.stdout, new RegExp(marker));const requests = calls.slice(start);
+    assert.ok(requests.some(request => request.model === model.id && request.effort === "xhigh"), "An omitted native effort uses the exact declared CCDX default");
+    const observed = runtime.snapshot().claude.requests.performance.recent_requests.filter(row => row.model === model.id);
+    assert.ok(observed.some(row => row.context?.reasoning_effort_requested === undefined && row.context?.reasoning_effort_sent === "xhigh"));
+    results.push({ model: model.id, effort: "xhigh", gateway_default: true, requests, marker_received: true });
   }
   console.log(JSON.stringify({ version, client: clientId, host_context: settings.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, host_output: settings.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS,
     results, live_provider_calls: 0, tools_executed: 0 }));

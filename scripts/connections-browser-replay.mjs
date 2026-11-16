@@ -34,12 +34,14 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter
       const watchdog = setTimeout(() => { console.error("Connection browser case exceeded 120 seconds");process.exit(124); }, 120000);watchdog.unref();
       try {
         runtime = createProviderRuntime({ home: root, env, now: () => Date.now() + timeOffset, corePort: server.address().port, githubClient: { runtimeStatus: () => ({ token_cached: false }) }, githubRegistry,
+          inspectAppContract: async () => ({ status: "verified", app_version: "5.0.0", fingerprint: "browser-contract", fields: { models: true, context: true, output: false, discovery: true }, profiles: [{ model: "claude-opus-4-7", efforts: ["low", "medium", "high", "xhigh", "max"] }] }),
           secretStore: { get: async id => values.get(id), set: async (id, key) => { values.set(id, key); }, remove: async id => { values.delete(id); }, close() {} },
           inspectDesktop: async () => false, configureClaude: input => ({ [input.client === "claude_app" ? "app" : "code"]: "configured",
             ...(input.client === "claude_app" ? { app_credential: "encrypted_unverified" } : {}) }), restoreClaude: () => ({ preserved: 0 }),
           createApi: options => createApiProvider({ ...options, networkFactory: async () => ({ close() {}, fetch: async (_url, init) => {
             assert.equal(init.method, "GET");discoveries++;if (failDiscovery) return Response.json({ error: "synthetic unavailable" }, { status: 503 });return Response.json({ data: ["claude-replay", "response-replay", ...Array.from({ length: 6 }, (_, i) => "unselected-" + i)].map(id => ({ id, publisher: "Example Maker", vendor: "example", owned_by: "gateway", ...(id === "claude-replay" ? { type: "model", max_input_tokens: 128000, max_tokens: 16000, capabilities: { thinking: { supported: true }, effort: { supported: true, low: { supported: true }, medium: { supported: true }, high: { supported: true } } } } : {}) })) });
           } }) }) });
+        await runtime.refreshClientCapabilities();
         const serviceControl = createServiceControl({ home: root, env, providerRuntime: runtime });
         handler = createAdapterHandler({ env, antigravityOptions:{inspect:async()=>({status:"stopped",version:"synthetic",pids:[],app:"/Applications/Gemini.app"})}, providerRuntime: runtime, dashboardOptions: { home: root, env, serviceControl,
           authStatusFn: () => ({ profiles: { codex: { configured: false, valid: false } } }),
@@ -191,6 +193,38 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter
         await page.locator('#connection-client-cancel').click();assert.equal(await page.locator('#connection-bindings input:checked').count(), 1);
         await page.locator('[data-claude-client="claude_code"]').click();assert.equal(await page.locator('#connection-bindings input:checked').count(), 1, "Discard affects only the active client");
         await page.locator('#connection-client-cancel').click();await page.locator('[data-claude-client="claude_app"]').click();
+        if (palette === "mono" && mode === "dark") {
+          await runtime.refreshClientCapabilities();await page.evaluate(() => globalThis.ccdxConnections.load());
+          const row = page.locator('#connection-bindings tr').filter({ hasText: 'claude-replay' });
+          assert.equal(await row.locator('select[data-effort-binding]').count(), 0, 'An exact native menu keeps its existing presentation');
+          const api = runtime.connections().providers.find(provider => provider.id === id);
+          const config = Object.fromEntries(['name', 'base_url', 'endpoints', 'auth_header', 'models', 'key_env'].filter(key => api[key] !== undefined).map(key => [key, structuredClone(api[key])]));
+          config.models.find(model => model.id === 'claude-replay').capabilities = { reasoning: true, reasoning_efforts: ['low', 'high', 'xhigh'], reasoning_format: 'messages' };
+          await runtime.manageConnections({ operation: 'save_api', id, config, allowed: ['codex', 'claude_app', 'claude_code'] });
+          await page.evaluate(() => globalThis.ccdxConnections.load());
+          const select = row.locator('select[data-effort-binding]');await select.waitFor();
+          assert.deepEqual(await select.locator('option').evaluateAll(options => options.map(option => option.value)), ['', 'low', 'high', 'xhigh']);
+          const app = () => runtime.connections().clients.find(client => client.id === 'claude_app');
+          const publicId = app().model_plan.models[0].public_id;
+          await select.selectOption('xhigh');assert.equal(app().deployments[0].reasoning_effort, undefined, 'Defaults are drafts before Save');
+          await page.evaluate(() => globalThis.ccdxConnections.load());assert.equal(await select.inputValue(), 'xhigh');
+          await page.locator('[data-claude-client="claude_code"]').click();assert.equal(await page.locator('select[data-effort-binding]').count(), 0);
+          await page.locator('[data-claude-client="claude_app"]').click();assert.equal(await select.inputValue(), 'xhigh');
+          await page.locator('#connection-client-cancel').click();assert.equal(await select.inputValue(), '');
+          await select.selectOption('xhigh');await page.locator('#connection-client-form button[type=submit]').click();
+          await page.waitForFunction(() => document.getElementById('connection-client-cancel').disabled);
+          assert.equal(app().deployments[0].reasoning_effort, 'xhigh');assert.equal(app().model_plan.models[0].public_id, publicId);
+          config.models.find(model => model.id === 'claude-replay').capabilities.reasoning_efforts = ['low', 'high'];
+          await runtime.manageConnections({ operation: 'save_api', id, config, allowed: ['codex', 'claude_app', 'claude_code'] });
+          await page.evaluate(() => globalThis.ccdxConnections.load());assert.equal(await select.inputValue(), 'xhigh');
+          assert.equal(await select.locator('option[value=xhigh]').isDisabled(), true);
+          await page.setViewportSize({ width: 320, height: 900 });await fits();await page.setViewportSize({ width, height: 1000 });
+          await select.selectOption('');await page.locator('#connection-client-form button[type=submit]').click();await page.waitForFunction(() => document.getElementById('connection-client-cancel').disabled);
+          assert.equal(app().deployments[0].reasoning_effort, undefined);
+          delete config.models.find(model => model.id === 'claude-replay').capabilities;
+          await runtime.manageConnections({ operation: 'save_api', id, config, allowed: ['codex', 'claude_app', 'claude_code'] });
+          await page.evaluate(() => globalThis.ccdxConnections.load());assert.equal(await row.locator('select[data-effort-binding]').count(), 0);
+        }
         githubRegistry.models = { data: ["gpt-retained", "gpt-temporarily-missing"].map(id => ({ id, supported_endpoints: ["/responses"] })) };
         const codexClient = runtime.connections().clients.find(c => c.id === "codex");
         await runtime.manageConnections({ operation: "client", id: "codex", enabled: true, allowed: codexClient.allowed,

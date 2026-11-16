@@ -162,6 +162,7 @@ export function createConnectionRouting({ legacy, legacyClaudeAccess, isManaged,
               provider: record.provider,
               model: record.upstreamModel,
               capability: record.model.capability,
+              effortDefault: record.effortDefault,
               finish,
             };
           },

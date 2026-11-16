@@ -6,6 +6,7 @@ import { compileClientModels, sourceModels } from "./client-model-plan.mjs";
 import { deploymentModelId } from "./model-capabilities.mjs";
 import { autoReviewReasoningEfforts } from "./models.mjs";
 import { claudeSharedCapabilityPlan, inspectClaudeCapabilityConfiguration } from "./claude-capability-config.mjs";
+import { effortUnavailable } from "./client-effort.mjs";
 
 export function createConnectionPolicy({ validObject, binding, catalogRefresh, save, discoveries, getSettings, env, imageModels, enabled,
   getSource, legacy, capabilitySupport, capabilitySupportForSync, plan, snapshot, options, permitted, sourceImpact }) {
@@ -178,6 +179,11 @@ export function createConnectionPolicy({ validObject, binding, catalogRefresh, s
         names,
         desktopEffortAliases: capabilitySupport.app && capabilitySupport.app_aliases !== false,
       });
+      for (const item of c.deployments || []) if (item.reasoning_effort !== undefined) {
+        const previous = old.deployments?.find(value => value.source === item.source && value.model === item.model);
+        const values = compiled.models.find(model => model.source_id === item.source && model.id === item.model)?.capability?.values;
+        if (previous?.reasoning_effort !== item.reasoning_effort && (values?.reasoning === false || !values?.reasoning_efforts?.includes(item.reasoning_effort))) throw effortUnavailable();
+      }
       if (c.default_model && !compiled.routes.has(c.default_model))
         throw accessError("ccdx_api_model_unavailable");
       c.default_model = compiled.routes.get(compiled.defaultModel)?.model.route_id || null;

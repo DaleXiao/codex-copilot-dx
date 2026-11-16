@@ -3,6 +3,7 @@
   const words = (node, key, args) => globalThis.ccdxLanguage.set(node, key, args), format = key => globalThis.ccdxLanguage.format(key);
   let data = null, editing = null, editingClient = null, disabling = null, models = [], selectedModels = new Set(), busy = false, generation = 0;
   let claudeClient = "claude_app", bindingSelection = new Set(), bindingDefault = null, bindingImageModel = null, bindingImageDirty = false, bindingDirty = false;
+  let bindingEfforts = new Map();
   let memoryAction = null, memoryOrigin = null;
   let disableRevision = null;
   const drafts = new Map();let editorOrigin = null, discovery = null, desiredSource = null;
@@ -389,7 +390,7 @@
   const bindingKey = (source, model) => source + "\0" + model;
   const routeId = item => item.route_id || item.public_id;
   function rememberDraft() {
-    if (editingClient && bindingDirty) drafts.set(editingClient, { selection: new Set(bindingSelection), defaultModel: bindingDefault, imageModel: bindingImageModel, imageDirty: bindingImageDirty, autoSync: el("connection-auto-sync").checked });
+    if (editingClient && bindingDirty) drafts.set(editingClient, { selection: new Set(bindingSelection), efforts: new Map(bindingEfforts), defaultModel: bindingDefault, imageModel: bindingImageModel, imageDirty: bindingImageDirty, autoSync: el("connection-auto-sync").checked });
   }
   function mountClient(force = false) {
     if (!data) return;
@@ -403,6 +404,7 @@
       editingClient = id;const draft = drafts.get(id);bindingDirty = Boolean(draft);
       const selected = Array.isArray(c.deployments) ? c.deployments : (c.model_plan?.models || []).map(model => ({ source: model.source, model: model.id }));
       bindingSelection = draft ? new Set(draft.selection) : new Set(selected.map(item => bindingKey(item.source, item.model)));
+      bindingEfforts = draft ? new Map(draft.efforts || []) : new Map(selected.filter(item => item.reasoning_effort !== undefined).map(item => [bindingKey(item.source, item.model), item.reasoning_effort]));
       bindingDefault = draft ? draft.defaultModel : c.default_model || c.model_plan?.models.find(model => model.public_id === c.model_plan?.default_model)?.route_id || null;
       bindingImageModel = draft?.imageDirty ? draft.imageModel : c.image_model || c.model_plan?.image?.selected_model || null;
       bindingImageDirty = draft?.imageDirty === true;
@@ -410,12 +412,13 @@
       el("connection-sync-result").hidden = true;el("connection-client-note").textContent = "";
     }
     if (id === "codex" && !bindingImageDirty) bindingImageModel = c.image_model || c.model_plan?.image?.selected_model || null;
-    bindingRows(document.activeElement?.name === "binding-model" ? { kind: "selection", key: document.activeElement.value } : document.activeElement?.dataset.binding ? { kind: "default", key: document.activeElement.dataset.binding } : null);words(el("connection-client-title"), "cap_visible_model");list();
+    bindingRows(document.activeElement?.name === "binding-model" ? { kind: "selection", key: document.activeElement.value } : document.activeElement?.dataset.effortBinding ? { kind: "effort", key: document.activeElement.dataset.effortBinding } : document.activeElement?.dataset.binding ? { kind: "default", key: document.activeElement.dataset.binding } : null);words(el("connection-client-title"), "cap_visible_model");list();
   }
   function bindingRows(focus) {
     memoryRender();
     el("connection-client-cancel").disabled = !bindingDirty;
     const body = el("connection-bindings"), c = client(editingClient);body.replaceChildren();
+    let effortControls = 0;
     const available = c.model_plan?.available || [], availableKeys = new Set(available.map(item => bindingKey(item.source, item.id)));
     const missing = [...bindingSelection].filter(key => !availableKeys.has(key)).map(key => { const [source, id] = key.split("\0"), saved = c.model_plan?.unavailable?.find(item => item.source === source && item.id === id);return { source, id, route_id: saved?.route_id, reason: saved?.reason, unavailable: true }; });
     for (const item of [...available, ...missing]) {
@@ -438,6 +441,17 @@
       if (item.unavailable) { const warning = node("span", undefined, "hint binding-unavailable");words(warning, item.reason ? "visibility_" + item.reason : "cap_model_unavailable");name.append(warning); }
       const cell = node("td");cell.append(action);
       const details = [node("td", source(item.source)?.name || item.source), node("td", count(capability.context_window)), node("td", reasoningText(capability))];
+      const levels = capability.reasoning === false ? [] : capability.reasoning_efforts || [];
+      if (editingClient === "claude_app" && (item.effort_control === "gateway" && levels.length || bindingEfforts.has(key))) {
+        const select = node("select"), follow = node("option");follow.value = "";words(follow, "cap_effort_follow");select.append(follow);
+        const saved = bindingEfforts.get(key);
+        if (saved && !levels.includes(saved)) { const option = node("option");option.value = saved;option.disabled = true;words(option, "cap_effort_unavailable", { effort: saved });select.append(option); }
+        for (const effort of levels) { const option = node("option", effort);option.value = effort;select.append(option); }
+        select.value = saved || "";select.dataset.effortBinding = key;select.setAttribute("aria-label", (item.display_name || item.id) + " · " + format("cap_reasoning"));
+        select.disabled = busy || Boolean(item.unavailable) || !bindingSelection.has(key);
+        select.addEventListener("change", () => { if (select.value) bindingEfforts.set(key, select.value);else bindingEfforts.delete(key);bindingDirty = true;rememberDraft();bindingRows({ kind: "effort", key }); });
+        details[2].replaceChildren(select);effortControls++;
+      }
       details.forEach((cell, i) => cell.dataset.label = format(["source", "cap_context", "cap_reasoning"][i]));
       row.append(name, ...details, cell);body.append(row);
     }
@@ -463,9 +477,10 @@
         : setup === "default_unavailable" ? "cap_default_unavailable" : "sync_not_configured";
     globalThis.ccdxIcons.set(el("connection-setup-state"), syncKey, setup === "configured" ? "ok" : ["configuration_unavailable", "default_unavailable"].includes(setup) ? "warning" : "unavailable");
     const capabilityNote = el("connection-capability-state");capabilityNote.hidden = !c.model_plan?.sync?.limitations?.some(item => item.code === "client_version_unknown");
+    el("connection-effort-note").hidden = !effortControls;
     if (!capabilityNote.hidden) words(capabilityNote, "sync_capability_unverified");
     words(clientForm.querySelector('button[type="submit"]'), el("connection-auto-sync").checked ? "cap_save_sync" : "api_save");
-    if (focus) { const selector = focus.kind === "selection" ? 'input[name="binding-model"]' : focus.kind === "image" ? 'input[name="binding-image-model"]' : 'button[data-binding]';[...body.querySelectorAll(selector)].find(input => (input.value || input.dataset.binding) === focus.key)?.focus(); }
+    if (focus) { const selector = focus.kind === "selection" ? 'input[name="binding-model"]' : focus.kind === "image" ? 'input[name="binding-image-model"]' : focus.kind === "effort" ? 'select[data-effort-binding]' : 'button[data-binding]';[...body.querySelectorAll(selector)].find(input => (input.dataset.effortBinding || input.value || input.dataset.binding) === focus.key)?.focus(); }
     if (!body.children.length) { const row = node("tr"), cell = node("td");cell.colSpan = 5;words(cell, "cap_no_models");const link = node("a");link.href = "#models";words(link, "model_services");cell.append(" ", link);row.append(cell);body.append(row); }
   }
   function editClient(c) { location.hash = c.id === "codex" ? "codex" : "claude";if (c.id !== "codex") claudeClient = c.id;mountClient(true); }
@@ -485,7 +500,7 @@
         return { operation: "image_model", id: "codex", model: bindingImageModel, client_revision: c.revision };
     }
     return { operation, id: c.id, enabled: true, allowed: c.allowed,
-      deployments: [...bindingSelection].map(key => { const [source, model] = key.split("\0");return { source, model }; }),
+      deployments: [...bindingSelection].map(key => { const [source, model] = key.split("\0");return { source, model, ...(editingClient === "claude_app" && bindingEfforts.has(key) ? { reasoning_effort: bindingEfforts.get(key) } : {}) }; }),
       ...(editingClient === "codex" && bindingImageModel ? { image_model: bindingImageModel } : {}),
       default_model: bindingDefault, auto_sync: el("connection-auto-sync").checked };
   }

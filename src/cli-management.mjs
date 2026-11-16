@@ -53,7 +53,7 @@ export async function runManagementCommand(command, options = {}) {
   const request = async args => {
     try { return await rawRequest(args); }
     catch (error) {
-      const messages = { ccdx_connections_conflict: "Settings changed. Reload and review before saving again.", ccdx_settings_changed: "Service preferences changed. Reload and review before saving again.", ccdx_source_in_use: "This source is still selected. Review replacements or pause the affected clients.",
+      const messages = { ccdx_client_effort_unavailable: "The saved reasoning level is unavailable. Choose a declared level or follow the app.", ccdx_connections_conflict: "Settings changed. Reload and review before saving again.", ccdx_settings_changed: "Service preferences changed. Reload and review before saving again.", ccdx_source_in_use: "This source is still selected. Review replacements or pause the affected clients.",
         ccdx_source_busy: "This source has active work. Wait for it to finish before changing access.", ccdx_api_model_unavailable: "A selected model is unavailable. Saved selections were kept.",
         ccdx_client_source_disabled: "Model access is paused. Review the client, source and model selection.", ccdx_api_protocol_required: "This source does not provide the required client interface." };
       if (error.code && error.code !== "ccdx_tool_unavailable") error.message = messages[error.code] || `Operation rejected: ${error.code}. ${error.code.startsWith("ccdx_settings_") ? "Review service preferences and their backup; existing files were kept." : "Review the selected source or client."}`;
@@ -304,7 +304,7 @@ export async function runManagementCommand(command, options = {}) {
         const available = [...(modelPlan?.available || [])], selected = Array.isArray(client.deployments) ? client.deployments : modelPlan?.models.map(model => ({ source: model.source, model: model.id })) || [];
         for (const old of selected) if (!available.some(row => row.source === old.source && row.id === old.model)) available.push({ source: old.source, id: old.model, unavailable: true });
         const indexes = await choose(available.map(row => `${row.source} / ${row.id}${row.unavailable ? " (unavailable; selection retained)" : ""}`), available.flatMap((row, index) => selected.some(item => item.source === row.source && item.model === row.id) ? [index] : []));
-        body.deployments = indexes.map(index => ({ source: available[index].source, model: available[index].id }));
+        body.deployments = indexes.map(index => ({ ...selected.find(item => item.source === available[index].source && item.model === available[index].id), source: available[index].source, model: available[index].id }));
         body.default_model = client.default_model || modelPlan?.default_model || null;
         if (body.deployments.length) {
           const defaults = body.deployments.map(item => deploymentModelId(item.source, item.model));
@@ -313,6 +313,14 @@ export async function runManagementCommand(command, options = {}) {
           if (value && (!/^\d+$/.test(value) || Number(value) < 1 || Number(value) > defaults.length)) throw new Error("Choose a listed default model number.");
           body.default_model = defaults[value ? Number(value) - 1 : Math.max(0, defaults.indexOf(body.default_model))];
         } else body.default_model = null;
+        if (id === "claude_app") for (const item of body.deployments) {
+          const entry = available.find(row => row.source === item.source && row.id === item.model), levels = entry?.capability?.values.reasoning_efforts || [];
+          if (entry?.effort_control !== "gateway" && item.reasoning_effort === undefined) continue;
+          output.write(`Reasoning for ${item.source} / ${item.model}: follow-app${levels.length ? ", " + levels.join(", ") : ""}\n`);
+          const answer = (await ask(`Default when the app omits effort [${item.reasoning_effort || "follow-app"}]: `)).trim();
+          if (answer === "follow-app") delete item.reasoning_effort;
+          else if (answer) { if (!levels.includes(answer)) throw new Error("Choose a declared reasoning level or follow-app.");item.reasoning_effort = answer; }
+        }
       }
       if (id === "codex" && !flags.file && modelPlan?.image?.models?.length) {
         const images = modelPlan.image.models, current = images.findIndex(model => model.id === modelPlan.image.selected_model);

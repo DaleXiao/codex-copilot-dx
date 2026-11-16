@@ -84,3 +84,35 @@ test("terminal status includes Antigravity before its first UI visit and summary
   const summary=await invokeAdapter(options,{method:"GET",url:"/_ccdx/ui/gemini?scope=summary",headers:{host:"127.0.0.1:2026","x-ccdx-dashboard":"1"}});
   assert.equal(summary.status,200);assert.equal(JSON.parse(summary.text).enabled,true);assert.equal(inspections,0);
 });
+
+test("explicit refresh updates available models without changing saved choices or starting clients",async t=>{
+  const f=fixture(t),registry={models:structuredClone(catalog)};let reads=0,fail=false;
+  const hydrogen={...catalog.data[0],id:"gemini-4-hydrogen",capabilities:{...catalog.data[0].capabilities,supports:{reasoning_effort:["low","medium","high","xhigh"]}}};
+  const runtime=createAntigravityRuntime({...f.options,models:()=>registry.models,refreshModels:async()=>{reads++;if(fail)throw Error("catalog unavailable");registry.models={data:[...catalog.data,hydrogen]}}});t.after(()=>runtime.close());
+  const selected=["ccdx-copilot-gemini-4-carbon-high"];
+  await runtime.action({action:"models",models:selected},"http://127.0.0.1:2026");const before=fs.readFileSync(f.file,"utf8");
+  await runtime.action({action:"summary"});assert.equal(reads,0);
+  const state=await runtime.action({action:"refresh"},"http://127.0.0.1:2026");assert.equal(reads,1);assert.equal(state.model_groups.length,2);
+  assert.deepEqual(state.models.filter(row=>row.selected).map(row=>row.id),selected);assert.equal(state.models.find(row=>row.effort==="xhigh").selected,false);
+  assert.equal(fs.readFileSync(f.file,"utf8"),before);assert.equal(f.calls.length,0);
+  fail=true;await assert.rejects(runtime.action({action:"refresh"},"http://127.0.0.1:2026"),/unavailable/);assert.equal(runtime.snapshot().model_groups.length,2);assert.equal(fs.readFileSync(f.file,"utf8"),before);
+  registry.models={data:[...registry.models.data,{...hydrogen,id:"gemini-3.8-flash"}]};
+  const dotted="ccdx-copilot-gemini-3.8-flash-xhigh";
+  await runtime.action({action:"models",models:[dotted]},"http://127.0.0.1:2026");assert.equal(runtime.snapshot().models.find(model=>model.id===dotted).selected,true);
+});
+
+test("Antigravity CLI refresh uses the same explicit catalog operation",async()=>{
+  const command=parseManagedCommand(["app","antigravity","models","--refresh","--format","json"]),calls=[];
+  await runManagementCommand(command,{request:async input=>{calls.push(input);return{models:[]}},output:{isTTY:false,write(){}}});
+  assert.deepEqual(calls,[{path:"gemini",body:{action:"refresh"},timeoutMs:20000}]);
+});
+
+test("dashboard refresh uses the existing GitHub catalog runtime and leaves settings unchanged",async t=>{
+  const f=fixture(t),registry={models:structuredClone(catalog)},calls=[],before=fs.readFileSync(f.file,"utf8");
+  const response=await invokeAdapter({env:{},dashboardOptions:{home:f.home},codexModelRegistry:registry,
+    providerRuntime:{snapshot:()=>({}),dashboardCatalog:async input=>{calls.push(input);registry.models={data:[...catalog.data,{...catalog.data[0],id:"gemini-4-hydrogen"}]};return{source:"live"}}},
+    antigravityOptions:{inspect:f.options.inspect,exec:f.options.exec}},
+    {url:"/_ccdx/ui/gemini",headers:{host:"127.0.0.1:2026",origin:"http://127.0.0.1:2026","x-ccdx-dashboard":"1"},body:{action:"refresh"}});
+  assert.equal(response.status,200);assert.deepEqual(calls,[{provider:"github"}]);assert.equal(JSON.parse(response.text).model_groups.length,2);
+  assert.equal(fs.readFileSync(f.file,"utf8"),before);
+});

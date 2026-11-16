@@ -53,7 +53,7 @@ function contentValue(parts) {
   return parts.length === 1 && parts[0].type === "text" ? parts[0].text : parts;
 }
 
-export function antigravityToChat(request, { model, effort, stream = true } = {}) {
+export function antigravityToChat(request, { model, effort, stream = true, reasoningEfforts = ["none","minimal","low","medium","high","xhigh","max"] } = {}) {
   if (!object(request) || !Array.isArray(request.contents) || typeof model !== "string" || !model)
     throw invalid("Invalid Gemini generation request");
   if (Object.keys(request).some(key => !["contents", "systemInstruction", "tools", "toolConfig", "generationConfig", "labels", "sessionId"].includes(key))
@@ -143,7 +143,7 @@ export function antigravityToChat(request, { model, effort, stream = true } = {}
   // A CCDX model alias advertises the Copilot effort selected in the App.
   // Its explicit effort takes precedence over Google's internal token budget.
   const level = effort || generation.thinkingConfig?.thinkingLevel?.toLowerCase();
-  if (level && !["low", "medium", "high"].includes(level)) throw invalid("Unsupported Gemini reasoning level");
+  if (level && !reasoningEfforts.includes(level)) throw invalid("Unsupported Gemini reasoning level");
   const chat = { model, messages, stream,
     ...(stream ? { stream_options: { include_usage: true } } : {}),
     ...(tools.length ? { tools, tool_choice: choices[mode] } : {}),

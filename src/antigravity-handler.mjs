@@ -169,7 +169,7 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
       const target=body.requestType==="agent"||compactBinding&&!compactBinding.background?selected:copilotModels.find(model=>model.model==="gemini-4-carbon"&&model.effort==="low");
       if(!target)throw httpError("Copilot Carbon is unavailable for Antigravity background tasks",503);
       const stream=method==="streamGenerateContent";usageModel=target.model;usageMode=stream?"sse":"json";usageProvider="github";
-      const converted=antigravityToChat(request,{model:target.model,effort:target.effort,stream});
+      const converted=antigravityToChat(request,{model:target.model,effort:target.effort,reasoningEfforts:target.effort?[target.effort]:[],stream});
       markResponseModel(target.model);markRequestObservation({usage_state:"pending"});
       session=privacy?.prepareSession?await privacy.prepareSession(converted.chat,{protocol:"chat",client:"gemini",signal:abort.signal}):passthrough(converted.chat);
       const callOptions={signal:abort.signal,retryOptions:{retries:0},onUpstreamStart:()=>abort.setTimeout(upstreamTimeoutMs,"upstream_timeout")};

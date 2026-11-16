@@ -13,6 +13,15 @@ import {createContextCompactionService} from "../src/context-compaction.mjs";
 const catalog={data:["gemini-4-carbon","gemini-4-argon"].map(id=>({id,supported_endpoints:["/chat/completions"],capabilities:{supports:{vision:true,reasoning_effort:["low","medium","high"]},limits:{max_context_window_tokens:1000000,max_output_tokens:64000}}}))};
 const alias=antigravityCopilotModels(catalog)[2].id;
 
+test("newly advertised Hydrogen routes xhigh while a native tiered model keeps Google",async()=>{
+  const hydrogen={...catalog.data[0],id:"gemini-4-hydrogen",capabilities:{...catalog.data[0].capabilities,supports:{vision:true,reasoning_effort:["low","medium","high","xhigh"]}}};
+  const f=fixture({models:()=>({data:[...catalog.data,hydrogen]})});
+  const result=await invoke(f.handler,body("ccdx-copilot-gemini-4-hydrogen-xhigh")).done;
+  assert.equal(result.status,200);assert.equal(f.copilot[0].value.model,hydrogen.id);assert.equal(f.copilot[0].value.reasoning_effort,"xhigh");
+  const native=fixture();assert.equal((await invoke(native.handler,body("gemini-3.8-flash-tiered")).done).status,200);
+  assert.equal(native.copilot.length,0);assert.equal(JSON.parse(native.google[0].request.body).model,"gemini-3.8-flash-tiered");
+});
+
 test("native Google and Copilot tool results update the same isolated activity contract",async()=>{
   for(const native of [true,false]){
     let first=true;const performance=createStreamPerformanceMetrics({routeNames:["antigravity"]});

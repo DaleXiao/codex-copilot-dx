@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { codexClientCatalog, codexSourceCatalog } from "../src/clients/codex-models.mjs";
+import { resolveModelCapabilities } from "../src/model-capabilities.mjs";
 
 const model = { id: "gpt-fixture", public_id: "gpt-fixture", source_id: "github", source_name: "GitHub",
   capability: { values: { input_modalities: ["text"], reasoning_efforts: ["low", "high"] } } };
@@ -30,6 +31,14 @@ test("unknown modalities retain the existing native template while explicit visi
   assert.deepEqual(project({}).input_modalities, ["text", "image"]);
   assert.deepEqual(project({ input_modalities: ["text", "image"] }).input_modalities, ["text", "image"]);
   assert.deepEqual(project({ input_modalities: ["text"] }).input_modalities, ["text"]);
+});
+
+test("Copilot image capability keeps explicit false separate from unknown template fallback", () => {
+  for (const [vision,expected] of [[true,["text","image"]],[false,["text"]],[undefined,["text","image"]],["false",["text","image"]]]) {
+    const capability=resolveModelCapabilities({capabilities:{supports:{vision}}},{builtin:true});
+    const result=codexClientCatalog({models:[{...model,capability}]} )({},nativeCatalog).models[0];
+    assert.deepEqual(result.input_modalities,expected);
+  }
 });
 
 test("only GitHub Carbon uses Responses Lite for the native standalone web tool", () => {

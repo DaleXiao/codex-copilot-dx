@@ -41,7 +41,7 @@
       label.append(input,document.createTextNode(model.name));name.append(label);row.append(name);
       for(const [key,value]of [['source','GitHub Copilot'],['cap_context',count(model.context_window)]]){const cell=document.createElement('td');cell.textContent=value;cell.dataset.label=language.format(key);row.append(cell)}
       const efforts=document.createElement('td');efforts.dataset.label=language.format('cap_reasoning');
-      efforts.textContent=model.efforts.map(item=>item.effort).join(' / ');
+      efforts.textContent=model.efforts.map(item=>item.effort||'—').join(' / ');
       row.append(efforts);list.append(row);
     }
     if(!state.models.length){const row=document.createElement('tr'),cell=document.createElement('td');cell.colSpan=4;language.set(cell,'gemini_no_models');row.append(cell);list.append(row)}
@@ -70,8 +70,8 @@
   el('gemini-model-form').addEventListener('submit',event=>{event.preventDefault();if(dirty())void load('models',{models:draft})});
   el('gemini-cancel').addEventListener('click',()=>{draft=null;notice=null;clear('gemini-note');render()});
   el('gemini-open').addEventListener('click',()=>void load('open'));
-  el('gemini-refresh').addEventListener('click',()=>void load());
-  el('refresh').addEventListener('click',()=>{if(['#gemini','#models'].includes(location.hash))void load(location.hash==='#models'?'summary':undefined)});
+  el('gemini-refresh').addEventListener('click',()=>void load('refresh'));
+  el('refresh').addEventListener('click',()=>{if(['#gemini','#models'].includes(location.hash))void load(location.hash==='#models'?'summary':'refresh')});
   window.addEventListener('hashchange',()=>{if(['#gemini','#models'].includes(location.hash))void load(location.hash==='#models'?'summary':undefined)});
   new MutationObserver(render).observe(document.documentElement,{attributes:true,attributeFilter:['lang']});
   void load(location.hash==='#gemini'?undefined:'summary');

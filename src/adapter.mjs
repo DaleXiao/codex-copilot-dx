@@ -193,6 +193,10 @@ export function createAdapterHandler(options = {}) {
     if (!antigravityLoading) antigravityLoading = (async () => {
       const { createAntigravityRuntime } = await import("./antigravity-runtime.mjs");
       antigravity = createAntigravityRuntime({ client: codexClient, models: () => codexModelRegistry?.models || [], privacy, compaction, acquireRequest,
+        ...(options.providerRuntime?.dashboardCatalog?{refreshModels:async()=>{
+          const result=await options.providerRuntime.dashboardCatalog({provider:"github"});
+          if(!result)throw httpError("GitHub model catalog refresh is unavailable",503);
+        }}:{}),
         env: options.env, home: options.dashboardOptions?.home, requestBodyTimeoutMs, upstreamTimeoutMs, streamIdleTimeoutMs,
         ...options.antigravityOptions });
       return antigravity;

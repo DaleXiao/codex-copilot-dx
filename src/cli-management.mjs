@@ -225,7 +225,7 @@ export async function runManagementCommand(command, options = {}) {
         output.write(print(preview) + "\n");await confirm(action === "enable" ? "Enable this Antigravity-only routing scope?" : "Pause Copilot access? Reopen Gemini afterward to restore its native route.");
       }
       if(action==="models"&&flags.edit){
-        const state=await request({path:"gemini"});
+        const state=await request({path:"gemini",...(flags.refresh?{body:{action:"refresh"},timeoutMs:20000}:{})});
         let ids;
         if(flags.file){
           const listed=readFile().models;if(!Array.isArray(listed))throw new Error("Model files require a models array.");
@@ -236,7 +236,7 @@ export async function runManagementCommand(command, options = {}) {
           ids=[];
           for(const index of selected){
             const model=groups[index],previous=model.efforts.flatMap((item,i)=>item.selected?[i]:[]);
-            const efforts=await choose(model.efforts.map(item=>model.name+" / "+item.effort),previous.length?previous:model.efforts.map((_,i)=>i));
+            const efforts=await choose(model.efforts.map(item=>model.name+" / "+(item.effort||"default")),previous.length?previous:model.efforts.map((_,i)=>i));
             ids.push(...efforts.map(i=>model.efforts[i].id));
           }
         }else ids=(await choose(state.models.map(model=>model.name),state.models.flatMap((model,index)=>model.selected!==false?[index]:[]))).map(index=>state.models[index].id);
@@ -245,9 +245,9 @@ export async function runManagementCommand(command, options = {}) {
         await confirm("Save Antigravity model selection? Reopen Gemini afterward to reload it.");
         return print(await request({path:"gemini",body:{action:"models",models:ids}}));
       }
-      const state = await request({ path: "gemini", ...(["status", "models"].includes(action) ? {} : { body: { action: flags.preview ? "preview" : action, ...(action === "enable" ? { accept_background_copilot: true } : {}) }, timeoutMs: 20000 }) });
+      const state = await request({ path: "gemini", ...(action==="models"&&flags.refresh?{body:{action:"refresh"},timeoutMs:20000}:["status", "models"].includes(action) ? {} : { body: { action: flags.preview ? "preview" : action, ...(action === "enable" ? { accept_background_copilot: true } : {}) }, timeoutMs: 20000 }) });
       if(action==="models"&&flags.format!=="json"&&state.model_groups)return print(state.model_groups.map(model=>({model:model.name,id:model.id,source:"GitHub Copilot",context:model.context_window,
-        efforts:model.efforts.map(item=>item.effort+(item.selected?" ✓":"")).join(" / ")})),[["model","Model"],["id","ID"],["source","Source"],["context","Context"],["efforts","Reasoning (selected ✓)"]]);
+        efforts:model.efforts.map(item=>(item.effort||"default")+(item.selected?" ✓":"")).join(" / ")})),[["model","Model"],["id","ID"],["source","Source"],["context","Context"],["efforts","Reasoning (selected ✓)"]]);
       return print(action === "models" ? state.models : state);
     }
     const graph = await connection(), snapshot = (await readStatus()).data, view = projectTerminalState(snapshot);

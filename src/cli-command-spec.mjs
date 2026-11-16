@@ -110,7 +110,7 @@ export const MANAGED_COMMANDS = [
   ),
   command("app list", "List client configuration and observed activity", read),
   ...["gemini", "antigravity"].flatMap(app => ["status", "models", "enable", "disable", "open"].map(action => command(`app ${app} ${action}`,
-    ({status:"Inspect Gemini App and Antigravity setup",models:"List Copilot models added to Antigravity",enable:"Enable Antigravity routing and Copilot background requests",disable:"Pause Antigravity Copilot access; reopen Gemini for native routing",open:"Open the original Gemini App with its prepared route"})[action], {...read,...confirm,...(action==="models"?{"--edit":"flag","--file":"value"}:{})}))),
+    ({status:"Inspect Gemini App and Antigravity setup",models:"List compatible Copilot models for Antigravity",enable:"Enable Antigravity routing and Copilot background requests",disable:"Pause Antigravity Copilot access; reopen Gemini for native routing",open:"Open the original Gemini App with its prepared route"})[action], {...read,...confirm,...(action==="models"?{"--edit":"flag","--file":"value","--refresh":"flag"}:{})}))),
   command("app <app> status", "Show configuration, not process liveness", { ...read, "--details": "flag" }),
   command("app <app> models", "Show or edit the client's selected model plan", {
     ...read,
@@ -288,7 +288,7 @@ export function parseManagedCommand(args) {
 const extras = {
   source:
     "Status reads local/cached evidence. check/--refresh may contact the source; no inference.\nsource import --file FILE previews supplied metadata. --select N --apply saves one source using private key input; no client access is granted.\nSource access grants do not select client models. Disable previews affected clients.\nGitHub login and company-account selection are source-specific.\nChoose visible models and defaults with app <app> models --edit.",
-  app: "Configured is not App adoption or process liveness. Unknown stays unknown.\nmodels shows the selected plan; source <id> models shows the upstream catalog.\nsetup/remove changes integration setup; pause/resume retains credentials.\nsync --preview shows the model/configuration plan, not a byte-level file diff.\nNo client program is force-restarted.",
+  app: "Configured is not App adoption or process liveness. Unknown stays unknown.\nmodels shows the selected plan; Antigravity lists compatible Copilot models and their selection.\napp antigravity models --refresh reads the GitHub catalog without inference or changing saved choices.\nsource <id> models shows the upstream catalog.\nsetup/remove changes integration setup; pause/resume retains credentials.\nsync --preview shows the model/configuration plan, not a byte-level file diff.\nNo client program is force-restarted.",
   config:
     "Only service and terminal preferences are in scope. Browser appearance stays in WebUI.\nReset keeps accounts, keys, model plans and chats and stores a pre-reset backup.\nSaved and effective values can differ; restart requirements remain explicit.",
   requests:

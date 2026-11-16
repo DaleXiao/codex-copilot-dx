@@ -34,12 +34,14 @@ or `/antigravity/` routes. Existing inference routes return before that dispatch
 
 `antigravity-handler.mjs` preserves observed Google account/catalog control
 requests against fixed official Code Assist origins. It merges advertised
-Copilot Carbon/Argon aliases while retaining native models and defaults. Native
+compatible Copilot Gemini aliases while retaining native models and defaults. The catalog drives model names, limits, vision and reasoning aliases, including xhigh; there is no per-model allowlist. Explicit image-only, disabled, non-streaming/non-tool and non-Chat declarations are excluded. Native
 Google agent requests pass through; selected Copilot agents and all unattributed
 background inference use Copilot. Summaries use Carbon Low, searches use the
 existing Copilot search transport, and images use the existing GHC Images API.
 Ordinary Gemini chat is outside this endpoint scope; parent-App route adoption
 and ordinary-chat isolation require native App acceptance beyond engine replay.
+
+The existing Antigravity refresh control sends an explicit `refresh` operation through the GitHub catalog runtime. Status and summary reads remain cached. Refresh failures preserve the last-good catalog; selection and draft writes remain separate. `app antigravity models --refresh` shares this boundary. The capability projection also preserves explicit Copilot `vision=false` as text-only while retaining native-template fallback for unknown vision, following [CC Switch's capability fix](https://github.com/farion1231/cc-switch/commit/fc3eb797c72e054d554eea6a2e7a8b93933c6ac5).
 
 The Chat bridge keeps lossless tool integers, explicit effort, cancellation,
 stream backpressure, privacy-token restoration and terminal errors. Native

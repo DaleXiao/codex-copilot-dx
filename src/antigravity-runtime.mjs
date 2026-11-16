@@ -21,7 +21,7 @@ import {antigravityCopilotModels} from "./antigravity-models.mjs";
 
 const execute=promisify(execFile),key="gemini_antigravity_enabled",modelKey="gemini_antigravity_models";
 
-export function createAntigravityRuntime({client,models=()=>[],privacy,home=os.homedir(),env=process.env,inspect=inspectGeminiApp,
+export function createAntigravityRuntime({client,models=()=>[],refreshModels,privacy,home=os.homedir(),env=process.env,inspect=inspectGeminiApp,
   exec=execute,searchFn,imageFn,guardSource,googleFetch,acquireRequest,readToken=()=>readSavedGithubToken(home),...timeouts}={}) {
   const options={home,env},guard=createConversationSourceGuard(options);
   const web=searchFn?null:createCopilotWeb({client,readToken});
@@ -35,7 +35,7 @@ export function createAntigravityRuntime({client,models=()=>[],privacy,home=os.h
   const settings=()=>{
     const saved=readUserSettings({...options,strict:true});
     if(saved[key]!==undefined&&typeof saved[key]!=="boolean")throw httpError("Invalid Gemini integration setting",409);
-    if(saved[modelKey]!==undefined&&(!Array.isArray(saved[modelKey])||saved[modelKey].length>100||new Set(saved[modelKey]).size!==saved[modelKey].length||saved[modelKey].some(id=>typeof id!=="string"||!/^ccdx-copilot-[a-z0-9-]{1,140}$/.test(id))))throw httpError("Invalid Antigravity model selection",409);
+    if(saved[modelKey]!==undefined&&(!Array.isArray(saved[modelKey])||saved[modelKey].length>100||new Set(saved[modelKey]).size!==saved[modelKey].length||saved[modelKey].some(id=>typeof id!=="string"||!/^ccdx-copilot-[a-z0-9._-]{1,140}$/.test(id))))throw httpError("Invalid Antigravity model selection",409);
     return {configured:Object.hasOwn(saved,key),enabled:saved[key]===true,selected_models:saved[modelKey]??null};
   };
   const available=()=>settings().enabled&&readAccessSettings(options).providers.github?models():[];
@@ -77,8 +77,12 @@ export function createAntigravityRuntime({client,models=()=>[],privacy,home=os.h
   async function action(input={},baseUrl){
     if(input&&Object.keys(input).some(name=>!["action","accept_background_copilot","models"].includes(name)))throw httpError("Invalid Gemini operation",400);
     const operation=input.action||"status";
-    if(!["status","summary","models","enable","disable","open","preview"].includes(operation))throw httpError("Unknown Gemini operation",400);
+    if(!["status","summary","refresh","models","enable","disable","open","preview"].includes(operation))throw httpError("Unknown Gemini operation",400);
     if(input.models!==undefined&&operation!=="models")throw httpError("Models require the models operation",400);
+    if(operation==="refresh"){
+      if(!refreshModels)throw httpError("Antigravity model refresh is unavailable in this service",503);
+      await refreshModels();lastOperation={action:operation,status:"models_refreshed"};
+    }
     if(operation==="models"){
       const ids=input.models,known=new Set(antigravityCopilotModels(models()).map(model=>model.id));
       if(!Array.isArray(ids)||ids.length>100||new Set(ids).size!==ids.length||ids.some(id=>!known.has(id)))throw httpError("Choose available Antigravity models",400);

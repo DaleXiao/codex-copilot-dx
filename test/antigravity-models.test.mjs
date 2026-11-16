@@ -1,0 +1,29 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import {antigravityCopilotModels,mergeAntigravityModels} from "../src/antigravity-models.mjs";
+import {antigravityToChat} from "../src/antigravity-chat-bridge.mjs";
+
+const model=(id,levels=["low","medium","high","xhigh"])=>({id,name:id.split("-").map(s=>s[0].toUpperCase()+s.slice(1)).join(" "),model_picker_enabled:true,
+  supported_endpoints:["/chat/completions"],capabilities:{type:"chat",supports:{tool_calls:true,streaming:true,vision:true,reasoning_effort:levels},limits:{max_context_window_tokens:1048576,max_output_tokens:65536}}});
+test("Antigravity discovers compatible Gemini families and each model's advertised efforts",()=>{
+  const catalog={data:[model("gemini-4-hydrogen"),model("gemini-3.8-flash",["low","high"]),model("gemini-5-future",["high","turbo"])]},before=structuredClone(catalog);
+  const result=antigravityCopilotModels(catalog);
+  assert.deepEqual(result.filter(x=>x.model==="gemini-4-hydrogen").map(x=>x.effort),["low","medium","high","xhigh"]);
+  assert.equal(result.find(x=>x.effort==="xhigh").id,"ccdx-copilot-gemini-4-hydrogen-xhigh");
+  assert.equal(result.filter(x=>x.model==="gemini-3.8-flash").length,2);assert.ok(result.some(x=>x.effort==="turbo"));
+  const target=result.find(x=>x.effort==="turbo");assert.equal(antigravityToChat({contents:[]},{model:target.model,effort:target.effort,reasoningEfforts:[target.effort]}).chat.reasoning_effort,"turbo");
+  assert.deepEqual(catalog,before);
+});
+test("unavailable, image-only and incompatible models are excluded without inventing support",()=>{
+  const good=model("gemini-4-hydrogen");
+  for(const entry of [{...good,model_picker_enabled:false},{...good,policy:{state:"disabled"}},{...good,policy:{state:"unconfigured"}},
+    {...good,supported_endpoints:["/responses"]},{...good,capabilities:{...good.capabilities,type:"image"}},
+    {...good,capabilities:{supports:{tool_calls:false}}},{...good,capabilities:{supports:{streaming:false}}},{...good,id:"gpt-other"}])assert.deepEqual(antigravityCopilotModels({data:[entry]}),[]);
+  const duplicate={data:[{id:good.id},good]};assert.equal(antigravityCopilotModels(duplicate).length,4);
+});
+test("models without efforts keep a plain alias and native Google entries remain untouched",()=>{
+  const plain=model("gemini-future",[]),native={models:{google:{model:"NATIVE",displayName:"Native Google"}}},before=structuredClone(native);
+  const merged=mergeAntigravityModels(native,{data:[plain]});const entry=merged.models["ccdx-copilot-gemini-future"];
+  assert.ok(entry);assert.equal(entry.supportsThinking,false);assert.deepEqual(merged.models.google,native.models.google);assert.deepEqual(native,before);
+  assert.equal(antigravityCopilotModels([model("gemini-4-carbon",["low"] )])[0].id,"ccdx-copilot-gemini-4-carbon-low");
+});

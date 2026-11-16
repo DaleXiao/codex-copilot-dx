@@ -1,16 +1,25 @@
-const supported = new Map([["gemini-4-carbon","Carbon"],["gemini-4-argon","Argon"]]);
-const levels = ["low","medium","high"];
+import {uniqueModelEntries} from "./model-catalog.mjs";
+import {modelDisplayName} from "./model-display.mjs";
+import {modelReasoningEfforts} from "./provider-metadata.mjs";
 export const ANTIGRAVITY_MODEL_PREFIX = "ccdx-copilot-";
 
 export function antigravityCopilotModels(catalog) {
   const data=Array.isArray(catalog)?catalog:catalog?.data;
-  return (data||[]).filter(model=>supported.has(model.id)&&model.policy?.state!=="disabled"&&model.supported_endpoints?.some(endpoint=>["/chat/completions","/v1/chat/completions"].includes(endpoint)))
-    .flatMap(model=>levels.filter(level=>model.capabilities?.supports?.reasoning_effort?.includes(level)).map(effort=>({
-      id:ANTIGRAVITY_MODEL_PREFIX+model.id+"-"+effort,model:model.id,effort,
-      displayName:"Gemini 4 "+supported.get(model.id)+" · Copilot ("+effort[0].toUpperCase()+effort.slice(1)+")",
-      maxTokens:model.capabilities.limits?.max_context_window_tokens,maxOutputTokens:model.capabilities.limits?.max_output_tokens,
-      supportsImages:model.capabilities.supports.vision===true,
-    })));
+  return uniqueModelEntries(Array.isArray(data)?data:[]).filter(model=>/^gemini-[a-z0-9][a-z0-9._-]{0,100}$/.test(model?.id)
+    &&model.model_picker_enabled!==false&&(!model.policy?.state||model.policy.state==="enabled")
+    &&(!model.capabilities?.type||model.capabilities.type==="chat")
+    &&model.capabilities?.supports?.streaming!==false&&model.capabilities?.supports?.tool_calls!==false
+    &&model.supported_endpoints?.some(endpoint=>["/chat/completions","/v1/chat/completions"].includes(endpoint)))
+    .flatMap(model=>{
+      const efforts=modelReasoningEfforts(model)||[],fallback=model.id.split("-").map(word=>word[0].toUpperCase()+word.slice(1)).join(" ");
+      const name=modelDisplayName({...model,name:model.name||fallback}),label=/gemini/i.test(name)?name:"Gemini · "+name;
+      return (efforts.length?efforts:[null]).map(effort=>({
+        id:ANTIGRAVITY_MODEL_PREFIX+model.id+(effort?"-"+effort:""),model:model.id,effort,
+        displayName:label+" · Copilot"+(effort?" ("+effort[0].toUpperCase()+effort.slice(1)+")":""),
+        maxTokens:model.capabilities?.limits?.max_context_window_tokens,maxOutputTokens:model.capabilities?.limits?.max_output_tokens,
+        supportsImages:model.capabilities?.supports?.vision===true,
+      }));
+    });
 }
 
 export function mergeAntigravityModels(googleCatalog,copilotCatalog,selection=null) {
@@ -23,7 +32,7 @@ export function mergeAntigravityModels(googleCatalog,copilotCatalog,selection=nu
     if(next>=600||Object.hasOwn(models,entry.id))throw new Error("Antigravity model catalog has no free client identifiers");
     const model="MODEL_PLACEHOLDER_M"+next++;used.add(model);
     models[entry.id]={displayName:entry.displayName,model,maxTokens:entry.maxTokens,maxOutputTokens:entry.maxOutputTokens,
-      supportsImages:entry.supportsImages,supportsThinking:true,apiProvider:"API_PROVIDER_GOOGLE_GEMINI"};
+      supportsImages:entry.supportsImages,supportsThinking:Boolean(entry.effort),apiProvider:"API_PROVIDER_GOOGLE_GEMINI"};
   }
   const sorts=googleCatalog.agentModelSorts?.length?structuredClone(googleCatalog.agentModelSorts):[{displayName:"Recommended",groups:[]}];
   // Gemini App reads only the first group in the Recommended sort.

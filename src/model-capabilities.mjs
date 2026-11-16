@@ -40,7 +40,7 @@ export function catalogCapabilities(model) {
     max_tool_definitions: first(model.max_tool_definitions, window.max_tool_definitions),
     reasoning: first(typeof caps.reasoning === "boolean" ? caps.reasoning : undefined, supports.reasoning),
     reasoning_efforts: first(model.reasoning_efforts, supports.reasoning_effort),
-    input_modalities: first(model.input_modalities, caps.input_modalities, supports.vision === true ? ["text", "image"] : undefined),
+    input_modalities: first(model.input_modalities, caps.input_modalities, typeof supports.vision === "boolean" ? supports.vision ? ["text", "image"] : ["text"] : undefined),
     tools: first(supports.tools, supports.tool_calls), parallel_tools: supports.parallel_tool_calls, streaming: supports.streaming, mid_conversation_system: supports.mid_conversation_system,
     structured_output: first(supports.structured_output, supports.structured_outputs), web_search: first(model.web_search, caps.web_search), thinking_modes: first(model.thinking_modes, caps.thinking_modes),
     ...Object.fromEntries(["reasoning_required", "reasoning_adaptive", "reasoning_budget_min", "reasoning_budget_max", "reasoning_format"].map(key => [key, first(model[key], caps[key])])),

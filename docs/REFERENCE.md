@@ -70,9 +70,9 @@ inspection. Use `app antigravity status` to check the signed installation explic
 The old `app gemini` commands remain available. Authorize Antigravity on the GitHub
 Copilot source page, or with `source github access --edit --apps codex,antigravity --yes`.
 Choose its exposed models on the Antigravity page or with
-`app antigravity models --edit`. Each WebUI row represents one model. The Reasoning column lists supported levels as `low / medium / high`, matching Codex and Claude; the model checkbox controls visibility. Save/Discard, refresh, navigation, pausing and an off/on toggle preserve an existing saved route subset. CLI model editing and model files remain available for fine-grained effort selection.
+`app antigravity models --edit`. Each WebUI row represents one model. Compatible Gemini chat models come from the current GitHub catalog, rather than a fixed Carbon/Argon list. The Reasoning column lists advertised levels, including Hydrogen's `xhigh` when available. The model checkbox controls visibility. Save/Discard, refresh, navigation, pausing and an off/on toggle preserve an existing saved route subset. CLI model editing and model files remain available for fine-grained effort selection. Refresh on this page or run `app antigravity models --refresh` to read the upstream catalog through the existing GitHub refresh runtime. Refresh does not change saved choices, save drafts, restart clients or invoke inference; failed reads retain the last usable list.
 
-The native Gemini catalog still uses distinct routing aliases for each level so its original selector can choose the intended effort. JSON model output retains those aliases for compatibility, with a `model` field identifying the actual model; the management status also includes `model_groups`. A model file accepts `{"models":["gemini-4-carbon"]}` to expose all of its levels, or the existing `ccdx-copilot-...-low|medium|high` aliases to choose a subset.
+The native Gemini catalog still uses distinct routing aliases for each level so its original selector can choose the intended effort. JSON model output retains those aliases for compatibility, with a `model` field identifying the actual model; the management status also includes `model_groups`. A model file accepts `{"models":["gemini-4-hydrogen"]}` to expose all of its advertised levels, or individual `ccdx-copilot-...-<effort>` aliases to choose a subset. Existing Carbon/Argon aliases remain valid. Models without declared reasoning levels use one plain alias.
 After saving, the Antigravity page reports whether the client has fetched the current model list. If the list is pending, reopen Gemini through CCDX.
 
 The WebUI uses one authorization form for GitHub Copilot, Microsoft 365 and custom APIs. Source switches apply immediately. App-authorization and model checkboxes are drafts until **Save**; **Discard changes** restores the saved selection. Drafts survive refresh and navigation. Source authorization does not choose app models.
@@ -81,13 +81,14 @@ Pausing Antigravity Copilot access retains its saved model selection. Native Goo
 
 The page distinguishes enabled access from an observed client connection.
 
-Carbon and Argon appear with Low, Medium and High reasoning levels when the
-Copilot account advertises them. Google models, account controls and defaults
+Compatible Gemini models and their declared reasoning levels appear when the Copilot account advertises them. Image-only models, incompatible interfaces and explicitly unavailable models are excluded. Google models, account controls and defaults
 are retained. Conversations keep their initial Google/Copilot source; start a
 new conversation to change source. Unsupported PDF, audio and video inputs are refused
 before Copilot dispatch. Text, inline images and native function tools are
 converted to the advertised Copilot Chat interface; truncated streams report an
 error rather than successful completion.
+
+This Copilot selection does not restrict Antigravity's original Google model directory. Google wire IDs such as `gemini-3.8-flash-tiered` can therefore appear in usage without being CCDX-added model choices. The recorded provider distinguishes Google and GitHub Copilot; the ID alone does not establish a background task or a fallback. Known conversation compaction retains its observed source and model.
 
 `enable` saves CCDX settings and prepares its local source guard. `open --preview` shows the launch plan.
 `open` starts a closed, signed `/Applications/Gemini.app` with a process-local

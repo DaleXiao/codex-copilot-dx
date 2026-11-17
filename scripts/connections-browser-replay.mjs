@@ -68,7 +68,7 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter
         assert.equal(JSON.stringify(runtime.connections()), beforeImport, "Import preview writes nothing");
         assert.doesNotMatch(await page.locator("#connection-import-preview").innerText(), /fixture-private-key/);
         if (options.get("--output")) { fs.mkdirSync(options.get("--output"), { recursive: true });await page.locator("#connection-import-preview").screenshot({ path: path.join(options.get("--output"), `${engine}-${palette}-${mode}-import-preview.png`) }); }
-        await page.locator("#connection-import-preview button").click();
+        await page.locator('#connection-import-preview [data-i18n="import_review"]').click();
         assert.equal(await page.locator("#connection-base").inputValue(), "https://relay.example.test");
         assert.equal(await page.locator('[name="messages_url"]').inputValue(), "https://relay.example.test/v1/messages");
         assert.equal(await page.locator("#connection-key").inputValue(), "");
@@ -305,6 +305,21 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter
         await grant.uncheck();await page.locator("#source-access-save").click();await page.waitForFunction(()=>!globalThis.ccdxAntigravity.state.enabled&&document.getElementById("source-access-save").disabled&&!document.getElementById("source-access-save").hasAttribute("aria-busy"));
         if (palette === "mono" && mode === "dark") {
           console.log("Application launch and source limits case");
+          const beforeDiscovery = JSON.stringify(runtime.connections()), foreignKey = "fixture-foreign-secret";
+          fs.mkdirSync(path.join(root, ".config/magpie"), { recursive: true });fs.writeFileSync(path.join(root, ".config/magpie/providers.json"), JSON.stringify({ providers: [{ name: "Discovered Magpie", chat: "https://imported.test/v1", key: foreignKey }] }));
+          const { DatabaseSync } = await import("node:sqlite");fs.mkdirSync(path.join(root, ".cc-switch"));
+          const db = new DatabaseSync(path.join(root, ".cc-switch/cc-switch.db"));
+          db.exec("CREATE TABLE providers(id TEXT,app_type TEXT,name TEXT,settings_config TEXT,meta TEXT)");
+          db.prepare("INSERT INTO providers VALUES(?,?,?,?,?)").run("example", "claude", "Discovered CC Switch", JSON.stringify({ env: { ANTHROPIC_BASE_URL: "https://imported.test", ANTHROPIC_AUTH_TOKEN: foreignKey } }), "{}");db.close();
+          for (const [tool, name, protocol] of [["cc-switch", "Discovered CC Switch", "messages"], ["magpie", "Discovered Magpie", "chat"]]) {
+            await page.locator("#connection-import").click();await page.locator(`[data-import-tool="${tool}"]`).click();
+            await page.waitForFunction(name => document.getElementById("connection-import-preview").textContent.includes(name), name);
+            assert.equal(JSON.stringify(runtime.connections()), beforeDiscovery);assert.doesNotMatch(await page.locator("#connection-import-preview").innerText(), new RegExp(foreignKey));
+            await page.locator("#connection-import-preview .connection-row button").click();await page.locator("#connection-editor").waitFor();
+            assert.equal(await page.locator("#connection-name").inputValue(), name);assert.equal(await page.locator("#connection-key").inputValue(), "");
+            assert.equal(await page.locator(`[name="protocol"][value="${protocol}"]`).isChecked(), true);await page.locator("#connection-cancel").click();
+            assert.equal(await page.locator("#connection-import").evaluate(node => node === document.activeElement), true);await fits();
+          }
           await page.locator("#source-concurrency > summary").click();await page.locator("#source-limit-maximum").fill("2");await page.locator("#source-limit-save").click();
           await page.waitForFunction(() => document.getElementById("source-limit-save").disabled && !document.getElementById("source-limit-save").hasAttribute("aria-busy"));
           assert.equal(runtime.connections().providers.find(source => source.id === "github").concurrency.maximum, 2);

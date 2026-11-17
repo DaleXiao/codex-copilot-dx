@@ -59,6 +59,21 @@ function fixture() {
   const run = args => runManagementCommand(parseCliArgs(args), options);
   return { state, data, calls, output, options, run };
 }
+test("source discovery previews locally and applies one explicitly without importing foreign credentials or grants", async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-discovery-"));t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const directory = path.join(root, ".config/magpie");fs.mkdirSync(directory, { recursive: true });
+  const file = path.join(directory, "providers.json"), original = JSON.stringify({ providers: [{ name: "Discovered", responses: "https://discovered.test/v1", key: "foreign-private-value" }] });fs.writeFileSync(file, original);
+  const f = fixture();Object.assign(f.options, { home: root, env: {} });
+  const preview = JSON.parse(await f.run(["source", "import", "--from", "magpie", "--format", "json"]));
+  assert.equal(preview.saved, false);assert.equal(preview.drafts.length, 1);assert.equal(f.calls.length, 0);assert.doesNotMatch(JSON.stringify(preview), /foreign-private-value/);
+  await assert.rejects(f.run(["source", "import", "--from", "magpie", "--file", file]), /Use --file/);
+  await assert.rejects(f.run(["source", "import", "--from", "unknown"]), /Choose --from/);
+  f.options.input = Readable.from(["new-private-input"]);
+  f.options.request = async input => { f.calls.push(structuredClone(input));if (input.body?.operation === "save_api") f.state.providers.push({ id: "api_imported", ...input.body.config });return structuredClone(f.state); };
+  const applied = await f.run(["source", "import", "--from", "magpie", "--select", "1", "--apply", "--key-stdin", "--yes"]);
+  const saved = f.calls.find(call => call.body?.operation === "save_api").body;assert.deepEqual(saved.allowed, []);assert.equal(saved.key, "new-private-input");
+  assert.equal(saved.config.endpoints.responses, "https://discovered.test/v1/responses");assert.doesNotMatch(applied + f.output.join(""), /foreign-private-value|new-private-input/);assert.equal(fs.readFileSync(file, "utf8"), original);
+});
 test("desktop checks and previews are read-only; confirmed reopen binds the inspected process", async () => {
   const f = fixture(), state = { status: "running", connection: "pending", pid: 321, started: "2026-11-17T00:00:00Z" };
   f.options.request = async input => { f.calls.push(input);return input.body ? { last_operation: { result: { status: "opened" } } } : { applications: { claude_app: state } }; };

@@ -363,8 +363,11 @@ export async function runManagementCommand(command, options = {}) {
   }
   if (group !== "source") throw new Error("Unknown management command.");
   if (action === "import") {
-    if (!flags.file) throw new Error("Supply one explicit JSON file with --file.");
-    const preview = previewSourceImport(readFile(), readAccessSettings(options).apis);
+    if (Boolean(flags.file) === Boolean(flags.from)) throw new Error("Use --file FILE or --from cc-switch|magpie.");
+    if (flags.from && !["cc-switch", "magpie"].includes(flags.from)) throw new Error("Choose --from cc-switch or --from magpie.");
+    const existing = readAccessSettings(options).apis;
+    const preview = flags.from ? await (await import("./source-discovery.mjs")).discoverSourceImport(flags.from, options, existing)
+      : previewSourceImport(readFile(), existing);
     if (!flags.apply || flags.preview) return print(preview);
     const selected = preview.drafts[(flags.select || 0) - 1];
     if (!selected) throw new Error("Review the preview, then use --select NUMBER --apply for one source.");

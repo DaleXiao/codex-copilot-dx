@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { isDisturbed } from "node:stream";
 import { currentRequestContext } from "./request-context.mjs";
+import { readSafeUpstreamReason } from "./safe-upstream-error.mjs";
 
 const MAX_LIMIT = 128;
 const MAX_QUEUE_BYTES = 8 * 1024 * 1024;
@@ -201,6 +202,8 @@ export function createSourceAdmission({ now = Date.now, initialLimit = MAX_LIMIT
     lease.observe(response.status, response.headers);
     const observedLimit = response[SOURCE_LIMIT_EVIDENCE];if (observedLimit) lease.limit(observedLimit);
     if (!response.body) { lease.release(response.ok);return response; }
+    if (response.status === 429 && !observedLimit) await readSafeUpstreamReason(response.clone(), { signal: options.signal, maxBytes: MAX_ERROR_BYTES,
+      onSourceLimit: value => lease.limit(sourceLimitFeedback(response.status, response.headers, value, now())) });
     const reader = response.body.getReader();let ended = false, errorBytes = 0, fragments = [];
     const finish = success => {
       if (ended) return;ended = true;options.signal?.removeEventListener("abort", cancel);

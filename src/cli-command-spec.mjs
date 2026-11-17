@@ -57,7 +57,7 @@ export const MANAGED_COMMANDS = [
   ),
   command("source list", "List registered model sources", read),
   command("source import", "Preview supplied CCDX, CC Switch or Magpie API metadata; apply one explicitly", {
-    ...read, "--file": "value", "--select": "integer", "--apply": "flag", "--key-stdin": "flag", ...confirm,
+    ...read, "--file": "value", "--from": "value", "--select": "integer", "--apply": "flag", "--key-stdin": "flag", ...confirm,
   }),
   command("source add", "Save an API and read its model catalog", {
     "--file": "value",
@@ -290,7 +290,7 @@ export function parseManagedCommand(args) {
 
 const extras = {
   source:
-    "Status reads local/cached evidence. check/--refresh may contact the source; no inference.\nsource import --file FILE previews supplied metadata. --select N --apply saves one source using private key input; no client access is granted.\nSource access grants do not select client models. Disable previews affected clients.\nGitHub login and company-account selection are source-specific.\nChoose visible models and defaults with app <app> models --edit.",
+    "Status reads local/cached evidence. check/--refresh may contact the source; no inference.\nsource import --file FILE previews supplied metadata; --from cc-switch|magpie reads known local configuration on demand.\n--select N --apply saves one source using private key input; no client access is granted.\nSource access grants do not select client models. Disable previews affected clients.\nGitHub login and company-account selection are source-specific.\nChoose visible models and defaults with app <app> models --edit.",
   app: "Configured is not App adoption or process liveness. Unknown stays unknown.\nmodels shows the selected plan; Antigravity lists compatible Copilot models and their selection.\napp antigravity models --refresh reads the GitHub catalog without inference or changing saved choices.\nsource <id> models shows the upstream catalog.\nsetup/remove changes integration setup; pause/resume retains credentials.\nsync --preview shows the model/configuration plan, not a byte-level file diff.\nopen focuses an already-running app; check is read-only and sends no inference.\nrestart asks before a graceful reopen. No client program is force-restarted.",
   config:
     "Only service and terminal preferences are in scope. Browser appearance stays in WebUI.\nReset keeps accounts, keys, model plans and chats and stores a pre-reset backup.\nSaved and effective values can differ; restart requirements remain explicit.",

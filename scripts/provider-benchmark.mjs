@@ -1,5 +1,5 @@
 // Optional paired loopback benchmark. Both revisions receive the same synthetic
-// native Responses traffic; only the candidate enables its real provider runtime.
+// native Responses traffic through each revision's own provider runtime.
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -58,11 +58,12 @@ async function request(measured) {
 }
 try {
   for (let i = 0; i < 20; i++) await Promise.all(Array.from({ length: 8 }, () => request(false)));
-  const started = performance.now();
+  const started = performance.now(), cpuStarted = process.cpuUsage();
   for (let i = 0; i < 100; i++) await Promise.all(Array.from({ length: 8 }, () => request(true)));
-  const elapsed = performance.now() - started;samples.sort((a, b) => a - b);global.gc?.();
+  const elapsed = performance.now() - started, cpu = process.cpuUsage(cpuStarted);samples.sort((a, b) => a - b);global.gc?.();
   const memory = process.memoryUsage();
   savedLog(JSON.stringify({ requests: samples.length, requests_per_second: samples.length * 1000 / elapsed, cold_start_ms: loadMs + firstRequestMs,
+    throughput_cost_ms: elapsed / samples.length, cpu_per_request_ms: (cpu.user + cpu.system) / 1000 / samples.length,
     p50_ms: samples[Math.floor(samples.length * .5)], p95_ms: samples[Math.floor(samples.length * .95)],
     heap_mib: memory.heapUsed / 1048576, rss_mib: memory.rss / 1048576 }));
 } finally { await closeHttpServer(server);await runtime?.close();fs.rmSync(home, { recursive: true, force: true }); }

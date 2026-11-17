@@ -12,6 +12,7 @@ For installation and first use, start with the [README](../README.md). This refe
 | `ccdx web` | Open the Web UI, or start management without signing in |
 | `ccdx status` | Show runtime and app configuration; `--details` expands diagnostics |
 | `ccdx source import --file FILE [--select N --apply --key-stdin --yes]` | Preview API metadata; explicitly save one source without client grants |
+| `ccdx source import --from cc-switch\|magpie` | Find local API configuration and preview it without saving |
 | `ccdx source list` / `source add` | List sources or add an API |
 | `ccdx source <id> status` | Read saved account and catalog evidence |
 | `ccdx source <id> models [--refresh]` | Read cached models, or explicitly refresh the source |
@@ -177,6 +178,12 @@ A saved fallback is applied as Messages `output_config.effort` only when the App
 ## API import and request validation
 
 **Model sources → Import** and `ccdx source import --file FILE` preview explicitly supplied JSON. Supported shapes are CCDX API metadata/connection exports, CC Switch Claude provider JSON (`settingsConfig.env`), and Magpie `providers.json` with native API bases. Cached deployment evidence, foreign route aliases, account rotation, commands and tool permissions are not adopted. Credential values are not copied; use a private key input or `key_env` when saving. Client access remains a separate explicit choice.
+
+Choose **CC Switch** or **Magpie** under Import to find their local API configuration. The CLI/TUI equivalent is `source import --from cc-switch` or `--from magpie`; do not combine `--from` with `--file`. This works without starting a gateway. Applying one reviewed draft still uses `--select N --apply --key-stdin --yes` and requires the running service. Foreign keys and permissions are never copied.
+
+CC Switch discovery uses its `app_paths.json` directory override when present, then its default `~/.cc-switch/cc-switch.db` (including the known Windows legacy-home fallback). It reads Claude Code/Desktop API declarations and explicitly declared Codex Chat/Responses providers. OAuth-only, Gemini-native, ambiguous and invalid configurations are skipped. Magpie reads `providers.json` under an absolute `XDG_CONFIG_HOME/magpie`, or `~/.config/magpie`; portable/custom exports can use the existing file import. Only native API bases are adopted; local proxy addresses remain subject to the existing HTTPS validation.
+
+Discovery runs only after an explicit action, in a short separate process. It does not scan the disk, execute foreign commands, copy credential databases, refresh model catalogs or change the other tool. Missing, busy, damaged and unknown stores keep file import available. A live SQLite WAL is read through the normal read-only connection; an orphaned WAL is left for its owning tool to recover. Reads examine at most 64 candidate records and show up to 16 valid drafts. Same-name and same-address warnings require review; matching addresses never imply matching accounts. Select **Review draft**, enter the key privately and save before granting client access or selecting models.
 
 The preview reports existing source names/addresses and fields requiring review. **Review draft** opens the existing API editor. The CLI can save one reviewed draft with `--select N --apply --key-stdin --yes`; this grants no app access. Unsupported shapes and mixed-origin endpoints fail validation without writes.
 

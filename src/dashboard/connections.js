@@ -7,6 +7,7 @@
   let memoryAction = null, memoryOrigin = null;
   let disableRevision = null;
   const drafts = new Map();let editorOrigin = null, discovery = null, desiredSource = null;
+  let importSequence = 0;
   const apiForm = el("connection-api-form"), clientForm = el("connection-client-form");
   const node = (tag, text, className) => { const item = document.createElement(tag);if (text !== undefined) item.textContent = text;if (className) item.className = className;return item; };
   const source = id => data.providers.find(item => item.id === id), client = id => data.clients.find(item => item.id === id);
@@ -546,29 +547,49 @@
     impact_revision: disableRevision,
     replacements: Object.fromEntries([...el("connection-replacements").querySelectorAll("select")].map(select => [select.name, select.value || null])) }); });
   el("connection-add").addEventListener("click", () => { if (data) editApi(); });
-  el("connection-import").addEventListener("click", () => { if (data && !busy) el("connection-import-file").click(); });
-  el("connection-import-file").addEventListener("change", async event => {
-    const file = event.target.files?.[0];event.target.value = "";if (!file) return;
-    const preview = el("connection-import-preview");preview.hidden = true;preview.replaceChildren();
-    if (file.size > 256 * 1024) { message("ccdx_import_size_invalid");return; }
-    try {
-      const result = await api({ operation: "preview_import", content: JSON.parse(await file.text()) });
+  function closeImport() { importSequence++;el("connection-import-preview").hidden = true;el("connection-import").focus(); }
+  function importPreview(result) {
+      const preview = el("connection-import-preview");preview.replaceChildren();
       const heading = node("h3");words(heading, "import_preview");preview.append(heading);
-      const note = node("p", undefined, "hint");words(note, "import_scope");preview.append(note);
+      if (result.drafts.length) { const note = node("p", undefined, "hint");words(note, "import_scope");preview.append(note); }
+      if (result.discovery && !result.drafts.length) { const state = node("p");words(state, "import_discovery_" + result.discovery.state);preview.append(state); }
+      if (result.discovery?.skipped) { const skipped = node("p", undefined, "hint");words(skipped, "import_discovery_skipped");preview.append(skipped); }
+      if (result.discovery?.truncated) { const limit = node("p", undefined, "hint");words(limit, "import_discovery_truncated");preview.append(limit); }
       for (const draft of result.drafts) {
         const row = node("div", undefined, "connection-row"), info = node("div"), actions = node("div", undefined, "connection-actions");
         info.append(node("h3", draft.config.name), node("p", draft.config.base_url, "hint"));
         for (const warning of draft.warnings) { const text = node("p", undefined, "hint");words(text, "import_" + warning);info.append(text); }
         actions.append(button("import_review", () => {
-          editApi();const config = draft.config;
+          editApi();editorOrigin = el("connection-import");const config = draft.config;
           apiForm.elements.name.value = config.name;apiForm.elements.base.value = config.base_url;apiForm.elements.auth_header.value = config.auth_header;
           apiForm.elements.key_env.value = config.key_env || "";keyMode();
           for (const input of apiForm.querySelectorAll('[name="protocol"]')) input.checked = Boolean(config.endpoints[input.value]);
-          setEndpoints(config.base_url, config.endpoints);models = structuredClone(config.models);selectedModels = new Set(models.map(model => model.id));modelRows();preview.hidden = true;
+          setEndpoints(config.base_url, config.endpoints);models = structuredClone(config.models);selectedModels = new Set(models.map(model => model.id));modelRows();importSequence++;preview.hidden = true;
         }));row.append(info, actions);preview.append(row);
       }
-      preview.hidden = false;
-    } catch (error) { message(/^ccdx_import_/.test(error.message) ? error.message : "ccdx_import_format_invalid"); }
+      preview.append(button("cancel", closeImport));preview.hidden = false;
+  }
+  async function importTool(tool) {
+    const sequence = ++importSequence, preview = el("connection-import-preview"), reading = node("p");words(reading, "reading");
+    preview.replaceChildren(reading, button("cancel", closeImport));preview.hidden = false;
+    try { const result = await api({ operation: "preview_import", tool });if (sequence === importSequence) importPreview(result); }
+    catch (error) { if (sequence === importSequence) { preview.hidden = true;message(/^ccdx_import_/.test(error.message) ? error.message : "ccdx_import_discovery_invalid"); } }
+  }
+  el("connection-import").addEventListener("click", () => {
+    if (!data || busy) return;importSequence++;
+    const preview = el("connection-import-preview"), heading = node("h3"), actions = node("div", undefined, "section-actions");words(heading, "import_source");
+    const file = button("import_file", () => el("connection-import-file").click());
+    const cc = node("button", "CC Switch"), magpie = node("button", "Magpie");cc.type = magpie.type = "button";
+    cc.dataset.importTool = "cc-switch";magpie.dataset.importTool = "magpie";
+    cc.addEventListener("click", () => void importTool("cc-switch"));magpie.addEventListener("click", () => void importTool("magpie"));
+    actions.append(file, cc, magpie, button("cancel", closeImport));preview.replaceChildren(heading, actions);preview.hidden = false;file.focus();
+  });
+  el("connection-import-file").addEventListener("change", async event => {
+    const file = event.target.files?.[0];event.target.value = "";if (!file) return;
+    const sequence = ++importSequence, preview = el("connection-import-preview");preview.hidden = true;preview.replaceChildren();
+    if (file.size > 256 * 1024) { message("ccdx_import_size_invalid");return; }
+    try { const result = await api({ operation: "preview_import", content: JSON.parse(await file.text()) });if (sequence === importSequence) importPreview(result); }
+    catch (error) { if (sequence === importSequence) message(/^ccdx_import_/.test(error.message) ? error.message : "ccdx_import_format_invalid"); }
   });
   for (const id of ["connection-cancel", "connection-disable-cancel"]) el(id).addEventListener("click", () => { panels();(editorOrigin?.isConnected ? editorOrigin : el("connection-source-list").querySelector("button") || el("connection-add")).focus(); });
   el("refresh").addEventListener("click", () => { if (["#models", "#codex", "#claude"].includes(location.hash)) void load(); });

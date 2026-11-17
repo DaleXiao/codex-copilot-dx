@@ -147,8 +147,15 @@ export function createConnectionManagement({ binding, catalogRefresh, save, disc
         if (binding("codex").enabled) void memoryModel.refresh();
         return snapshot();
       }
-      if (validObject(input, ["operation", "content"]) && input.operation === "preview_import") {
-        try { return previewSourceImport(input.content, getSettings().apis); }
+      if (validObject(input, ["operation", "content", "tool"]) && input.operation === "preview_import") {
+        try {
+          if (Object.hasOwn(input, "content") === Object.hasOwn(input, "tool")) throw new Error("ccdx_import_format_invalid");
+          if (Object.hasOwn(input, "tool")) {
+            const { discoverSourceImport } = await import("./source-discovery.mjs");
+            return await discoverSourceImport(input.tool, options, getSettings().apis);
+          }
+          return previewSourceImport(input.content, getSettings().apis);
+        }
         catch (error) { throw accessError(/^ccdx_import_[a-z_]+$/.test(error.message) ? error.message : "ccdx_import_metadata_invalid"); }
       }
       if (validObject(input, ["operation", "id"]) && input.operation === "source_catalog") {

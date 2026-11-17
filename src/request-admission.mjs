@@ -217,6 +217,7 @@ export function createRequestAdmission({
     release.resize = bytes => {
       if (released || !Number.isSafeInteger(bytes) || bytes < 0) return;
       const next = Math.max(1, Math.min(entry.weight, bytes));
+      if (next === entry.weight) return;
       activeBytes -= entry.weight - next;entry.weight = next;drain();
     };
     const reserve = async (gate, weight, options) => {

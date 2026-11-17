@@ -18,6 +18,12 @@ test("an API's private limit evidence survives safe error projection without lea
   assert.match(text, /ccdx_api_http_429/);assert.equal(scheduler.snapshot()[0].active, 0);provider.close();scheduler.close();
 });
 
+test("typed raw source limits apply even when the caller discards the HTTP error body", async () => {
+  const scheduler = createSourceAdmission();
+  const response = await scheduler.run({ source: "github" }, async () => Response.json({ error: { code: "concurrency_limit", limit: 1 } }, { status: 429 }));
+  assert.equal(scheduler.snapshot()[0].limit, 1);await response.body.cancel();assert.equal(scheduler.snapshot()[0].active, 0);scheduler.close();
+});
+
 test("response policy markers survive source stream ownership without replacing native internals", async () => {
   const scheduler = createSourceAdmission(), marker = Symbol("guard"), value = {};
   const raw = Response.json({ original: true });Object.defineProperty(raw, marker, { value });
@@ -26,7 +32,7 @@ test("response policy markers survive source stream ownership without replacing 
   assert.equal(scheduler.snapshot()[0].active, 0);scheduler.close();
 });
 
-test("lazy stream metadata preserves JSON, cloning and body-consumption rules", async () => {
+test("stream metadata preserves JSON, cloning and body-consumption rules", async () => {
   const scheduler = createSourceAdmission();
   const original = Response.json({ value: "synthetic" }, { status: 201, headers: { "x-fixture": "retained" } });
   const response = await scheduler.run({ source: "github" }, async () => original);
@@ -41,6 +47,44 @@ test("cloning leaves the original body available to streaming readers", async ()
   const copy = response.clone(), reader = response.body.getReader(), chunks = [];
   for (;;) { const { done, value } = await reader.read();if (done) break;chunks.push(value); }
   assert.equal(Buffer.concat(chunks).toString(), "synthetic");assert.equal(await copy.text(), "synthetic");assert.equal(response.bodyUsed, true);scheduler.close();
+});
+
+test("source readers release at EOF without invalidating the consumer's reader", async () => {
+  const scheduler = createSourceAdmission(), bytes = new TextEncoder().encode("native");
+  const response = await scheduler.run({ source: "github" }, async () => new Response(new ReadableStream({ start(c) { c.enqueue(bytes);c.close(); } })));
+  const reader = response.body.getReader();assert.equal(response.body.locked, true);
+  assert.equal((await reader.read()).value, bytes);assert.equal((await reader.read()).done, true);
+  await new Promise(resolve => setImmediate(resolve));assert.equal(scheduler.snapshot()[0].active, 0);
+  assert.equal((await reader.read()).done, true);reader.releaseLock();scheduler.close();
+});
+
+test("early reader unlock retains ownership; stale reader cancellation cannot release a new reader", async () => {
+  const scheduler = createSourceAdmission();let controller;
+  const response = await scheduler.run({ source: "github" }, async () => new Response(new ReadableStream({ start(c) { controller = c; } })));
+  const first = response.body.getReader();first.releaseLock();await new Promise(resolve => setImmediate(resolve));
+  assert.equal(scheduler.snapshot()[0].active, 1);const second = response.body.getReader();
+  await assert.rejects(first.cancel(), TypeError);assert.equal(scheduler.snapshot()[0].active, 1);
+  await assert.rejects(response.body.cancel(), TypeError);assert.equal(scheduler.snapshot()[0].active, 1);
+  controller.close();await second.read();second.releaseLock();await new Promise(resolve => setImmediate(resolve));
+  assert.equal(scheduler.snapshot()[0].active, 0);scheduler.close();
+});
+
+test("a source error remains observable when the caller's finally unlocks immediately", async () => {
+  const scheduler = createSourceAdmission();let controller;
+  const response = await scheduler.run({ source: "github" }, async () => new Response(new ReadableStream({ start(c) { controller = c; } })));
+  const reader = response.body.getReader();controller.error(new Error("synthetic disconnect"));
+  try { await assert.rejects(reader.read(), /synthetic disconnect/); } finally { reader.releaseLock(); }
+  await new Promise(resolve => setImmediate(resolve));assert.equal(scheduler.snapshot()[0].active, 0);scheduler.close();
+});
+
+test("abort cancels a locked source reader and iteration keeps its semantics", async () => {
+  const scheduler = createSourceAdmission(), abort = new AbortController();let cancelled = false;
+  const response = await scheduler.run({ source: "github" }, async () => new Response(new ReadableStream({ cancel() { cancelled = true; } })), { signal: abort.signal });
+  const reader = response.body.getReader();abort.abort();await new Promise(resolve => setImmediate(resolve));
+  assert.equal(cancelled, true);assert.equal(scheduler.snapshot()[0].active, 0);reader.releaseLock();
+  const iterated = await scheduler.run({ source: "github" }, async () => new Response("iterated")), chunks = [];
+  for await (const chunk of iterated.body) chunks.push(chunk);
+  assert.equal(Buffer.concat(chunks).toString(), "iterated");assert.equal(scheduler.snapshot()[0].active, 0);scheduler.close();
 });
 
 test("unknown bodies keep their full reservation while arriving, then shrink to held bytes", async () => {

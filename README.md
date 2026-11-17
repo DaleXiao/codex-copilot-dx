@@ -51,6 +51,7 @@ Model availability depends on your account and service. Microsoft 365 also requi
 | Open the Web UI | `ccdx web` |
 | Check service and apps | `ccdx status` / `ccdx app list` |
 | Preview imported APIs | `ccdx source import --file providers.json` |
+| Find configured APIs in another tool | `ccdx source import --from cc-switch` or `--from magpie` |
 | Manage sources | `ccdx source list` / `ccdx source add` |
 | Sign in again | `ccdx source github reauth` |
 | Choose client models | `ccdx app codex models --edit` |

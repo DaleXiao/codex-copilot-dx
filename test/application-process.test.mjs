@@ -5,7 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import { inspectApplicationProcesses } from "../src/application-process.mjs";
 
-test("Mac inventory uses verified bundle paths, C-locale dates and no process arguments", async t => {
+// The ps fixture uses host filesystem paths; Windows has its own inventory case below.
+test("Mac inventory uses verified bundle paths, C-locale dates and no process arguments", { skip: process.platform === "win32" }, async t => {
   const home = await fs.mkdtemp(path.join(os.tmpdir(), "ccdx-process-check-")), root = path.join(home, "installed");
   t.after(() => fs.rm(home, { recursive: true, force: true }));
   const app = path.join(root, "Claude.app"), file = path.join(app, "Contents/Info.plist"), executable = path.join(app, "Contents/MacOS/Claude");

@@ -149,6 +149,7 @@
       : input.operation === "save_api" ? apiForm.querySelector('button[type="submit"]') : document.activeElement;
     const oldKey = trigger?.dataset.i18n, oldText = trigger?.textContent;
     if (trigger?.tagName === "BUTTON") { trigger.setAttribute("aria-busy", "true");trigger.disabled = true;words(trigger, input.operation === "preview_client" ? "api_reading" : "api_saving"); }
+    if (input.operation === "source_limits") renderAccess();
     try { if (input.operation === "save_api") await stopDiscovery();data = await api(input);if (["client", "image_model"].includes(input.operation)) { drafts.delete(input.id);if (editingClient === input.id) bindingDirty = false; }mountClient();list();done?.(data);if (!done) {
       if (input.operation === "save_api") {
         desiredSource = input.id || data.providers.find(p => !p.builtin && p.name === input.config.name)?.id;

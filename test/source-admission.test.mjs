@@ -96,6 +96,15 @@ test("stable recovery grows on real waiting demand, not on idle traffic", async 
   assert.equal(scheduler.snapshot()[0].limit, 2);scheduler.close();
 });
 
+test("a manual ceiling cannot train unobserved higher capacity", async () => {
+  let now = 0;const scheduler = createSourceAdmission({ initialLimit: 1, now: () => now, stableMs: 1 });
+  scheduler.configure("github", 1);
+  for (let i = 0; i < 8; i++) await (await scheduler.run(descriptor("github"), async () => Response.json({}))).text();
+  now = 1000;const stream = busyStream(), first = await scheduler.run(descriptor("github"), async () => stream.response);
+  const second = scheduler.run(descriptor("github"), async () => Response.json({}));stream.finish();await first.text();await (await second).text();
+  scheduler.configure("github", null);assert.equal(scheduler.snapshot()[0].limit, 1, "Removing a ceiling keeps the last actually learned capacity");scheduler.close();
+});
+
 test("error, abort and nested recovery can acquire a fresh source slot", async () => {
   const scheduler = createSourceAdmission({ initialLimit: 1 });
   await assert.rejects(scheduler.run(descriptor("github"), async () => { throw new Error("offline"); }), /offline/);

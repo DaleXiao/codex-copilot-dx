@@ -158,6 +158,14 @@ test("admission timeout stays local 503 and does not consume the request-body de
   }finally{held()}
 });
 
+test("source waiting rejection keeps Retry-After and source admission attribution",async()=>{
+  const errors=[],f=fixture({client:{chatCompletions:async()=>{throw Object.assign(new Error("Source recovery is pending"),{
+    code:"ccdx_source_limited",origin:"source_admission",statusCode:429,retryAfterMs:60000})}}});
+  const result=await runWithRequestContext({onHttpError:value=>errors.push(value)},()=>invoke(f.handler,body()).done);
+  assert.equal(result.status,429);assert.equal(result.res.headers["Retry-After"],"60");
+  assert.equal(errors[0].origin,"source_admission");assert.equal(errors[0].code,"ccdx_source_limited");
+});
+
 test("body, upstream and compaction deadlines return their own status and release all admission",async()=>{
   for(const reason of ["body","upstream","compaction"]){
     const gate=createRequestAdmission({maxBytes:4096,waitTimeoutMs:500}),errors=[];

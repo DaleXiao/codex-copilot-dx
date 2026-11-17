@@ -1,5 +1,5 @@
 (() => {
-  function create({ element: el, change, localize }) {
+  function create({ element: el, change, localize, isBusy = () => false }) {
     let data, pending = false, sequence = 0, confirmation = null, claudeApp = true, note = null, autoError = false;
     const route = () => ({ codex: "codex", claude: claudeApp ? "claude_app" : null, gemini: "antigravity" })[location.hash.slice(1)] || null;
     const label = (id, key) => localize(el(id), key);
@@ -10,15 +10,16 @@
       el("application-launch").hidden = !id;
       el("page-title").closest(".intro").classList.toggle("has-application-launch", Boolean(id));
       el("application-reopen-confirm").hidden = !confirmation || confirmation.id !== id;
+      el("application-reopen-apply").disabled = pending || isBusy();
       if (!id) return;
       label("application-open-label", buttonKey(state));
-      el("application-open").disabled = pending || ["starting", "unsupported", "not_installed", "multiple"].includes(state?.status);
-      el("application-open").setAttribute("aria-busy", String(pending || state?.status === "starting"));
+      el("application-open").disabled = pending || isBusy() || ["starting", "unsupported", "not_installed", "multiple"].includes(state?.status);
+      el("application-open").setAttribute("aria-busy", String(pending || isBusy() || state?.status === "starting"));
       label("application-state", note || (state?.status === "running" ? state.needs_reload ? "application_reload_pending" : state.connection === "observed" ? "application_connected" : "application_pending"
         : state?.status === "stopped" ? "application_stopped" : state?.status === "starting" ? "application_opening" : "application_" + (state?.status || "unknown")));
       if (!pending) {
         el("codex-auto-launch").checked = data?.effective?.codex_auto_launch?.value === true;
-        el("codex-auto-launch").disabled = data?.effective?.codex_auto_launch?.locked === true || !data;
+        el("codex-auto-launch").disabled = isBusy() || data?.effective?.codex_auto_launch?.locked === true || !data;
         label("codex-auto-launch-note", autoError ? "application_preference_failed" : data?.effective?.codex_auto_launch?.locked ? "controlled_by_environment" : "next_ccdx_start");
       }
     }
@@ -71,7 +72,7 @@
       claudeApp = button.dataset.claudeClient === "claude_app";confirmation = null;note = null;render();if (claudeApp) void check();
     });
     window.addEventListener("focus", () => { if (document.visibilityState === "visible") void check(); });
-    return { sync, routeChanged() { confirmation = null;note = null;sequence++;render();void check(); }, refresh: () => check(true) };
+    return { sync, render, routeChanged() { confirmation = null;note = null;sequence++;render();void check(); }, refresh: () => check(true) };
   }
   globalThis.ccdxApplications = { create };
 })();

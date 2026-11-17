@@ -225,7 +225,7 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
       const cancelled=abort.signal.aborted&&["client_closed","client_aborted"].includes(abort.reason);
       if(cancelled)markRequestObservation({delivery_cancelled:1});
       if(!cancelled||!["completed","incomplete"].includes(outcome))outcome=cancelled?"cancelled":"failed";
-      const origin=outcome==="cancelled"?"client_disconnect":currentRequestContext()?.errorOrigin||(abort.reason||phase==="admission"?"transport":error.origin==="privacy"?"privacy":error.statusCode<500?"client_validation":"transport");
+      const origin=outcome==="cancelled"?"client_disconnect":currentRequestContext()?.errorOrigin||(abort.reason||phase==="admission"?"transport":["privacy","source_admission"].includes(error.origin)?error.origin:error.statusCode<500?"client_validation":"transport");
       markResponseErrorOrigin(origin);markResponseTerminal(outcome,{origin});
       if(res.headersSent&&!res.writableEnded&&!res.destroyed){res.end("data: "+JSON.stringify({error:{code:error.statusCode||502,message:error.message}})+"\n\n");}
       else sendJsonError(res,error,error.statusCode||502);

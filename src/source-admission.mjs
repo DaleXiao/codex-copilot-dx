@@ -150,13 +150,14 @@ export function createSourceAdmission({ now = Date.now, initialLimit = MAX_LIMIT
         if (success && !observed) {
           group.successes++;
           if (group.successes >= 8 && now() - group.stableAt >= stableMs) {
-            if (group.queue.length) group.limit = Math.min(group.advertisedUntil > now() ? group.advertised : MAX_LIMIT, group.limit + 1);
+            const ceiling = limits.get(group.source) || MAX_LIMIT;
+            if (group.queue.length && group.limit < ceiling) group.limit = Math.min(group.advertisedUntil > now() ? group.advertised : MAX_LIMIT, group.limit + 1);
             group.stableAt = now();group.successes = 0;
-            if (group.epoch || group.limit !== initialLimit) try { onStable(group.key, group.limit); } catch { /* Optional metadata persistence cannot fail inference. */ }
+            if (group.limit <= ceiling && (group.epoch || group.limit !== initialLimit)) try { onStable(group.key, group.limit); } catch { /* Optional metadata persistence cannot fail inference. */ }
           }
           if (model) {
             model.successes++;
-            if (group.queue.some(waiter => waiter.model === entry.model) && model.successes >= 8 && now() - model.stableAt >= stableMs) {
+            if (group.queue.some(waiter => waiter.model === entry.model) && model.limit < capacity(group) && model.successes >= 8 && now() - model.stableAt >= stableMs) {
               model.limit = Math.min(model.maximumUntil > now() ? model.maximum : MAX_LIMIT, model.limit + 1);model.stableAt = now();model.successes = 0;
             }
           }

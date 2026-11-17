@@ -22,8 +22,11 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter
       const width = mode === "light" ? 360 : 1280, language = palette === "klein" ? "en" : "zh";
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-connections-browser-")), env = {}, values = new Map();
       fs.mkdirSync(path.join(root, ".codex"));fs.writeFileSync(path.join(root, ".codex/config.toml"), '[features]\nmemories=true\n[memories]\nextract_model="response-replay"\n');
-      let runtime, handler, serviceControl, timeOffset = 0, failDiscovery = palette === "pink" && mode === "light";const githubRegistry = { models: { data: [] } };
-      const server = http.createServer((req, res) => handler(req, res));
+      let runtime, handler, serviceControl, pausedSettings = null, timeOffset = 0, failDiscovery = palette === "pink" && mode === "light";const githubRegistry = { models: { data: [] } };
+      const server = http.createServer(async (req, res) => {
+        const paused = pausedSettings;if (paused && req.method === "GET" && req.url === "/_ccdx/ui/settings") { paused.seen();await paused.wait; }
+        return handler(req, res);
+      });
       await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
       const base = `http://127.0.0.1:${server.address().port}`;
       const context = await browser.newContext({ viewport: { width, height: 1000 } });
@@ -303,12 +306,16 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter
         if (palette === "mono" && mode === "dark") {
           console.log("Application launch and source limits case");
           await page.locator("#source-concurrency > summary").click();await page.locator("#source-limit-maximum").fill("2");await page.locator("#source-limit-save").click();
-          await page.waitForFunction(() => document.getElementById("source-limit-save").disabled);
+          await page.waitForFunction(() => document.getElementById("source-limit-save").disabled && !document.getElementById("source-limit-save").hasAttribute("aria-busy"));
           assert.equal(runtime.connections().providers.find(source => source.id === "github").concurrency.maximum, 2);
           await page.locator("#source-limit-maximum").fill("");await page.locator("#source-limit-save").click();
-          await page.waitForFunction(() => document.getElementById("source-limit-save").disabled);
+          await page.waitForFunction(() => document.getElementById("source-limit-save").disabled && !document.getElementById("source-limit-save").hasAttribute("aria-busy"));
           assert.equal(runtime.connections().providers.find(source => source.id === "github").concurrency.maximum, null);
-          await page.locator('[data-route="codex"]').click();await page.waitForFunction(() => document.getElementById("application-open-label").textContent === "切换到应用");
+          let releaseRead, sawRead;const readGate = new Promise(resolve => { releaseRead = resolve; }), readSeen = new Promise(resolve => { sawRead = resolve; });
+          pausedSettings = { seen: sawRead, wait: readGate, resume: releaseRead };
+          await page.locator('[data-route="codex"]').click();await readSeen;
+          assert.equal(await page.locator("#application-open").isDisabled(), true, "Settings checks keep launch actions unavailable until they settle");
+          pausedSettings = null;releaseRead();await page.waitForFunction(() => document.getElementById("application-open-label").textContent === "切换到应用");
           await page.locator("#application-open").click();await page.waitForFunction(() => !document.getElementById("application-open").disabled);
           assert.deepEqual(appCalls, [["codex", "focus"]]);
           assert.equal(await page.locator("#codex-auto-launch").isChecked(), false);await page.locator("#codex-auto-launch").check();
@@ -332,7 +339,7 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter
           await page.setViewportSize({width:320,height:1000});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),true);
         }
         assert.deepEqual(errors, []);report.push({ engine, palette, mode, language, width, saved: true, assigned: true, disabled: true, restored: true });
-      } catch (error) { console.error("Browser details:", errors, await page.locator("#connection-client-note").textContent(), await page.locator("#application-launch").innerText(), serviceControl.snapshot().applications);throw error; } finally { await context.close();handler?.dispose?.();server.closeAllConnections();await new Promise(resolve => server.close(resolve));await runtime?.close();fs.rmSync(root, { recursive: true, force: true });clearTimeout(watchdog); }
+      } catch (error) { console.error("Browser details:", errors, await page.locator("#connection-client-note").textContent(), await page.locator("#application-launch").innerText(), serviceControl.snapshot().applications);throw error; } finally { pausedSettings?.resume();await context.close();handler?.dispose?.();server.closeAllConnections();await new Promise(resolve => server.close(resolve));await runtime?.close();fs.rmSync(root, { recursive: true, force: true });clearTimeout(watchdog); }
     }
   } finally { await browser.close(); }
 }

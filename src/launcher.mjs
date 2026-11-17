@@ -89,7 +89,7 @@ export async function openCodex({ env = process.env, spawnImpl = spawn, platform
         if (running.length === 1 && running[0].readable && !running[0].route && persistedPredictionRoute) {
           onPredictionRoute("persisted");log(status("info", "Codex already running"));return true;
         }
-        throw new Error("Running Codex App uses an old or unverified prediction route. Fully quit the App, then run ccdx again; no process was stopped");
+        throw new Error("Running Codex App uses an old or unverified prediction route. Fully quit the App, then open it from its CCDX page; no process was stopped");
       }
       await preparePredictionRoute?.();
       const launched = await new Promise(resolve => {
@@ -144,7 +144,7 @@ export async function openCodex({ env = process.env, spawnImpl = spawn, platform
         if (running.length === 1 && running[0].readable && !running[0].route && persistedPredictionRoute) {
           onPredictionRoute("persisted");log(status("info", "Codex already running"));return true;
         }
-        throw new Error("Running Codex App uses an old or unverified prediction route. Fully quit the App, then run ccdx again; no process was stopped");
+        throw new Error("Running Codex App uses an old or unverified prediction route. Fully quit the App, then open it from its CCDX page; no process was stopped");
       }
       await preparePredictionRoute?.();
       if (!await tryOpen([predictionApp, ...imageArgs, ...extraArgs], { spawnImpl })) {

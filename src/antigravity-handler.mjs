@@ -13,6 +13,7 @@ import {isCompactionRequest} from "./context-compaction.mjs";
 import {compactionSummarizer} from "./context-compaction-wire.mjs";
 import {requestPurpose} from "./request-context.mjs";
 import {observeContextSession} from "./context-metrics.mjs";
+import {sourceResponseReader,observeSourceRead,failSourceRead,cancelSourceReader,releaseSourceReader,cancelSourceResponse,sourceResponseAccepted,sourceResponseFailed} from "./source-response.mjs";
 
 const PREFIX="/antigravity";
 const MAX_REPLY=64*1024*1024;
@@ -104,7 +105,7 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
               ...(serialized?{body:serialized}:{}),signal,redirect:"error"});
           };
           const result=generation&&sourceAdmission?await sourceAdmission.run({source:"google",account:createHash("sha256").update(req.headers.authorization||"").digest("hex")},perform,
-            {signal,model:value?.model,client:"gemini_app",bytes:()=>Buffer.byteLength(serialized||"")}):await perform();
+            {signal,sourceBodyManaged:true,model:value?.model,client:"gemini_app",bytes:()=>Buffer.byteLength(serialized||"")}):await perform();
           if(generation){markUpstreamHeaders(result.status);applicationEvidence?.accept(req,"antigravity","inference")}return result;
         };
         phase="upstream";
@@ -127,17 +128,19 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
           const response=value?.response||value,event=googleUsageEvent(value);if(event)captureUsage(event);
           const candidates=response?.candidates||[];
           if(candidates.some(candidate=>candidate.content?.parts?.some(part=>part.functionCall||!part.thought&&typeof part.text==="string"&&part.text)))markFirstOutput("delta");
-          if(response?.error)outcome="failed";
+          if(response?.error){outcome="failed";sourceResponseFailed(upstream)}
           else if(outcome!=="failed"&&candidates.some(candidate=>candidate.finishReason)){
+            sourceResponseAccepted(upstream);
             outcome=candidates.every(candidate=>candidate.finishReason==="STOP")?"completed":"incomplete";
           }
         }}):null;
         res.writeHead(upstream.status,safeUpstreamResponseHeaders(upstream.headers));
         try{
-          if(upstream.body)for await(const data of upstream.body){
-            abort.setTimeout(streamIdleTimeoutMs,"stream_idle_timeout");observer?.push(data);
-            if(!await writeOrDrain(res,data,{signal:abort.signal}))throw httpError("Antigravity client disconnected",499);
-          }
+          if(upstream.body){const reader=sourceResponseReader(upstream);try{while(true){
+            let next;try{next=await reader.read()}catch(error){failSourceRead(reader);throw error}observeSourceRead(reader,next);if(next.done)break;
+            abort.setTimeout(streamIdleTimeoutMs,"stream_idle_timeout");observer?.push(next.value);
+            if(!await writeOrDrain(res,next.value,{signal:abort.signal}))throw httpError("Antigravity client disconnected",499);
+          }}finally{await cancelSourceReader(reader).catch(()=>{});releaseSourceReader(reader)}}
         }finally{if(observer?.finish().unavailable&&!usageEvent)markRequestObservation({usage_state:"unavailable"})}
         if(generation&&!upstream.ok)outcome="failed";
         if(outcome)markResponseTerminal(outcome,upstream.ok?undefined:{origin:"upstream_http"});
@@ -169,7 +172,7 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
         const query=searchQuery(request),input={id:randomUUID(),commands:{search_query:[{q:query}]}};
         session=privacy?.prepareSession?await privacy.prepareSession(input,{protocol:"search",client:"gemini",signal:abort.signal}):passthrough(input);
         const response=await searchFn(session.body,{signal:abort.signal});
-        if(!response.ok)throw httpError("Copilot search was refused (HTTP "+response.status+")",response.status);
+        if(!response.ok){await cancelSourceResponse(response).catch(()=>{});throw httpError("Copilot search was refused (HTTP "+response.status+")",response.status)}
         const result=session.restoreValue(JSON.parse(await readBoundedResponseText(response,{maxBytes:8*1024*1024,signal:abort.signal,label:"Copilot search"})));
         markResponseTerminal("completed");
         res.writeHead(200,{"Content-Type":"application/json"});res.end(JSON.stringify({response:groundedSearch(result,query)}));return;
@@ -187,7 +190,7 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
       converted=antigravityToChat(request,{model:target.model,effort:target.effort,reasoningEfforts:target.effort?[target.effort]:[],stream});
       markResponseModel(target.model);markRequestObservation({usage_state:"pending"});
       session=privacy?.prepareSession?await privacy.prepareSession(converted.chat,{protocol:"chat",client:"gemini",signal:abort.signal}):passthrough(converted.chat);
-      const callOptions={signal:abort.signal,retryOptions:{retries:0},onUpstreamStart:()=>abort.setTimeout(upstreamTimeoutMs,"upstream_timeout")};
+      const callOptions={signal:abort.signal,sourceBodyManaged:true,retryOptions:{retries:0},onUpstreamStart:()=>abort.setTimeout(upstreamTimeoutMs,"upstream_timeout")};
       phase="upstream";
       const upstream=compacting&&compaction?await compaction.run({body:session.body,protocol:"chat",scope:JSON.stringify(["gemini","github",compactionProfile()]),source:"github",client:"gemini",
         inputLimit:target.maxTokens,outputAllowance:session.body.max_completion_tokens||session.body.max_tokens||0,native:client.chatCompletions,options:callOptions,
@@ -195,7 +198,7 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
       releaseInput();
       markUpstreamHeaders(upstream.status);
       applicationEvidence?.accept(req,"antigravity","inference");
-      if(!upstream.ok){markResponseErrorOrigin("upstream_http");await upstream.body?.cancel();throw httpError("Copilot generation was refused (HTTP "+upstream.status+")",upstream.status)}
+      if(!upstream.ok){markResponseErrorOrigin("upstream_http");await cancelSourceResponse(upstream).catch(()=>{});throw httpError("Copilot generation was refused (HTTP "+upstream.status+")",upstream.status)}
       if(!stream){
         const data=JSON.parse(await readBoundedResponseText(upstream,{maxBytes:MAX_REPLY,signal:abort.signal,label:"Copilot response"}));captureUsage(data);
         const result=chatToAntigravity(data,converted.originalNames);markToolActivity(result,"gemini");

@@ -3,6 +3,7 @@ import { webStreamLines } from "./stream.mjs";
 import { MAX_UPSTREAM_CHAT_SUCCESS_BODY_BYTES } from "./http-transport.mjs";
 import { ToolArgumentDeltaGuard, upstreamChatStreamError } from "./stream-contract.mjs";
 import { observeSourceStreamFailure } from "./source-admission.mjs";
+import { sourceResponseAccepted } from "./source-response.mjs";
 
 const object = value => value !== null && typeof value === "object" && !Array.isArray(value);
 const names = /^[A-Za-z0-9_-]{1,64}$/;
@@ -193,7 +194,7 @@ export async function* chatStreamToAntigravity(response, originalNames, { onChun
     if (event?.usage || event?.copilot_usage) onUsage?.(event);
     const choice = event?.choices?.[0];
     if (!choice) return;
-    if (choice.finish_reason) finish = choice.finish_reason;
+    if (choice.finish_reason) { finish = choice.finish_reason;sourceResponseAccepted(response); }
     const delta = choice.delta || {};
     for (const [key, thought] of [["reasoning_content", true], ["content", false], ["refusal", false]]) {
       if (delta[key] === undefined || delta[key] === null || delta[key] === "") continue;

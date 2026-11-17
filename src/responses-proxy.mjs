@@ -1,5 +1,6 @@
 import { markToolActivity } from "./stream-performance.mjs";
 import { observeSourceStreamFailure } from "./source-admission.mjs";
+import { sourceResponseReader, cancelSourceReader, releaseSourceReader, sourceResponseAccepted } from "./source-response.mjs";
 import { responses as copilotResponses } from "./copilot.mjs";
 import {
   logRequestFailure,
@@ -186,6 +187,7 @@ function inspectResponseSseEvent(state, eventName, data) {
     );
   }
   state.sawTerminal = true;
+  sourceResponseAccepted(state.sourceResponse);
   if (eventType === "response.completed") {
     const response = event.response;
     state.completed = { response, event };
@@ -504,7 +506,7 @@ async function proxyStreamingResponses(opened, res, upstream, options) {
       headersSent = true;
       res.writeHead(resp.status, headers);
     };
-    const reader = resp.body.getReader();
+    const reader = sourceResponseReader(resp);
     const streamState = {
       sourceResponse: resp,
       completed: null,
@@ -634,8 +636,8 @@ async function proxyStreamingResponses(opened, res, upstream, options) {
       return { successful: false, compacted: false };
     } finally {
       keepalive.stop();
-      await reader.cancel().catch(() => {});
-      reader.releaseLock();
+      await cancelSourceReader(reader).catch(() => {});
+      releaseSourceReader(reader);
     }
   }
 }

@@ -86,7 +86,7 @@ export function createNativeImagesHandler({ client, acquireRequest, privacy, env
       const context = currentRequestContext();
       if (context) { context.provider = "github";context.streamPerformance?.setProvider?.("github"); }
       abort.setTimeout(timeoutMs);
-      const forward = input => client.images(operation, { ...body, prompt: input.input }, { signal: abort.signal });
+      const forward = input => client.images(operation, { ...body, prompt: input.input }, { signal: abort.signal, sourceBodyManaged: true });
       const call = privacy?.wrap ? privacy.wrap(forward, { res, protocol: "responses", client: "codex" }) : forward;
       const response = await call({ input: body.prompt }, { signal: abort.signal });
       if (!response.ok) {

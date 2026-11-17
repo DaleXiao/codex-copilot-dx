@@ -22,9 +22,10 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter
       const width = mode === "light" ? 360 : 1280, language = palette === "klein" ? "en" : "zh";
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-connections-browser-")), env = {}, values = new Map();
       fs.mkdirSync(path.join(root, ".codex"));fs.writeFileSync(path.join(root, ".codex/config.toml"), '[features]\nmemories=true\n[memories]\nextract_model="response-replay"\n');
-      let runtime, handler, serviceControl, pausedSettings = null, timeOffset = 0, failDiscovery = palette === "pink" && mode === "light";const githubRegistry = { models: { data: [] } };
+      let runtime, handler, serviceControl, pausedSettings = null, pausedConnectionWrite = null, timeOffset = 0, failDiscovery = palette === "pink" && mode === "light";const githubRegistry = { models: { data: [] } };
       const server = http.createServer(async (req, res) => {
         const paused = pausedSettings;if (paused && req.method === "GET" && req.url === "/_ccdx/ui/settings") { paused.seen();await paused.wait; }
+        const writing = pausedConnectionWrite;if (writing && req.method === "POST" && req.url === "/_ccdx/ui/connections") { writing.seen();await writing.wait; }
         return handler(req, res);
       });
       await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
@@ -53,6 +54,7 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter
           applicationControlFactory: values => createApplicationControl({ ...values,
             inspect: async () => ({ apps: Object.fromEntries(Object.keys(appStates).map((id, index) => [id, { status: appStates[id], app: appPaths[id], target: appPaths[id], pid: 100 + index + 10 * appGenerations[id], started: appStarts[id] }])), processes: [] }),
             configuration: id => ({ state: "configured", revision: appRevisions[id] }), connections: async () => [],
+            inspectGemini:async({app})=>({status:appStates.antigravity,app,pids:[]}),
             control: async (app, action) => { const id = Object.keys(appPaths).find(id => appPaths[id] === app.app);appCalls.push([id, action]);if (action === "quit") appStates[id] = "stopped";return "sent"; },
             exec: async (command, args) => { const id = Object.keys(appPaths).find(id => args.includes(appPaths[id]));appCalls.push([id, "open"]);if(id){appStates[id]="running";appGenerations[id]++;appStarts[id]=new Date().toISOString()}return {stdout:""}; },
             openCodexApp: async () => { appCalls.push(["codex", "open"]);appStates.codex = "running";return { status: "opened" }; }, wait: async () => {},
@@ -320,7 +322,9 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter
             assert.equal(await page.locator(`[name="protocol"][value="${protocol}"]`).isChecked(), true);await page.locator("#connection-cancel").click();
             assert.equal(await page.locator("#connection-import").evaluate(node => node === document.activeElement), true);await fits();
           }
-          await page.locator("#source-concurrency > summary").click();await page.locator("#source-limit-maximum").fill("2");await page.locator("#source-limit-save").click();
+          let resumeSave,sawSave;const saving=new Promise(resolve=>{resumeSave=resolve}),saveSeen=new Promise(resolve=>{sawSave=resolve});pausedConnectionWrite={seen:sawSave,wait:saving,resume:resumeSave};
+          await page.locator("#source-concurrency > summary").click();await page.locator("#source-limit-maximum").fill("2");await page.locator("#source-limit-maximum").press("Enter");await saveSeen;
+          assert.equal(await page.locator("#source-limit-save").getAttribute("aria-busy"),"true");assert.equal(await page.locator("#source-limit-save").isDisabled(),true);pausedConnectionWrite=null;resumeSave();
           await page.waitForFunction(() => document.getElementById("source-limit-save").disabled && !document.getElementById("source-limit-save").hasAttribute("aria-busy"));
           assert.equal(runtime.connections().providers.find(source => source.id === "github").concurrency.maximum, 2);
           await page.locator("#source-limit-maximum").fill("");await page.locator("#source-limit-save").click();
@@ -351,10 +355,13 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter
           await page.locator("#application-open").click();await page.locator("#application-reopen-apply").click();
           await page.waitForFunction(() => document.getElementById("application-state").textContent === "接入待确认");
           assert.deepEqual(appCalls.slice(before), [["antigravity", "quit"], ["antigravity", "open"]]);
+          appStates.antigravity="stopped";await page.locator("#refresh").click();await page.waitForFunction(()=>document.getElementById("application-open-label").textContent==="打开应用"&&!document.getElementById("gemini-open").disabled);
+          const legacyOpen=appCalls.length;await page.locator("#gemini-open").click();await page.waitForFunction(()=>document.getElementById("application-state").textContent==="接入待确认");
+          assert.deepEqual(appCalls.slice(legacyOpen),[["antigravity","open"]]);assert.equal(await page.locator("#gemini-open").isDisabled(),true);
           await page.setViewportSize({width:320,height:1000});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),true);
         }
         assert.deepEqual(errors, []);report.push({ engine, palette, mode, language, width, saved: true, assigned: true, disabled: true, restored: true });
-      } catch (error) { console.error("Browser details:", errors, await page.locator("#connection-client-note").textContent(), await page.locator("#application-launch").innerText(), serviceControl.snapshot().applications);throw error; } finally { pausedSettings?.resume();await context.close();handler?.dispose?.();server.closeAllConnections();await new Promise(resolve => server.close(resolve));await runtime?.close();fs.rmSync(root, { recursive: true, force: true });clearTimeout(watchdog); }
+      } catch (error) { console.error("Browser details:", errors, await page.locator("#connection-client-note").textContent(), await page.locator("#application-launch").innerText(), serviceControl.snapshot().applications);throw error; } finally { pausedSettings?.resume();pausedConnectionWrite?.resume();await context.close();handler?.dispose?.();server.closeAllConnections();await new Promise(resolve => server.close(resolve));await runtime?.close();fs.rmSync(root, { recursive: true, force: true });clearTimeout(watchdog); }
     }
   } finally { await browser.close(); }
 }

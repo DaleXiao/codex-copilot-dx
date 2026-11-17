@@ -4,6 +4,8 @@ import { planContextCompaction, compactionItems } from "../src/context-compactio
 import { sealContextCompaction, openContextCompaction } from "../src/context-compaction-seal.mjs";
 import { summaryRequest, readCompactionSummary } from "../src/context-compaction-wire.mjs";
 import { createContextCompactionService, expandGatewayCompaction, COMPACTION_USAGE_RECORDED, isCompactionRequest } from "../src/context-compaction.mjs";
+import { createSourceAdmission } from "../src/source-admission.mjs";
+import { readBoundedResponseText } from "../src/upstream-body.mjs";
 
 const limits = { inputLimit: 16000, outputAllowance: 1024 };
 test("Messages compression preserves human instructions, tool pairing and the original body", () => {
@@ -93,6 +95,31 @@ const serviceInput = protocol => ({ body: protocol === "responses" ? { model: "m
   : { model: "m", messages: [{ role: "user", content: "keep requirements" }, { role: "assistant", content: "verified old work" }, { role: "user", content: "compact" }] },
   protocol, scope: "client:source:revision:m", source: "api_test", client: "codex", key: "k".repeat(64), inputLimit: 16000 });
 const sourceLimit = () => Response.json({ error: { type: "invalid_request_error", message: "Range of input length should be [1, 16000]" } }, { status: 400 });
+
+test("same-source compression at limit one settles cancellation before acquiring its summary slot", async () => {
+  const scheduler = createSourceAdmission({ initialLimit: 1 }), source = { source: "github" };let summaries = 0;
+  const client = scheduler.wrap({ responses: async () => new Response(new ReadableStream({ start(c) { c.enqueue(Buffer.from("unsupported")); }, cancel() { return new Promise(() => {}); } }), { status: 404 }) }, () => source);
+  try {
+    const response = await createContextCompactionService({ recordUsageFn() {} }).run({ ...serviceInput("responses"), source: "github", options: { sourceBodyManaged: true }, native: client.responses,
+      summarize: async (_text, options) => {
+        summaries++;assert.equal(scheduler.snapshot()[0].queued, 0);
+        const reply = await scheduler.run(source, async () => Response.json({ text: "summary" }), options);
+        await readBoundedResponseText(reply, { maxBytes: 1024, signal: options.signal });return { text: "summary", usage: { input_tokens: 1, output_tokens: 1 } };
+      } });
+    assert.equal(response.status, 200);assert.equal(summaries, 1);assert.equal(scheduler.snapshot()[0].active, 0);
+  } finally { scheduler.close(); }
+});
+
+test("an unresponsive legacy cancellation ends bounded recovery without queuing a summary", async () => {
+  const scheduler = createSourceAdmission({ initialLimit: 1, waitTimeoutMs: 20 });let resume, summaries = 0;
+  const cleanup = new Promise(resolve => { resume = resolve; });
+  try {
+    await assert.rejects(createContextCompactionService().run({ ...serviceInput("responses"),
+      native: async () => { const response = await scheduler.run({ source: "github" }, async () => new Response(new ReadableStream({ start(c) { c.enqueue(Buffer.from("unsupported")); }, cancel() { return cleanup; } }), { status: 404 }));await new Promise(resolve => setImmediate(resolve));return response; },
+      summarize: async () => { summaries++;return { text: "must not run" }; } }), { code: "ccdx_compaction_source_busy" });
+    assert.equal(summaries, 0);assert.equal(scheduler.snapshot()[0].queued, 0);
+  } finally { resume();await new Promise(resolve => setImmediate(resolve));scheduler.close(); }
+});
 
 test("native-first and disabled policies preserve responses and do not call a summary model", async () => {
   const service = createContextCompactionService(), response = Response.json({ native: true });let calls = 0;

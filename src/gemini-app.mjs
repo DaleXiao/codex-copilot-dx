@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import os from "node:os";
 import {execFile} from "node:child_process";
 import {promisify} from "node:util";
 
@@ -23,9 +24,9 @@ export async function inspectGeminiApp({platform=process.platform,app="/Applicat
 
 // A launch plan is reviewable without changing files, credentials, or running apps.
 // A prepared environment is not evidence that the App has adopted the route.
-export function planGeminiAppLaunch(state,{cloudCodeUrl,env=process.env,managedGateway=false}={}) {
+export function planGeminiAppLaunch(state,{cloudCodeUrl,env=process.env,home=os.homedir(),managedGateway=false}={}) {
   if(!["running","stopped","multiple"].includes(state?.status))return {status:state?.status||"unknown"};
-  if(state.status==="stopped"&&state.app!=="/Applications/Gemini.app")throw new Error("Unrecognized Gemini App location");
+  if(state.status==="stopped"&&!["/Applications/Gemini.app",path.join(home,"Applications/Gemini.app")].includes(state.app))throw new Error("Unrecognized Gemini App location");
   const url=new URL(cloudCodeUrl);
   if(url.protocol!=="http:"||url.hostname!=="127.0.0.1"||!url.port||Number(url.port)<1||url.username||url.password||url.search||url.hash)throw new Error("Gemini route must use a local CCDX endpoint");
   if(managedGateway||Object.entries(env).some(([key,value])=>key.startsWith("AGY_LLM_GATEWAY_")&&value)||env.CLOUD_CODE_URL&&env.CLOUD_CODE_URL!==url.href)return {status:"route_conflict"};

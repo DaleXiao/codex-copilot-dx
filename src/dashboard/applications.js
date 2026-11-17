@@ -22,6 +22,7 @@
         el("codex-auto-launch").disabled = isBusy() || data?.effective?.codex_auto_launch?.locked === true || !data;
         label("codex-auto-launch-note", autoError ? "application_preference_failed" : data?.effective?.codex_auto_launch?.locked ? "controlled_by_environment" : "next_ccdx_start");
       }
+      window.dispatchEvent(new CustomEvent("ccdx:application-state", { detail: { id, application: state, pending: pending || isBusy() } }));
     }
     function sync(next) {
       const applications = { ...next.applications };
@@ -53,13 +54,14 @@
         }
       } finally { pending = false;render(); }
     }
-    el("application-open").addEventListener("click", () => {
+    function openCurrent() {
       const id = route(), state = data?.applications?.[id];
       if (state?.status === "running" && state.needs_reload) { confirmation = { id, pid: state.pid, started: state.started };render(); }
       else if (state?.status === "running") void act("focus");
       else if (state?.status === "stopped") void act("open");
       else void check(true);
-    });
+    }
+    el("application-open").addEventListener("click", openCurrent);
     el("application-reopen-cancel").addEventListener("click", () => { confirmation = null;render();el("application-open").focus(); });
     el("application-reopen-apply").addEventListener("click", () => { if (confirmation?.id === route()) void act("restart", confirmation); });
     el("codex-auto-launch").addEventListener("change", async event => {
@@ -72,7 +74,10 @@
       claudeApp = button.dataset.claudeClient === "claude_app";confirmation = null;note = null;render();if (claudeApp) void check();
     });
     window.addEventListener("focus", () => { if (document.visibilityState === "visible") void check(); });
-    return { sync, render, routeChanged() { confirmation = null;note = null;sequence++;render();void check(); }, refresh: () => check(true) };
+    window.addEventListener("ccdx-gemini-state", event => {
+      const state = event.detail?.application;if (state) sync({ ...data, applications: { ...data?.applications, antigravity: state } });
+    });
+    return { sync, render, open(id) { if (route() === id && !pending && !isBusy()) openCurrent(); }, routeChanged() { confirmation = null;note = null;sequence++;render();void check(); }, refresh: () => check(true) };
   }
   globalThis.ccdxApplications = { create };
 })();

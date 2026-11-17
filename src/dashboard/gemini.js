@@ -1,6 +1,7 @@
 (() => {
   const el=id=>document.getElementById(id),language=globalThis.ccdxLanguage;
   let busy=false,state=null,draft=null,notice=null,pendingAction=null;
+  let sharedApplication=null,sharedPending=false;
   const words=(id,key)=>language.set(el(id),key);
   const clear=id=>{el(id).removeAttribute('data-i18n');el(id).removeAttribute('data-i18n-args');el(id).textContent='';el(id).title=''};
   const controls=['gemini-enabled','gemini-open','gemini-refresh','gemini-save','gemini-cancel'];
@@ -18,10 +19,11 @@
     return [...groups.values()];
   };
   function render(){
-    for(const id of controls)el(id).disabled=busy||!state;
+    for(const id of controls)el(id).disabled=busy||sharedPending||!state;
     if(!state)return;
+    if(sharedApplication&&(sharedApplication.inspection||0)>=(state.application?.inspection||0))state.app={...state.app,status:sharedApplication.status,version:sharedApplication.version||state.app.version};
     if(!busy)el('gemini-enabled').checked=state.enabled;
-    el('gemini-save').disabled=busy||!dirty();el('gemini-cancel').disabled=busy||!dirty();
+    el('gemini-save').disabled=busy||sharedPending||!dirty();el('gemini-cancel').disabled=busy||sharedPending||!dirty();
     words('gemini-save',busy&&pendingAction==='models'?'api_saving':'api_save');if(busy&&pendingAction==='models')el('gemini-save').setAttribute('aria-busy','true');else el('gemini-save').removeAttribute('aria-busy');
     words('gemini-draft-state',dirty()?'cap_unsaved':'cap_saved');
     words('gemini-route-state',!state.enabled?'gemini_disabled':state.source_enabled===false?'gemini_source_disabled':state.app.status==='starting'?'gemini_route_waiting':state.models_reload_required===null?'gemini_catalog_unknown':state.models_reload_required?'gemini_models_pending':state.route_observed?'gemini_route_observed':'gemini_route_waiting');
@@ -30,7 +32,7 @@
     const needsReload=state.enabled&&state.source_enabled!==false&&(state.models_reload_required===true||state.models_reload_required===null);
     const hint=!state.enabled&&state.app.status==='running'?'gemini_pause_reopen':needsReload?(state.app.status==='running'?(state.models_reload_required===null?'gemini_maybe_reopen':'gemini_reopen'):state.app.status==='stopped'?'gemini_open_to_load':null):null;
     el('gemini-reopen').hidden=!hint;if(hint)words('gemini-reopen',hint);
-    el('gemini-open').disabled=busy||state.app.status!=='stopped';
+    el('gemini-open').disabled=busy||sharedPending||state.app.status!=='stopped';
     const list=el('gemini-models'),focus=list.contains(document.activeElement)?document.activeElement.value:null;list.replaceChildren();
     for(const model of groupedModels()){
       const chosen=new Set(draft||selected()),ids=model.efforts.map(item=>item.id);
@@ -63,13 +65,14 @@
       }
       return state;
     }catch(error){if(!report)throw error;notice='gemini_operation_failed';words('gemini-note',notice);el('gemini-note').title=error.message}
-    finally{busy=false;pendingAction=null;render();window.dispatchEvent(new Event('ccdx-gemini-state'))}
+    finally{busy=false;pendingAction=null;render();window.dispatchEvent(new CustomEvent('ccdx-gemini-state',{detail:{application:state?.application}}))}
   }
   globalThis.ccdxAntigravity={get state(){return state},get pending(){return busy},setEnabled:enabled=>load(enabled?'enable':'disable',{},false)};
   el('gemini-enabled').addEventListener('change',event=>void load(event.target.checked?'enable':'disable'));
   el('gemini-model-form').addEventListener('submit',event=>{event.preventDefault();if(dirty())void load('models',{models:draft})});
   el('gemini-cancel').addEventListener('click',()=>{draft=null;notice=null;clear('gemini-note');render()});
-  el('gemini-open').addEventListener('click',()=>void load('open'));
+  el('gemini-open').addEventListener('click',()=>{if(globalThis.ccdxApplicationControls)globalThis.ccdxApplicationControls.open('antigravity');else void load('open')});
+  window.addEventListener('ccdx:application-state',event=>{if(event.detail?.id==='antigravity'){sharedApplication=event.detail.application;sharedPending=event.detail.pending;render()}});
   el('gemini-refresh').addEventListener('click',()=>void load('refresh'));
   el('refresh').addEventListener('click',()=>{if(['#gemini','#models'].includes(location.hash))void load(location.hash==='#models'?'summary':'refresh')});
   window.addEventListener('hashchange',()=>{if(['#gemini','#models'].includes(location.hash))void load(location.hash==='#models'?'summary':undefined)});

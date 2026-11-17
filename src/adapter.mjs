@@ -193,6 +193,7 @@ export function createAdapterHandler(options = {}) {
     if (!antigravityLoading) antigravityLoading = (async () => {
       const { createAntigravityRuntime } = await import("./antigravity-runtime.mjs");
       antigravity = createAntigravityRuntime({ client: codexClient, models: () => codexModelRegistry?.models || [], privacy, compaction, acquireRequest,
+        applicationControl: options.dashboardOptions?.serviceControl?.applicationControl,
         sourceAdmission: options.providerRuntime?.sourceAdmission,
         applicationEvidence: options.providerRuntime?.applicationEvidence,
         ...(options.providerRuntime?.dashboardCatalog?{refreshModels:async()=>{
@@ -353,8 +354,6 @@ export function createAdapterHandler(options = {}) {
       }
       return carbonSearch(req, res);
     }
-    if (req.method === "GET" && pathname === "/v1/models" || req.method === "POST" && ["/v1/responses", "/v1/responses/compact"].includes(pathname))
-      options.providerRuntime?.applicationEvidence?.notice(req, res, "codex", pathname === "/v1/models" ? "catalog" : "inference");
     if (pathname.startsWith("/anthropic/")) {
       if (!isLoopbackAddress(req.socket?.remoteAddress) || !req.headers?.host || !isLoopbackHostHeader(req.headers.host)
         || Object.hasOwn(req.headers, "origin")) { sendJsonError(res, httpError("Claude requires native local clients", 403));return; }
@@ -511,6 +510,9 @@ export function createAdapterHandler(options = {}) {
         if (typeof finish === "function") finishTerminalActivity = finish;
       } catch {}
     }
+    const applicationEvidenceScope = req.method === "GET" && pathname === "/v1/models" ? "catalog"
+      : req.method === "POST" && (pathname === "/v1/responses" || pathname === "/v1/responses/compact") ? "inference" : null;
+    const applicationEvidenceAt = applicationEvidenceScope ? Date.now() : 0;
     let requestFinished = false;
     let httpEvidence = {}, context;
     const finishRequest = ({ statusCode = 0, aborted = false } = {}) => {
@@ -531,6 +533,8 @@ export function createAdapterHandler(options = {}) {
         rejectionReason: httpEvidence.reason || (httpEvidence.code === "ccdx_client_source_disabled" ? httpEvidence.code : undefined) }); } catch {}
       try { finishTerminalActivity(); } catch {}
       try { context?.finishProvider?.(); } catch {}
+      if (applicationEvidenceScope && !aborted && statusCode >= 200 && statusCode < 300)
+        options.providerRuntime?.applicationEvidence?.accept(req, "codex", applicationEvidenceScope, applicationEvidenceAt);
     };
     const containUnexpectedError = (error) => {
       try { finishRequest({ statusCode: res.statusCode >= 400 ? res.statusCode : 500 }); } catch {}

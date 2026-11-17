@@ -453,3 +453,17 @@ test("HTTP Codex routes preserve Responses fallback, compact, and model discover
     ["codex.models"],
   ]);
 });
+
+
+test("accepted Codex evidence uses request completion once and excludes rejected requests", async t => {
+  const observed = [];
+  const handler = createAdapterHandler({ providerRuntime: { applicationEvidence: { accept: (...args) => observed.push(args) } },
+    dispatchRequestForTests: (req, res) => { res.writeHead(req.headers["fixture-status"]);res.end("fixture"); } });
+  t.after(() => handler.cleanup?.());
+  for (const status of [200, 400]) {
+    const req = jsonRequest(Buffer.alloc(0));
+    Object.assign(req, { url: "/v1/responses", method: "POST", headers: { "fixture-status": status }, socket: { remoteAddress: "127.0.0.1", localPort: 2026, remotePort: 10000 } });
+    assert.equal((await invokeAdapterRequest({}, req, handler)).status, status);
+  }
+  assert.equal(observed.length, 1);assert.equal(observed[0][1], "codex");assert.equal(observed[0][2], "inference");assert.ok(Number.isFinite(observed[0][3]));
+});

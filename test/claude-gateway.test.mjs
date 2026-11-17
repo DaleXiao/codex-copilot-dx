@@ -8,8 +8,16 @@ import { currentRequestContext } from "../src/request-context.mjs";
 import { claudeModelEntries } from "../src/claude-models.mjs";
 import { createStreamPerformanceMetrics } from "../src/stream-performance.mjs";
 import { createApiNetwork } from "../src/providers/api-network.mjs";
+import { createSourceAdmission } from "../src/source-admission.mjs";
 
 const key = "ccdx_m365_" + "a".repeat(64);
+test("a non-SSE success rejected by Claude releases its managed source slot", async t => {
+  const scheduler = createSourceAdmission();t.after(() => scheduler.close());
+  const client = scheduler.wrap({ messages: async () => Response.json({ unexpected: true }) }, () => ({ source: "github" }));
+  const f = await gateway(t, () => {}, { provider: { id: "github", profileId: () => "synthetic", models: () => [{ id: "claude-opus-5.5" }], client } });
+  const response = await f.request({ model: "claude-opus-5.5", messages: [{ role: "user", content: "synthetic" }], max_tokens: 4, stream: true });
+  assert.equal(response.status, 502);await response.text();assert.equal(scheduler.snapshot()[0].active, 0);
+});
 test("native discovery and profile entries carry the same exact reasoning contract", async t => {
   const models = [
     { id: "kimi", client_id: "ccdx/claude-compatible-1", capability: { values: { reasoning_efforts: ["low", "medium", "high", "max"], context_window: 1000000 } } },

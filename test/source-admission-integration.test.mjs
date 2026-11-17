@@ -6,6 +6,8 @@ import { createApiProvider } from "../src/providers/api.mjs";
 import { createRequestAdmission } from "../src/request-admission.mjs";
 import { readJsonBody } from "../src/http-transport.mjs";
 import { summaryRequest } from "../src/context-compaction-wire.mjs";
+import { cancelSourceResponse } from "../src/source-response.mjs";
+import { readBoundedResponseText } from "../src/upstream-body.mjs";
 
 test("an API's private limit evidence survives safe error projection without leaking vendor text", async () => {
   const scheduler = createSourceAdmission();
@@ -22,6 +24,34 @@ test("typed raw source limits apply even when the caller discards the HTTP error
   const scheduler = createSourceAdmission();
   const response = await scheduler.run({ source: "github" }, async () => Response.json({ error: { code: "concurrency_limit", limit: 1 } }, { status: 429 }));
   assert.equal(scheduler.snapshot()[0].limit, 1);await response.body.cancel();assert.equal(scheduler.snapshot()[0].active, 0);scheduler.close();
+});
+
+test("HTTP admission reuses the final wire text while queued and starts timing only when sent", async () => {
+  const scheduler = createSourceAdmission({ initialLimit: 1 }), sent = [];let serializations = 0, starts = 0;
+  const raw = createApiProvider({ config: { id: "api_wire", name: "synthetic", secret_ref: "a".repeat(32), auth_header: "bearer", base_url: "https://wire.test/v1",
+    endpoints: { chat: "https://wire.test/v1/chat/completions" }, models: [{ id: "m", protocols: ["chat"] }] }, secrets: { get: async () => "synthetic-key" },
+    networkFactory: async () => ({ close() {}, fetch: async (_url, init) => { sent.push(init.body);return sent.length === 1 ? new Response(new ReadableStream()) : Response.json({ accepted: true }); } }) });
+  const provider = admittedSource(raw, scheduler), body = { model: "m", messages: [], toJSON() { serializations++;return { model: "m", messages: [], final_value: "wire text" }; } }, options = { sourceBodyManaged: true, onUpstreamStart() { starts++; } };
+  try {
+    const first = await provider.client.chatCompletions(body, options), second = provider.client.chatCompletions(body, options);
+    for (let i = 0; i < 10 && !scheduler.snapshot()[0].queued; i++) await new Promise(resolve => setImmediate(resolve));
+    assert.equal(scheduler.snapshot()[0].queued, 1);assert.equal(serializations, 2);assert.equal(starts, 1);assert.equal(sent.length, 1);
+    await cancelSourceResponse(first);const response = await second;await readBoundedResponseText(response, { maxBytes: 1024 });
+    assert.equal(serializations, 2);assert.equal(starts, 2);assert.equal(sent.length, 2);assert.equal(sent[1], sent[0]);assert.equal(scheduler.snapshot()[0].active, 0);
+  } finally { provider.close();scheduler.close(); }
+});
+
+test("final-wire queue rejection stays local and does not create an upstream attempt", async () => {
+  const scheduler = createSourceAdmission({ initialLimit: 1, maxQueuedBytes: 16 });let starts = 0;
+  const raw = createApiProvider({ config: { id: "api_wire_limit", name: "synthetic", secret_ref: "b".repeat(32), auth_header: "bearer", base_url: "https://wire.test/v1",
+    endpoints: { chat: "https://wire.test/v1/chat/completions" }, models: [{ id: "m", protocols: ["chat"] }] }, secrets: { get: async () => "synthetic-key" },
+    networkFactory: async () => ({ close() {}, fetch: async () => new Response(new ReadableStream()) }) });
+  const provider = admittedSource(raw, scheduler), options = { sourceBodyManaged: true, onUpstreamStart() { starts++; } };
+  try {
+    const first = await provider.client.chatCompletions({ model: "m", messages: [] }, options);
+    await assert.rejects(provider.client.chatCompletions({ model: "m", messages: [{ role: "user", content: "large retained queue payload" }] }, options), { code: "ccdx_source_queue_full", statusCode: 503, origin: "source_admission" });
+    assert.equal(starts, 1);assert.equal(scheduler.snapshot()[0].queued, 0);await cancelSourceResponse(first);
+  } finally { provider.close();scheduler.close(); }
 });
 
 test("response policy markers survive source stream ownership without replacing native internals", async () => {

@@ -22,6 +22,12 @@ test("a stopped app gets only a process-local route in its launch plan",()=>{
   const env={OTHER:"keep"},plan=planGeminiAppLaunch({status:"stopped",app:"/Applications/Gemini.app",pids:[]},{cloudCodeUrl:"http://127.0.0.1:18080/antigravity/",env});
   assert.equal(plan.status,"prepared");assert.deepEqual(plan.args,["-a","/Applications/Gemini.app","--env","CLOUD_CODE_URL=http://127.0.0.1:18080/antigravity/"]);assert.deepEqual(env,{OTHER:"keep"});
 });
+test("the trusted user's Applications folder shares the same launch boundary",()=>{
+  const home=path.resolve("synthetic-home"),app=path.join(home,"Applications/Gemini.app");
+  const plan=planGeminiAppLaunch({status:"stopped",app,pids:[]},{home,cloudCodeUrl:"http://127.0.0.1:2026/antigravity",env:{}});
+  assert.equal(plan.status,"prepared");assert.equal(plan.args[1],app);
+  assert.throws(()=>planGeminiAppLaunch({status:"stopped",app:path.join(home,"Elsewhere/Gemini.app")},{home,cloudCodeUrl:"http://127.0.0.1:2026/antigravity",env:{}}),/location/);
+});
 test("remote routes and overrides of existing gateways are refused",()=>{
   const state={status:"stopped",app:"/Applications/Gemini.app",pids:[]},cloudCodeUrl="http://127.0.0.1:18080/antigravity/";
   assert.throws(()=>planGeminiAppLaunch(state,{cloudCodeUrl:"https://example.test/",env:{}}),/local/);

@@ -3,6 +3,7 @@ import { githubTokenFingerprint } from "./github-identity.mjs";
 import { httpError, readBoundedResponseText } from "./http-transport.mjs";
 import { localPackageVersion } from "./version.mjs";
 import { SOURCE_ADMISSION } from "./source-admission.mjs";
+import { cancelSourceResponse } from "./source-response.mjs";
 
 const trustedHosts = new Set(["api.githubcopilot.com", "api.enterprise.githubcopilot.com"]);
 const unsupported = ["image_query", "literature_search_query", "screenshot", "finance", "weather", "sports", "time"];
@@ -29,7 +30,7 @@ async function rpc(endpoint, headers, method, id, params, signal, session, fetch
     body: JSON.stringify({ jsonrpc: "2.0", ...(id ? { id } : {}), method, params }) });
   const sessionId = response.headers.get("mcp-session-id");
   if (!response.ok) {
-    await response.body?.cancel();
+    await cancelSourceResponse(response);
     const error = failure("GitHub Copilot search was refused (HTTP " + response.status + ")", "ccdx_copilot_search_http", response.status);
     const retryAfter = response.headers.get("retry-after");
     if (retryAfter && /^(?:\d{1,8}|[A-Za-z0-9,: ]{10,40})$/.test(retryAfter)) error.retryAfter = retryAfter;
@@ -100,7 +101,7 @@ export function createCopilotWeb({ client, query = copilotQuery, readToken = rea
   pageReader = async options => (await import("./copilot-web-fetch.mjs")).createCopilotPageReader(options) } = {}) {
   const store = referenceStore();
   const source = client?.[SOURCE_ADMISSION], network = source ? (url, init) => source.scheduler.run(source.descriptor(), () => fetchImpl(url, init),
-    { signal: init.signal, model: "web_search", client: "search", bytes: () => Buffer.byteLength(init.body || "") }) : fetchImpl;
+    { signal: init.signal, sourceBodyManaged: true, model: "web_search", client: "search", bytes: () => Buffer.byteLength(init.body || "") }) : fetchImpl;
   async function search(body, { signal, providerProfile } = {}) {
     if (typeof body.id !== "string" || !body.id || body.id.length > 160 || !body.commands || typeof body.commands !== "object"
       || Array.isArray(body.commands)) throw failure("Invalid Copilot search request", "ccdx_copilot_search_invalid", 400);

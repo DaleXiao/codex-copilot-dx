@@ -1,4 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
+import { sourceTransport } from "../source-transport.mjs";
+import { SOURCE_HTTP_CLIENT } from "../source-response.mjs";
 import { createM365Auth, m365Error } from "./m365-auth.mjs";
 import { m365Paths, m365AccountKey, readM365Account, readM365Json, writeM365Binding } from "../m365-settings.mjs";
 import { MAX_UPSTREAM_ERROR_BODY_BYTES, MAX_UPSTREAM_MODEL_CATALOG_BYTES, readBoundedResponseText } from "../http-transport.mjs";
@@ -7,7 +9,7 @@ import { enforceResponsesPayloadByteBudget } from "../responses-byte-budget.mjs"
 import { createRoutePlan } from "../route-plan.mjs";
 import { CODEX_AUTO_REVIEW_MODEL } from "../models.mjs";
 import { currentRequestContext } from "../request-context.mjs";
-import { markRequestObservation, markUpstreamHeaders, markUpstreamStarted } from "../stream-performance.mjs";
+import { markRequestObservation, markUpstreamHeaders } from "../stream-performance.mjs";
 import { requestOptionsEvidence } from "../response-failures.mjs";
 import { status } from "../status.mjs";
 import { redactDiagnosticText } from "../diagnostic-text.mjs";
@@ -126,12 +128,12 @@ export function createM365Provider({ home, env = process.env, account: accountOv
     if (endpoint === "/models") { requestHeaders["Cache-Control"] = "no-cache";requestHeaders.Pragma = "no-cache"; }
     const serialized = body ? options.bodyText ?? JSON.stringify(body) : undefined;
     if (serialized !== undefined) requestHeaders["Content-Length"] = String(Buffer.byteLength(serialized));
-    options.onUpstreamStart?.();
-    if (body) { if (options.observeUpstream !== false) markUpstreamStarted(body.stream === true);if (!options.countTokens) markRequestObservation({ max_output_tokens_sent: endpoint.includes("messages") ? body.max_tokens : body.max_output_tokens }); }
     try {
       const send = fetchImpl || await transport(options.signal);
-      const response = await send(`${M365_API_BASE}${endpoint}`, { method: body ? "POST" : "GET", headers: requestHeaders,
-        ...(serialized !== undefined ? { body: serialized } : {}), signal: options.signal, redirect: "manual" });
+      const response = await sourceTransport(options, { send, args: [`${M365_API_BASE}${endpoint}`, { method: body ? "POST" : "GET", headers: requestHeaders,
+        ...(serialized !== undefined ? { body: serialized } : {}), signal: options.signal, redirect: "manual" }],
+        model: body?.model, bodyText: serialized, stream: body?.stream === true, observe: Boolean(body && options.observeUpstream !== false),
+        evidence: body && !options.countTokens ? { max_output_tokens_sent: endpoint.includes("messages") ? body.max_tokens : body.max_output_tokens } : undefined });
       if (endpoint === "/models") {
         const age = response.headers.get("age");
         lastCatalogResponse = { http_status: response.status, request_id: response.headers.get("request-id") || response.headers.get("x-ms-request-id") || response.headers.get("x-request-id"),
@@ -144,6 +146,7 @@ export function createM365Provider({ home, env = process.env, account: accountOv
       const headers = new Headers(response.headers);headers.delete("content-length");headers.delete("content-encoding");
       return new Response(safe, { status: response.status, headers });
     } catch (error) {
+      if (error.sourceQueue || error.origin === "source_admission") throw error;
       if (options.signal?.aborted) throw options.signal.reason || error;
       throw Object.assign(new Error(redactDiagnosticText(String(error.message).split(credential.token).join("[redacted]"))), {
         code: /^m365_[a-z0-9_]+$/.test(error.code || "") ? error.code : "m365_network_error", statusCode: 502,
@@ -196,6 +199,7 @@ export function createM365Provider({ home, env = process.env, account: accountOv
   }
 
   const client = {
+    [SOURCE_HTTP_CLIENT]: true,
     async listModels({ signal } = {}) {
       signal?.throwIfAborted();
       if (!catalog) await refresh();

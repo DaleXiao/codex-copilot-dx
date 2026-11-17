@@ -1,6 +1,7 @@
 // Yield fetch Response body lines while preserving SSE semantics for callers.
 // Handle LF, CRLF and CR endings, and release the reader if iteration stops early.
 import { loadRuntimeConfig } from "./runtime-config.mjs";
+import { sourceResponseReader, observeSourceRead, failSourceRead, cancelSourceReader, releaseSourceReader } from "./source-response.mjs";
 
 const MAX_SSE_BUFFER_BYTES = loadRuntimeConfig().maxSseBufferBytes;
 
@@ -15,14 +16,15 @@ function appendLineFragment(parts, fragment, currentBytes, maxBufferBytes) {
 }
 
 export async function* webStreamLines(response, { onChunk, maxBufferBytes = MAX_SSE_BUFFER_BYTES } = {}) {
-  const reader = response.body.getReader();
+  const reader = sourceResponseReader(response);
   const decoder = new TextDecoder();
   let lineParts = [];
   let lineBytes = 0;
   let skipLF = false, bareCR = false;
   try {
     while (true) {
-      const { done, value } = await reader.read();
+      let next;try { next = await reader.read(); } catch (error) { failSourceRead(reader);throw error; }
+      observeSourceRead(reader, next);const { done, value } = next;
       if (done) break;
       onChunk?.(value);
       const decoded = decoder.decode(value, { stream: true });
@@ -83,7 +85,7 @@ export async function* webStreamLines(response, { onChunk, maxBufferBytes = MAX_
       yield !bareCR && line.endsWith("\r") ? line.slice(0, -1) : line;
     }
   } finally {
-    await reader.cancel().catch(() => {});
-    reader.releaseLock();
+    await cancelSourceReader(reader).catch(() => {});
+    releaseSourceReader(reader);
   }
 }

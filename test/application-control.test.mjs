@@ -4,6 +4,11 @@ import { EventEmitter } from "node:events";
 import { createApplicationControl } from "../src/application-control.mjs";
 import { createApplicationEvidence } from "../src/application-evidence.mjs";
 import { applicationConnections, processFamily } from "../src/application-process.mjs";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { userSettingsPath } from "../src/user-settings.mjs";
+import { createAntigravityRuntime } from "../src/antigravity-runtime.mjs";
 
 const running = { status: "running", app: "/Applications/Claude.app", target: "/Applications/Claude.app", identity: "com.anthropic.claudefordesktop", pid: 10, started: "2026-11-17T00:00:00.000Z" };
 function fixture() {
@@ -81,4 +86,19 @@ test("OS connection lookup is scoped to the current family and numeric endpoints
   } });
   assert.deepEqual(sockets, [{ pid: 11, peerPort: 10000, port: 2026 }]);
   assert.ok(calls[0][1].includes("10,11"));assert.ok(calls[0][1].includes("-nP"));
+});
+
+test("legacy and header Antigravity opens share one verified home-folder launch", async t => {
+  const home=await fs.mkdtemp(path.join(os.tmpdir(),"ccdx-shared-app-"));t.after(()=>fs.rm(home,{recursive:true,force:true}));
+  const env={},file=userSettingsPath({home,env});await fs.mkdir(path.dirname(file),{recursive:true});await fs.writeFile(file,JSON.stringify({gemini_antigravity_enabled:true}));
+  const app=path.join(home,"Applications/Gemini.app"),calls=[];
+  const controller=createApplicationControl({home,env,platform:"darwin",connections:async()=>[],configuration:()=>({state:"configured",revision:"same"}),
+    inspect:async()=>({apps:{antigravity:{status:"stopped",app,target:app}},processes:[]}),
+    inspectGemini:async input=>{calls.push(["verify",input.app]);return{status:"stopped",app:input.app,pids:[]}},
+    exec:async(command,args)=>{calls.push([command,args]);return{stdout:""}}});
+  const legacy=createAntigravityRuntime({home,env,applicationControl:controller,client:{},models:()=>[]});t.after(()=>legacy.close());
+  const results=await Promise.all([controller.action({id:"antigravity",operation:"open"}),legacy.action({action:"open"},"http://127.0.0.1:2026")]);
+  assert.equal(results[0].status,"opened");assert.equal(calls.filter(([kind])=>kind==="verify").length,1);assert.equal(calls.filter(([kind])=>kind==="/usr/bin/open").length,1);
+  assert.deepEqual(calls[1],["/usr/bin/open",["-a",app,"--env","CLOUD_CODE_URL=http://127.0.0.1:2026/antigravity"]]);
+  assert.equal(legacy.snapshot().app.status,"starting");assert.equal(controller.snapshot().antigravity.status,"starting");assert.equal(controller.busy(),false);
 });

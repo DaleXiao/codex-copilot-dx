@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { sourceTransport } from "../source-transport.mjs";
+import { SOURCE_HTTP_CLIENT, sourceResponseFeedback, cancelSourceResponse } from "../source-response.mjs";
 import { createRoutePlan } from "../route-plan.mjs";
 import { accessError } from "../access-settings.mjs";
 import { publicModelCatalog } from "../provider-metadata.mjs";
@@ -14,7 +16,7 @@ import { transportErrorDetails } from "../operation-error.mjs";
 import { readSafeUpstreamReason } from "../safe-upstream-error.mjs";
 import { resolveModelCapabilities, deploymentRevision, constrainModelRequest } from "../model-capabilities.mjs";
 import { apiModelMetadata } from "./api-model-metadata.mjs";
-import { markRequestObservation, markUpstreamStarted } from "../stream-performance.mjs";
+import { markRequestObservation } from "../stream-performance.mjs";
 import { createAbortAwareSingleflight } from "../bounded-result-cache.mjs";
 import { createApiTokenCounter } from "./api-token-count.mjs";
 import { apiModelDisplay } from "../api-model-display.mjs";
@@ -91,18 +93,15 @@ export function createApiProvider({ config, secrets, env = process.env, platform
     const recovery = cooldown?.enter();let observed = false;
     try {
       const transport = !closed && network && (network.healthy?.() ?? true) ? network : await getNetwork(options.signal);
-      options.onUpstreamStart?.();
-      if (body && options.observeUpstream !== false) {
-        markUpstreamStarted(body.stream === true);
-        if (!options.countTokens) markRequestObservation({ max_output_tokens_sent: api === "messages" ? body.max_tokens : api === "chat" ? body.max_completion_tokens : body.max_output_tokens,
-          reasoning_effort_sent: api === "messages" ? body.output_config?.effort : api === "chat" ? body.reasoning_effort : body.reasoning?.effort });
-      }
-      const result = await transport.fetch(url, { method: body ? "POST" : "GET", headers, body: serialized, signal: options.signal });
+      const result = await sourceTransport(options, { send: transport.fetch, receiver: transport, args: [url, { method: body ? "POST" : "GET", headers, body: serialized, signal: options.signal }],
+        model: body?.model, bodyText: serialized, stream: body?.stream === true, observe: Boolean(body && options.observeUpstream !== false),
+        evidence: body && !options.countTokens ? { max_output_tokens_sent: api === "messages" ? body.max_tokens : api === "chat" ? body.max_completion_tokens : body.max_output_tokens,
+          reasoning_effort_sent: api === "messages" ? body.output_config?.effort : api === "chat" ? body.reasoning_effort : body.reasoning?.effort } : undefined });
       const temporary = result.status === 502 || result.status === 503 || result.status === 504;
       let retryAfterMs = 0;
       if (temporary) { const retry = result.headers.get("retry-after");retryAfterMs = /^\d{1,8}$/.test(retry || "") ? Number(retry) * 1000 : Math.max(0, Date.parse(retry) - now()); }
       cooldown?.complete(recovery, temporary, false, Number.isFinite(retryAfterMs) ? retryAfterMs : 0);observed = true;
-      if (result.status >= 300 && result.status < 400) { await result.body?.cancel();throw accessError("ccdx_api_redirect_refused", 502); }
+      if (result.status >= 300 && result.status < 400) { await cancelSourceResponse(result).catch(() => {});throw accessError("ccdx_api_redirect_refused", 502); }
       if (!result.ok) {
         const adapted = api === "responses" && [400, 422].includes(result.status) && !options.compatibilityRetried && !options.skipCallLessRetry
           ? normalizeCallLessToolOutputs(body) : null;
@@ -114,7 +113,7 @@ export function createApiProvider({ config, secrets, env = process.env, platform
         let reason, sourceLimit;
         try {
           reason = await readSafeUpstreamReason(result, { signal: options.signal, missingCallId: Boolean(adapted), rootToolSchema: schemaCandidate,
-            onSourceLimit: value => { sourceLimit = sourceLimitFeedback(result.status, result.headers, value, now()); },
+            onSourceLimit: value => { sourceLimit = sourceLimitFeedback(result.status, result.headers, value, now());sourceResponseFeedback(result, value); },
             ...(finishCapture ? { diagnosticRedact: text => text.replaceAll(key, "[redacted]") } : {}) });
         } finally {
           const retained = finishCapture?.(reason?.diagnostic_message);
@@ -154,7 +153,9 @@ export function createApiProvider({ config, secrets, env = process.env, platform
       }
       return result;
     } catch (error) {
-      if (!observed) cooldown?.complete(recovery, confirmedNetworkFailure(error), options.signal?.aborted === true);
+      const localAdmission = error.sourceQueue || error.origin === "source_admission";
+      if (!observed) cooldown?.complete(recovery, localAdmission ? false : confirmedNetworkFailure(error), options.signal?.aborted === true || localAdmission);
+      if (localAdmission) throw error;
       if (options.signal?.aborted) throw error;
       if (error.code === "ccdx_api_redirect_refused") throw error;
       const failure = accessError("ccdx_api_network_unavailable", 502);
@@ -165,6 +166,7 @@ export function createApiProvider({ config, secrets, env = process.env, platform
   }
   const counter = createApiTokenCounter({ request: (body, options) => request(config.endpoints.messages.replace(/\/+$/, "") + "/count_tokens", body, options, "messages") });
   const client = {
+    [SOURCE_HTTP_CLIENT]: true,
     listModels: async () => ({ status: 200, body: JSON.stringify(registry.models) }),
     getCachedModelEndpoints: id => catalog.find(model => model.id === id)?.supported_endpoints || null,
     async responses(body, options = {}) {

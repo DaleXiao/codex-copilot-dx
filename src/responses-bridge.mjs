@@ -2,6 +2,7 @@ import { markToolActivity } from "./stream-performance.mjs";
 import { randomUUID } from "node:crypto";
 import { chatCompletions } from "./copilot.mjs";
 import { webStreamLines } from "./stream.mjs";
+import { cancelSourceResponse, sourceResponseAccepted, sourceResponseFailed } from "./source-response.mjs";
 import { normalizeCallLessToolOutputs } from "./responses-tool-output.mjs";
 import {
   abortErrorStatusCode,
@@ -348,6 +349,7 @@ export async function forwardToChat(chatReq, emitEvent, onDone, onError, options
     try {
       onUpstreamStart?.();
       resp = await chatCompletionsFn(upstreamReq, {
+        sourceBodyManaged: true,
         signal,
         bodyText,
         onUpstreamStart,
@@ -518,7 +520,7 @@ export async function forwardToChat(chatReq, emitEvent, onDone, onError, options
     })) {
       if (!line.startsWith("data: ")) continue;
       const data = line.slice(6).trim();
-      if (data === "[DONE]") { const completed = await emitTerminal(); onDone(); return completed; }
+      if (data === "[DONE]") { const completed = await emitTerminal();if (completed) sourceResponseAccepted(resp);onDone();return completed; }
       let parsed;
       try {
         parsed = JSON.parse(data);
@@ -529,6 +531,7 @@ export async function forwardToChat(chatReq, emitEvent, onDone, onError, options
         );
       }
       const upstreamError = upstreamChatStreamError(parsed);
+      if (upstreamError) sourceResponseFailed(resp);
       if (upstreamError) throw upstreamError;
       if (parsed.model) actualModel = parsed.model;
       if (parsed.usage) {
@@ -584,7 +587,7 @@ export async function forwardToChat(chatReq, emitEvent, onDone, onError, options
   } catch (e) {
     if (e === downstreamClosed) {
       markResponseTerminal("cancelled", { model: actualModel, origin: "client_disconnect" });
-      await resp.body?.cancel?.().catch?.(() => {});
+      await cancelSourceResponse(resp).catch(() => {});
       return false;
     }
     markResponseErrorOrigin("transport");

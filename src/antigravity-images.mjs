@@ -1,6 +1,7 @@
 import {nativeImageRequest,checkedImage,IMAGE_MAX_BYTES} from "./native-images.mjs";
 import {imageModelCatalog,imageModelSelection} from "./image-models.mjs";
 import {httpError,readBoundedResponseText} from "./http-transport.mjs";
+import {cancelSourceResponse} from "./source-response.mjs";
 
 export function createAntigravityImages({client,models,privacy}={}) {
   return async(request,{signal}={})=>{
@@ -17,8 +18,8 @@ export function createAntigravityImages({client,models,privacy}={}) {
     const body=await nativeImageRequest({model:selected,prompt:text.join("\n"),...(images.length?{images}:{}),n:1},operation,selected);
     const session=privacy?.prepareSession?await privacy.prepareSession({input:body.prompt},{protocol:"responses",client:"gemini",signal}):null;
     try{
-      const response=await client.images(operation,{...body,prompt:session?.body.input||body.prompt},{signal});
-      if(!response.ok){await response.body?.cancel();throw httpError("Copilot image generation was refused (HTTP "+response.status+")",response.status)}
+      const response=await client.images(operation,{...body,prompt:session?.body.input||body.prompt},{signal,sourceBodyManaged:true});
+      if(!response.ok){await cancelSourceResponse(response).catch(()=>{});throw httpError("Copilot image generation was refused (HTTP "+response.status+")",response.status)}
       const value=JSON.parse(await readBoundedResponseText(response,{maxBytes:48*1024*1024,signal,label:"Copilot image"}));
       if(!Array.isArray(value.data)||value.data.length!==1)throw httpError("Invalid Copilot image response",502);
       const data=value.data[0].b64_json,mimeType=await checkedImage(data,IMAGE_MAX_BYTES);

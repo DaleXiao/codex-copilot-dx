@@ -6,9 +6,11 @@ import { debugLog } from "./log.mjs";
 import { enforceResponsesPayloadByteBudget } from "./responses-byte-budget.mjs";
 import { status } from "./status.mjs";
 import { withChatStreamUsage } from "./stream-contract.mjs";
-import { markRequestObservation, markUpstreamStarted, markUpstreamHeaders } from "./stream-performance.mjs";
+import { markRequestObservation, markUpstreamHeaders } from "./stream-performance.mjs";
 import { currentRequestContext } from "./request-context.mjs";
 import { requestOptionsEvidence } from "./response-failures.mjs";
+import { sourceTransport } from "./source-transport.mjs";
+import { SOURCE_HTTP_CLIENT } from "./source-response.mjs";
 
 function abortError(signal) {
   if (signal?.reason instanceof Error) return signal.reason;
@@ -90,6 +92,7 @@ export function createCopilotClientRuntime({
     retryOptions,
     bodyText,
     onUpstreamStart,
+    ...sourceOptions
   } = {}) {
     const token = await tokenSession.getToken({ signal });
     const upstreamReq = chatReq.stream === true ? withChatStreamUsage(chatReq) : chatReq;
@@ -104,14 +107,13 @@ export function createCopilotClientRuntime({
       vision: computeVision(messages),
     });
     headers["Content-Length"] = String(Buffer.byteLength(serializedBody));
-    onUpstreamStart?.();
-    markUpstreamStarted(upstreamReq.stream === true);
-    return fetchCopilotUpstream(`${tokenSession.getApiBase()}/chat/completions`, {
+    return sourceTransport({ ...sourceOptions, signal, onUpstreamStart }, { send: fetchCopilotUpstream, model: upstreamReq.model, bodyText: serializedBody, stream: upstreamReq.stream === true, observe: true,
+      args: [`${tokenSession.getApiBase()}/chat/completions`, {
       method: "POST",
       headers,
       body: serializedBody,
       signal,
-    }, { fetchImpl, ...retryOptions });
+    }, { fetchImpl, ...retryOptions }] });
   }
 
   async function fetchModels({ signal, fetchImpl, retryOptions }) {
@@ -169,6 +171,7 @@ export function createCopilotClientRuntime({
     onUpstreamStart,
     payloadPrepared = false,
     payloadOptions = {},
+    ...sourceOptions
   } = {}) {
     const token = await tokenSession.getToken({ signal });
     const preparedPayload = await prepareResponsesPayload(reqBody, {
@@ -194,15 +197,15 @@ export function createCopilotClientRuntime({
     try {
       const context = currentRequestContext();
       if (context) context.requestOptions = requestOptionsEvidence(reqBody);
-      onUpstreamStart?.();
-      markUpstreamStarted(reqBody.stream === true);
-      return await fetchCopilotUpstream(`${tokenSession.getApiBase()}${responsesEndpointPath()}`, {
+      return await sourceTransport({ ...sourceOptions, signal, onUpstreamStart }, { send: fetchCopilotUpstream, model: reqBody.model, bodyText, stream: reqBody.stream === true, observe: true,
+        args: [`${tokenSession.getApiBase()}${responsesEndpointPath()}`, {
         method: "POST",
         headers,
         body: bodyText,
         signal,
-      }, { fetchImpl, ...retryOptions });
+      }, { fetchImpl, ...retryOptions }] });
     } catch (error) {
+      if (error.sourceQueue || error.origin === "source_admission") throw error;
       if (signal?.aborted) throw abortError(signal);
       const cause = error?.cause;
       const causeText = cause ? ` (${[cause.code, cause.message].filter(Boolean).join(": ")})` : "";
@@ -210,16 +213,16 @@ export function createCopilotClientRuntime({
     }
   }
 
-  async function images(operation, body, { signal, fetchImpl } = {}) {
+  async function images(operation, body, { signal, fetchImpl, ...sourceOptions } = {}) {
     if (!["generations", "edits"].includes(operation)) throw new Error("Unsupported image operation");
     const token = await tokenSession.getToken({ signal });
     const headers = buildHeaders({ token, version: getVSCodeVersion(), initiator: "user", vision: operation === "edits" });
     const bodyText = JSON.stringify(body);
     markRequestObservation({ payload_bytes: Buffer.byteLength(bodyText), images: body.images?.length || 0 });
-    markUpstreamStarted(false);
-    const response = await fetchCopilotUpstream(`${tokenSession.getApiBase()}/v1/images/${operation}`, {
+    const response = await sourceTransport({ ...sourceOptions, signal }, { send: fetchCopilotUpstream, model: body.model, bodyText, stream: false, observe: true,
+      args: [`${tokenSession.getApiBase()}/v1/images/${operation}`, {
       method: "POST", headers, body: bodyText, signal, redirect: "error",
-    }, { fetchImpl, retries: 0 });
+    }, { fetchImpl, retries: 0 }] });
     markUpstreamHeaders(response.status);
     return response;
   }
@@ -243,6 +246,7 @@ export function createCopilotClientRuntime({
   }
 
   return Object.freeze({
+    [SOURCE_HTTP_CLIENT]: true,
     profile,
     cacheModelEndpoints,
     getCachedModelEndpoints,

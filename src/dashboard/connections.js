@@ -147,7 +147,7 @@
     if (busy) return;busy = true;generation++;
     const previousImage = imageViewRevision(data);
     const trigger = ["client", "image_model"].includes(input.operation) ? clientForm.querySelector('button[type="submit"]') : input.operation === "preview_client" ? el("connection-sync-preview")
-      : input.operation === "save_api" ? apiForm.querySelector('button[type="submit"]') : document.activeElement;
+      : input.operation === "save_api" ? apiForm.querySelector('button[type="submit"]') : input.operation === "source_limits" ? el("source-limit-save") : document.activeElement;
     const oldKey = trigger?.dataset.i18n, oldText = trigger?.textContent;
     if (trigger?.tagName === "BUTTON") { trigger.setAttribute("aria-busy", "true");trigger.disabled = true;words(trigger, input.operation === "preview_client" ? "api_reading" : "api_saving"); }
     if (input.operation === "source_limits") renderAccess();

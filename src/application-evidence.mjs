@@ -3,11 +3,11 @@ const APPS = new Set(["codex", "claude_app", "antigravity"]);
 // Only accepted protocol metadata. No bodies, tokens, headers or raw chat IDs.
 export function createApplicationEvidence({ now = Date.now } = {}) {
   const candidates = new Map(), confirmed = new Map();
-  const accept = (req, app, scope) => {
+  const accept = (req, app, scope, at = now()) => {
     if (!APPS.has(app) || !["catalog", "inference", "control"].includes(scope)) return;
     const peerPort = req?.socket?.remotePort, port = req?.socket?.localPort;
     if (!Number.isInteger(peerPort) || !Number.isInteger(port)) return;
-    const key = `${port}:${peerPort}`;candidates.delete(key);candidates.set(key, { app, scope, peerPort, port, at: now() });
+    const key = `${port}:${peerPort}`;candidates.delete(key);candidates.set(key, { app, scope, peerPort, port, at });
     while (candidates.size > 256) candidates.delete(candidates.keys().next().value);
   };
   return {

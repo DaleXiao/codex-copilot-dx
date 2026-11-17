@@ -5,12 +5,13 @@ import { readSafeUpstreamReason } from "./safe-upstream-error.mjs";
 import { currentRequestContext, runWithRequestContext } from "./request-context.mjs";
 import { recordUsage } from "./usage-store.mjs";
 import { boundedDiagnosticText } from "./diagnostic-text.mjs";
+import { cancelSourceResponse, cloneSourceResponse, whenSourceReleased } from "./source-response.mjs";
 
 export const COMPACTION_USAGE_RECORDED = Symbol("ccdx-compaction-usage-recorded");
 export const compactionScope = (provider, client, protocol) => JSON.stringify([client, provider.id, provider.profileId?.(protocol) || provider.id]);
 const MAX_ACTIVE = 2, MAX_SUPPORT = 128, RECOVERY_MS = 5 * 60 * 1000;
 const fail = (code, message, statusCode = 422) => Object.assign(new Error(message), { code, statusCode });
-const cancel = response => { try { void response?.body?.cancel().catch(() => {}); } catch {} };
+const cancel = response => { try { void cancelSourceResponse(response).catch(() => {}); } catch {} };
 const inputFailure = reason => ["input_length_invalid", "context_length_exceeded", "context_window_exceeded"].includes(reason?.code);
 
 export function isCompactionRequest(protocol, body, headers = {}) {
@@ -70,7 +71,7 @@ export function createContextCompactionService({ enabled = () => true, now = Dat
         }
         if (!allowFallback) { forwardError();return nativeResponse; }
         let unsupported = protocol === "responses" && (skipNative || [404, 405, 501].includes(nativeResponse.status));
-        const reason = !unsupported && [400, 413, 422].includes(nativeResponse?.status) ? await readSafeUpstreamReason(nativeResponse.clone(), { signal: options.signal }) : null;
+        const reason = !unsupported && [400, 413, 422].includes(nativeResponse?.status) ? await readSafeUpstreamReason(cloneSourceResponse(nativeResponse), { signal: options.signal }) : null;
         unsupported ||= protocol === "responses" && reason?.code === "compaction_unavailable";
         if (!unsupported && !inputFailure(reason)) { stats.failed++;forwardError();return nativeResponse; }
         if (unsupported) remember(owner, { source, model: modelLabel, protocol, native: "unavailable", at: now() });
@@ -81,7 +82,7 @@ export function createContextCompactionService({ enabled = () => true, now = Dat
         const plan = planContextCompaction(body, { protocol, inputLimit: knownLimit, outputAllowance });
         const sealKey = protocol === "responses" ? typeof key === "function" ? key() : key : null;
         if (protocol === "responses" && (typeof sealKey !== "string" || sealKey.length < 32)) throw fail("ccdx_compaction_key_unavailable", "A saved local client identity is required for resumable compression.");
-        cancel(nativeResponse);stats.active++;stats.gateway++;recovering = true;
+        stats.active++;stats.gateway++;recovering = true;
         const controller = new AbortController(), timer = setTimeout(() => controller.abort(fail("ccdx_compaction_timeout", "Compression exceeded its bounded recovery time; the original conversation was kept.")), RECOVERY_MS);
         const signal = options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal;
         const parent = currentRequestContext();
@@ -114,6 +115,7 @@ export function createContextCompactionService({ enabled = () => true, now = Dat
           });
         };
         try {
+          cancel(nativeResponse);await whenSourceReleased(nativeResponse, { signal, timeoutMs: 30000 });
           const summaries = [];
           for (const [index, chunk] of plan.chunks.entries()) summaries.push(await summary(`Historical records, segment ${index + 1} of ${plan.chunks.length}:\n${chunk}`));
           let text = summaries[0];
@@ -139,7 +141,7 @@ export function createContextCompactionService({ enabled = () => true, now = Dat
           } else {
             signal.throwIfAborted();result = await native(plan.rewrite(text), { ...deferredOptions, signal });
             if (!result.ok) {
-              if ([400, 413, 422].includes(result.status) && inputFailure(await readSafeUpstreamReason(result.clone(), { signal }))) {
+              if ([400, 413, 422].includes(result.status) && inputFailure(await readSafeUpstreamReason(cloneSourceResponse(result), { signal }))) {
                 cancel(result);throw fail("ccdx_compaction_still_rejected", "The source still rejected the compressed request. The original conversation was kept.");
               }
               stats.failed++;forwardError();

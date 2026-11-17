@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { isDisturbed } from "node:stream";
 import { currentRequestContext } from "./request-context.mjs";
 import { readSafeUpstreamReason } from "./safe-upstream-error.mjs";
+import { trackSourceResponse, sourceResponseFailed, sourceResponseStreamLimit, SOURCE_HTTP_CONTEXT, SOURCE_HTTP_CLIENT } from "./source-response.mjs";
 
 const MAX_LIMIT = 128;
 const MAX_QUEUE_BYTES = 8 * 1024 * 1024;
@@ -17,9 +18,13 @@ export const SOURCE_ADMISSION = Symbol("source admission");
 export const SOURCE_LIMIT_EVIDENCE = Symbol("source limit evidence");
 const SOURCE_STREAM_LIMIT = Symbol("source stream limit");
 export function observeSourceStreamFailure(response, error) {
+  sourceResponseFailed(response);
   const code = error?.details?.error_code || error?.upstream_code || error?.code || error?.type;
   if (["rate_limit_error", "rate_limit_exceeded", "ramp_limit_exceeded", "concurrency_limit", "concurrency_limit_exceeded", "too_many_concurrent_requests",
-    "insufficient_quota", "credit_balance_exhausted", "quota_exceeded", "model_quota_exceeded", "enforced_spend_limit_reached"].includes(code)) response?.[SOURCE_STREAM_LIMIT]?.(error);
+    "insufficient_quota", "credit_balance_exhausted", "quota_exceeded", "model_quota_exceeded", "enforced_spend_limit_reached"].includes(code)) {
+    if (response?.[SOURCE_STREAM_LIMIT]) response[SOURCE_STREAM_LIMIT](error);
+    else sourceResponseStreamLimit(response, error);
+  }
 }
 export function admittedSource(source, scheduler) {
   return source?.client && scheduler ? { ...source, client: scheduler.wrap(source.client, () => ({ source: source.id, account: source.profileId() })) } : source;
@@ -72,7 +77,7 @@ export function createSourceAdmission({ now = Date.now, initialLimit = MAX_LIMIT
       }
       const key = fingerprint(identity), saved = learned[key], restored = validLimit(saved?.limit) && saved?.limit !== null && now() >= saved.at && now() - saved.at < 86400000;
       group = { source, key, limit: restored ? saved.limit : initialLimit, active: 0, queue: [], models: new Map(), lastClient: null,
-        epoch: 0, stableAt: now(), successes: 0, pausedUntil: 0, reason: null, timer: null, completed: 0, rejected: 0 };
+        epoch: 0, stableAt: now(), successes: 0, readyToGrow: false, lastStableNotice: now(), pausedUntil: 0, reason: null, timer: null, completed: 0, rejected: 0 };
       groups.set(identity, group);
     }
     return group;
@@ -126,55 +131,68 @@ export function createSourceAdmission({ now = Date.now, initialLimit = MAX_LIMIT
         model.epoch++;model.successes = 0;model.stableAt = now();
       } else {
         group.limit = Math.min(group.limit, next);if (value.limit) { group.advertised = value.limit;group.advertisedUntil = now() + stableMs; }
-        group.epoch++;group.successes = 0;group.stableAt = now();
+        group.epoch++;group.successes = 0;group.readyToGrow = false;group.stableAt = now();
       }
     }
     arm(group);
+  }
+  class Lease {
+    constructor(group, model, client) { this.group = group;this.model = model;this.client = client;this.epoch = group.epoch;this.bytes = 0;this.released = false;this.observed = false; }
+    limit(value) { this.observed = true;feedback(this.group, this, value); }
+    streamFailure(error, headers) { const value = sourceLimitFeedback(429, headers, { error }, now());if (value?.kind !== "unknown") this.limit(value); }
+    observe(status, headers, body) {
+      const group = this.group, entry = this;
+      this.responseAt ??= now();
+      const declared = headers?.get?.("x-ratelimit-concurrency-limit");
+      if (!this.headersObserved && /^\d{1,3}$/.test(declared || "") && validLimit(Number(declared))) {
+        group.advertised = Number(declared);group.advertisedUntil = now() + stableMs;group.limit = Math.min(group.limit, group.advertised);
+      }
+      this.headersObserved = true;this.observed ||= status === 429;
+      const value = sourceLimitFeedback(status, headers, body, this.responseAt);
+      if (value) value.delay = Math.max(0, this.responseAt + value.delay - now());
+      feedback(group, entry, value);
+    }
+    release(success = false) {
+      if (this.released) return;this.released = true;
+      const group = this.group, entry = this, model = this.modelState;group.active--;if (model) model.active--;group.completed++;
+      if (success && !this.observed) {
+        group.successes = Math.min(8, group.successes + 1);
+        const mature = group.successes >= 8 && now() - group.stableAt >= stableMs;
+        group.readyToGrow ||= mature;
+        if (group.readyToGrow) {
+          const ceiling = limits.get(group.source) || MAX_LIMIT;
+          if (group.queue.length && group.limit < ceiling) {
+            group.limit = Math.min(group.advertisedUntil > now() ? group.advertised : MAX_LIMIT, group.limit + 1);
+            group.readyToGrow = false;group.stableAt = now();group.successes = 0;
+          } else if (group.limit >= ceiling) { group.readyToGrow = false;group.stableAt = now();group.successes = 0; }
+          if (mature && now() - group.lastStableNotice >= stableMs && group.limit <= ceiling && (group.epoch || group.limit !== initialLimit)) {
+            group.lastStableNotice = now();try { onStable(group.key, group.limit); } catch { /* Metadata persistence cannot fail inference. */ }
+          }
+        }
+        if (model) {
+          model.successes = Math.min(8, model.successes + 1);
+          if (group.queue.some(waiter => waiter.model === entry.model) && model.limit < capacity(group) && model.successes >= 8 && now() - model.stableAt >= stableMs) {
+            model.limit = Math.min(model.maximumUntil > now() ? model.maximum : MAX_LIMIT, model.limit + 1);model.stableAt = now();model.successes = 0;
+          }
+        }
+      }
+      drain(group);
+    }
   }
   function activate(group, entry) {
     group.active++;group.lastClient = entry.client;
     const model = modelState(group, entry.model);if (model) model.active++;
     entry.epoch = group.epoch;entry.modelEpoch = model?.epoch;entry.inflight = group.active;entry.modelInflight = model?.active || 1;
-    let released = false, observed = false;
-    return entry.resolve({
-      limit(value) { observed = true;feedback(group, entry, value); },
-      observe(status, headers, body) {
-        const declared = headers?.get?.("x-ratelimit-concurrency-limit");
-        if (/^\d{1,3}$/.test(declared || "") && validLimit(Number(declared))) {
-          group.advertised = Number(declared);group.advertisedUntil = now() + stableMs;group.limit = Math.min(group.limit, group.advertised);
-        }
-        observed ||= status === 429;
-        feedback(group, entry, sourceLimitFeedback(status, headers, body, now()));
-      },
-      release(success = false) {
-        if (released) return;released = true;group.active--;if (model) model.active--;group.completed++;
-        if (success && !observed) {
-          group.successes++;
-          if (group.successes >= 8 && now() - group.stableAt >= stableMs) {
-            const ceiling = limits.get(group.source) || MAX_LIMIT;
-            if (group.queue.length && group.limit < ceiling) group.limit = Math.min(group.advertisedUntil > now() ? group.advertised : MAX_LIMIT, group.limit + 1);
-            group.stableAt = now();group.successes = 0;
-            if (group.limit <= ceiling && (group.epoch || group.limit !== initialLimit)) try { onStable(group.key, group.limit); } catch { /* Optional metadata persistence cannot fail inference. */ }
-          }
-          if (model) {
-            model.successes++;
-            if (group.queue.some(waiter => waiter.model === entry.model) && model.limit < capacity(group) && model.successes >= 8 && now() - model.stableAt >= stableMs) {
-              model.limit = Math.min(model.maximumUntil > now() ? model.maximum : MAX_LIMIT, model.limit + 1);model.stableAt = now();model.successes = 0;
-            }
-          }
-        }
-        drain(group);
-      },
-    });
+    entry.modelState = model;return entry.resolve(entry);
   }
-  function acquire(descriptor, { signal, model = "unknown", client = "other", bytes = () => 1 } = {}) {
+  function acquire(descriptor, { signal, model = "unknown", client = "other", bytes, bodyText } = {}) {
     if (closed) throw failure("ccdx_source_closed", "The source scheduler is stopping.");
     if (signal?.aborted) throw abortError(signal);
-    const group = groupFor(descriptor), entry = { model, client, epoch: group.epoch, bytes: 0 };
+    const group = groupFor(descriptor), entry = new Lease(group, model, client);
     if (!group.queue.length && fits(group, entry)) { entry.resolve = immediate;return activate(group, entry); }
     const delay = Math.max(0, readyAt(group, entry) - now());
     if (delay >= waitTimeoutMs) throw failure("ccdx_source_limited", "The source is limited. Retry after its recovery time.", delay, 429);
-    const size = bytes();
+    const size = bytes === undefined ? typeof bodyText === "string" ? Math.max(1, Buffer.byteLength(bodyText)) : 1 : typeof bytes === "function" ? bytes() : bytes;
     entry.bytes = Number.isSafeInteger(size) && size > 0 ? size : maxQueuedBytes + 1;
     if (group.queue.length >= maxQueued || entry.bytes + queuedBytes > maxQueuedBytes) {
       group.rejected++;throw failure("ccdx_source_queue_full", "The source is busy and its waiting queue is full. Retry shortly.", Math.max(1000, delay));
@@ -196,19 +214,28 @@ export function createSourceAdmission({ now = Date.now, initialLimit = MAX_LIMIT
   async function run(descriptor, perform, options = {}) {
     const acquired = acquire(descriptor, options), lease = acquired instanceof Promise ? await acquired : acquired;
     let response;
-    try { if (options.signal?.aborted) throw abortError(options.signal);response = await perform(); }
+    try { if (options.signal?.aborted) throw abortError(options.signal);response = await perform(options.args); }
     catch (error) { lease.release();throw error; }
     if (!(response instanceof Response)) { lease.release();return response; }
     lease.observe(response.status, response.headers);
-    const observedLimit = response[SOURCE_LIMIT_EVIDENCE];if (observedLimit) lease.limit(observedLimit);
+    const observedLimit = response[SOURCE_LIMIT_EVIDENCE];let bodyObserved = Boolean(observedLimit);
+    if (observedLimit) { lease.limit(observedLimit);lease.release(false); }
     if (!response.body) { lease.release(response.ok);return response; }
-    if (response.status === 429 && !observedLimit) await readSafeUpstreamReason(response.clone(), { signal: options.signal, maxBytes: MAX_ERROR_BYTES,
-      onSourceLimit: value => lease.limit(sourceLimitFeedback(response.status, response.headers, value, now())) });
+    if (response.status === 429 && !observedLimit) {
+      try { await readSafeUpstreamReason(response.clone(), { signal: options.signal, maxBytes: MAX_ERROR_BYTES,
+        onSourceLimit: value => { bodyObserved = true;lease.observe(response.status, response.headers, value);lease.release(false); } }); }
+      catch (error) { lease.release(false);throw error; }
+    }
+    if (options.sourceBodyManaged) {
+      trackSourceResponse(response, lease, { signal: options.signal, bodyObserved, waitTimeoutMs, captureLimit: response.status === 429 && !bodyObserved ? MAX_ERROR_BYTES : 0 });
+      return response;
+    }
+    let state;
     const reader = response.body.getReader();let ended = false, errorBytes = 0, fragments = [];
     const finish = success => {
       if (ended) return;ended = true;options.signal?.removeEventListener("abort", cancel);
       if (fragments.length) { try { lease.observe(response.status, response.headers, JSON.parse(Buffer.concat(fragments).toString())); } catch {}fragments = []; }
-      try { reader.releaseLock(); } catch {}lease.release(success);
+      try { reader.releaseLock(); } catch {}if (state) state.finish(success);else lease.release(success);
     };
     const cancel = () => { void reader.cancel(options.signal?.reason).catch(() => {}).finally(() => finish(false)); };
     options.signal?.addEventListener("abort", cancel, { once: true });
@@ -217,7 +244,7 @@ export function createSourceAdmission({ now = Date.now, initialLimit = MAX_LIMIT
         try {
           const next = await reader.read();
           if (next.done) { finish(response.ok);controller.close();return; }
-          if (response.status === 429 && !observedLimit && errorBytes <= MAX_ERROR_BYTES) {
+          if (response.status === 429 && !bodyObserved && errorBytes <= MAX_ERROR_BYTES) {
             errorBytes += next.value.byteLength;
             if (errorBytes <= MAX_ERROR_BYTES) fragments.push(Buffer.from(next.value));else fragments = [];
           }
@@ -243,6 +270,7 @@ export function createSourceAdmission({ now = Date.now, initialLimit = MAX_LIMIT
     Object.defineProperty(result, SOURCE_STREAM_LIMIT, { value: error => {
       const value = sourceLimitFeedback(429, response.headers, { error }, now());if (value?.kind !== "unknown") lease.limit(value);
     } });
+    state = trackSourceResponse(result, lease, { externalObserver: true, waitTimeoutMs });
     return result;
   }
   return {
@@ -250,12 +278,15 @@ export function createSourceAdmission({ now = Date.now, initialLimit = MAX_LIMIT
     wrap(client, descriptor) {
       if (!client || clients.has(client) || client[SOURCE_ADMISSION]?.scheduler === this) return clients.get(client) || client;
       const wrapped = { ...client };
+      const sourceContext = { scheduler: this, descriptor };
       for (const method of ["responses", "responsesCompact", "messages", "chatCompletions", "images"]) {
         if (typeof client[method] !== "function") continue;
+        const perform = args => client[method](...args);
         wrapped[method] = (...args) => {
           const index = method === "images" ? 1 : 0, body = args[index], options = args[index + 1] || {};
           if (options.countTokens) return client[method](...args);
-          return run(descriptor(), () => client[method](...args), { signal: options.signal, model: body?.model,
+          if (client[SOURCE_HTTP_CLIENT]) { args[index + 1] = { ...options, [SOURCE_HTTP_CONTEXT]: sourceContext };return client[method](...args); }
+          return run(descriptor(), perform, { args, signal: options.signal, model: body?.model, sourceBodyManaged: options.sourceBodyManaged === true,
             client: currentRequestContext()?.application || "other", bytes: () => Buffer.byteLength(options.bodyText || JSON.stringify(body || {})) });
         };
       }

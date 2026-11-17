@@ -22,7 +22,7 @@ import {antigravityCopilotModels} from "./antigravity-models.mjs";
 const execute=promisify(execFile),key="gemini_antigravity_enabled",modelKey="gemini_antigravity_models";
 
 export function createAntigravityRuntime({client,models=()=>[],refreshModels,privacy,home=os.homedir(),env=process.env,inspect=inspectGeminiApp,
-  exec=execute,searchFn,imageFn,guardSource,googleFetch,acquireRequest,readToken=()=>readSavedGithubToken(home),...timeouts}={}) {
+  exec=execute,searchFn,imageFn,guardSource,googleFetch,acquireRequest,applicationControl,readToken=()=>readSavedGithubToken(home),...timeouts}={}) {
   const options={home,env},guard=createConversationSourceGuard(options);
   const web=searchFn?null:createCopilotWeb({client,readToken});
   let app={status:"unknown"},route=null,lastOperation=null,compactionSalt;const conversationSources=new Map();
@@ -69,7 +69,9 @@ export function createAntigravityRuntime({client,models=()=>[],refreshModels,pri
     }
     const expected=listed.filter(model=>model.selected).map(model=>model.id).sort();
     const reload=config.enabled&&sourceEnabled?(activity.catalog_models===null?null:JSON.stringify([...activity.catalog_models].sort())!==JSON.stringify(expected)):false;
-    return {source:"gemini_antigravity",...config,source_enabled:sourceEnabled,models_reload_required:reload,app,route_observed:handler.snapshot().observed,
+    const current=applicationControl?.snapshot().antigravity;
+    const visibleApp=current?{status:current.status,version:current.version||null,pids:current.pid?[current.pid]:[]}:app;
+    return {source:"gemini_antigravity",...config,source_enabled:sourceEnabled,models_reload_required:reload,app:visibleApp,application:current||null,route_observed:handler.snapshot().observed,
       model_source:"Google + GitHub Copilot",background_source:"GitHub Copilot",ordinary_chat_source:"Google (unchanged)",
       compaction_source:"Observed conversation source; existing background policy when unassigned",
       models:listed,model_groups:[...groups.values()],activity,last_operation:lastOperation};
@@ -98,10 +100,18 @@ export function createAntigravityRuntime({client,models=()=>[],refreshModels,pri
       withFileLockSync(file+".lock",()=>{const saved=readUserSettings({...options,strict:true});atomicWriteFileIfChangedSync(file,JSON.stringify({...saved,[key]:operation==="enable"},null,2)+"\n",{mode:0o600})});
       lastOperation=null;
     }
+    if(applicationControl){
+      if(operation==="open"){
+        const result=await applicationControl.action({id:"antigravity",operation:"open"});lastOperation={action:operation,status:result.status};
+      }else if(operation==="preview"){
+        const plan=await applicationControl.previewAntigravity();lastOperation={action:operation,status:plan.status,...(plan.status==="prepared"?{plan:{command:plan.command,args:plan.args}}:{})};
+      }else await applicationControl.check("antigravity",true);
+      return snapshot();
+    }
     app=await inspect();route=baseUrl+"/antigravity";
     if(["open","preview"].includes(operation)){
       const config=settings();
-      const plan=config.enabled?planGeminiAppLaunch(app,{cloudCodeUrl:route,env}):app.status==="stopped"?{status:"prepared",command:"/usr/bin/open",args:["-a",app.app]}:{status:app.status==="running"?"needs_app_relaunch":app.status};
+      const plan=config.enabled?planGeminiAppLaunch(app,{cloudCodeUrl:route,env,home}):app.status==="stopped"?{status:"prepared",command:"/usr/bin/open",args:["-a",app.app]}:{status:app.status==="running"?"needs_app_relaunch":app.status};
       lastOperation={action:operation,status:plan.status};
       if(operation==="open"&&plan.status==="prepared"){
         await exec(plan.command,plan.args,{encoding:"utf8",timeout:5000,maxBuffer:4096});lastOperation.status="opened";app={...app,status:"starting"};

@@ -4,18 +4,19 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { inspectApplicationProcesses, processFamily, applicationConnections, controlApplicationProcess } from "./application-process.mjs";
 import { inspectApplicationConfiguration } from "./application-configuration.mjs";
 import { createApplicationEvidence } from "./application-evidence.mjs";
-import { planGeminiAppLaunch } from "./gemini-app.mjs";
+import { planGeminiAppLaunch, inspectGeminiApp } from "./gemini-app.mjs";
 import { readUserSettings } from "./user-settings.mjs";
 
 const execute = promisify(execFile), ids = ["codex", "claude_app", "antigravity"];
 export function createApplicationControl({ providerRuntime, clientIntegration, imageHostState, env = process.env, home,
   platform = process.platform, port = 2026, host = "127.0.0.1", now = Date.now, exec = execute, wait = sleep,
   inspect = inspectApplicationProcesses, connections = applicationConnections, control = controlApplicationProcess,
+  inspectGemini = inspectGeminiApp,
   configuration = inspectApplicationConfiguration, openCodexApp, evidence = providerRuntime?.applicationEvidence || createApplicationEvidence({ now }) } = {}) {
   const options = { env, home, platform, exec };
   const states = Object.fromEntries(ids.map(id => [id, { status: "unknown", connection: "pending" }]));
   const configurations = new Map(), starting = new Map();
-  let cached, at = 0, pending, pendingAt = 0, serial = Promise.resolve(), inspection = 0;
+  let cached, at = 0, pending, pendingAt = 0, serial = Promise.resolve(), inspection = 0, operations = 0;
   const snapshot = () => structuredClone(states);
   const inventory = async fresh => {
     if (!fresh && cached && now() >= at && now() - at < 3000) return cached;
@@ -84,10 +85,7 @@ export function createApplicationControl({ providerRuntime, clientIntegration, i
       }
     }
     if (!handled && platform === "darwin") {
-      const config = readUserSettings({ env, home, strict: true });
-      const plan = id === "antigravity" && config.gemini_antigravity_enabled === true
-        ? planGeminiAppLaunch({ ...app, status: "stopped" }, { cloudCodeUrl: `http://${host}:${port}/antigravity`, env })
-        : { status: "prepared", command: "/usr/bin/open", args: ["-a", app.app] };
+      const plan = id === "antigravity" ? await antigravityPlan(app) : { status: "prepared", command: "/usr/bin/open", args: ["-a", app.app] };
       if (plan.status !== "prepared") return { status: plan.status, app: states[id] };
       await exec(plan.command, plan.args, { encoding: "utf8", timeout: 5000, maxBuffer: 4096 });
     } else if (!handled && platform === "win32") {
@@ -98,5 +96,19 @@ export function createApplicationControl({ providerRuntime, clientIntegration, i
     evidence.clear(id);starting.set(id, now() + 10000);states[id] = { ...states[id], inspection: ++inspection, status: "starting", connection: "pending", needs_reload: false };
     return { status: "opened", app: states[id] };
   }
-  return { snapshot, evidence, check, action(input) { const result = serial.then(() => action(input));serial = result.catch(() => {});return result; } };
+  async function antigravityPlan(app) {
+    const config = readUserSettings({ env, home, strict: true });
+    if (config.gemini_antigravity_enabled !== true) return { status: "prepared", command: "/usr/bin/open", args: ["-a", app.app] };
+    const verified = await inspectGemini({ ...options, app: app.app });
+    if (verified.status !== "stopped") return { status: verified.status === "running" ? "app_changed" : verified.status };
+    if (readUserSettings({ env, home, strict: true }).gemini_antigravity_enabled !== true) return { status: "prepared", command: "/usr/bin/open", args: ["-a", app.app] };
+    return planGeminiAppLaunch(verified, { cloudCodeUrl: `http://${host}:${port}/antigravity`, env, home });
+  }
+  return { snapshot, evidence, check, busy: () => operations > 0,
+    async previewAntigravity() {
+      const state = await check("antigravity", true);
+      if (state.status !== "stopped") return { status: state.status === "running" ? "needs_app_relaunch" : state.status };
+      return antigravityPlan(cached.apps.antigravity);
+    },
+    action(input) { operations++;const result = serial.then(() => action(input)).finally(() => { operations--; });serial = result.catch(() => {});return result; } };
 }

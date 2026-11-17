@@ -1,4 +1,5 @@
 import { httpError } from "./http-errors.mjs";
+import { sourceResponseReader, observeSourceRead, failSourceRead, cancelSourceReader, releaseSourceReader, cancelSourceResponse, hasSourceReader } from "./source-response.mjs";
 
 export const MAX_UPSTREAM_ERROR_BODY_BYTES = 1024 * 1024;
 export const MAX_UPSTREAM_MODEL_CATALOG_BYTES = 8 * 1024 * 1024;
@@ -31,7 +32,7 @@ function unreadableUpstreamBody(label) {
 }
 
 async function cancelResponseBody(response) {
-  try { await response?.body?.cancel?.(); } catch {}
+  try { await cancelSourceResponse(response); } catch {}
 }
 
 function responseAbortError(signal) {
@@ -42,7 +43,7 @@ function responseAbortError(signal) {
 }
 
 export function readResponseChunk(reader, signal) {
-  if (!signal) return reader.read();
+  if (!signal) return hasSourceReader(reader) ? reader.read().then(value => { observeSourceRead(reader, value);return value; }, error => { failSourceRead(reader);throw error; }) : reader.read();
   if (signal.aborted) return Promise.reject(responseAbortError(signal));
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -54,13 +55,13 @@ export function readResponseChunk(reader, signal) {
     };
     const onAbort = () => {
       const error = responseAbortError(signal);
-      try { Promise.resolve(reader.cancel(error)).catch(() => {}); } catch {}
+      try { void cancelSourceReader(reader, error).catch(() => {}); } catch {}
       finish(reject, error);
     };
     signal.addEventListener("abort", onAbort, { once: true });
     reader.read().then(
-      (value) => finish(resolve, value),
-      (error) => finish(reject, error),
+      (value) => { observeSourceRead(reader, value);finish(resolve, value); },
+      (error) => { failSourceRead(reader);finish(reject, error); },
     );
   });
 }
@@ -96,7 +97,7 @@ export async function readBoundedResponseBuffer(response, {
     if ((responseContentLength(response) || 0) > 0) throw unreadableUpstreamBody(label);
     return Buffer.alloc(0);
   }
-  const reader = response?.body?.getReader?.();
+  const reader = sourceResponseReader(response);
   if (!reader) throw unreadableUpstreamBody(label);
   const chunks = [];
   let total = 0;
@@ -107,7 +108,7 @@ export async function readBoundedResponseBuffer(response, {
       const chunk = Buffer.from(value);
       total += chunk.length;
       if (total > limit) {
-        await reader.cancel().catch(() => {});
+        await cancelSourceReader(reader).catch(() => {});
         throw upstreamBodyTooLarge(label, limit);
       }
       chunks.push(chunk);
@@ -115,7 +116,7 @@ export async function readBoundedResponseBuffer(response, {
     return Buffer.concat(chunks, total);
   } finally {
     try {
-      reader.releaseLock();
+      releaseSourceReader(reader);
     } catch (error) {
       if (!signal?.aborted) throw error;
     }

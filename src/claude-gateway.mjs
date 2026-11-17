@@ -25,6 +25,7 @@ import { isCompactionRequest, compactionScope } from "./context-compaction.mjs";
 import { compactionSummarizer } from "./context-compaction-wire.mjs";
 import { requestPurpose } from "./request-context.mjs";
 import { messagesWithEffortDefault } from "./client-effort.mjs";
+import { sourceResponseReader, observeSourceRead, failSourceRead, cancelSourceReader, releaseSourceReader, cancelSourceResponse, sourceResponseAccepted } from "./source-response.mjs";
 
 function observeMessagesWindow(provider, model, capability, entry) {
   try {
@@ -49,11 +50,12 @@ const MAX_TERMINAL_DRAIN_BYTES = 64 * 1024;
 const TERMINAL_DRAIN_TIMEOUT_MS = 1000;
 async function drainAfterMessageStop(reader) {
   let bytes = 0, ended = false;
-  const cancel = () => { try { void reader.cancel().catch(() => {}); } catch {} };
+  const cancel = () => { try { void cancelSourceReader(reader).catch(() => {}); } catch {} };
   const timer = setTimeout(cancel, TERMINAL_DRAIN_TIMEOUT_MS);timer.unref?.();
   try {
     while (true) {
-      const { done, value } = await reader.read();
+      let next;try { next = await reader.read(); } catch (error) { failSourceRead(reader);throw error; }
+      observeSourceRead(reader, next);const { done, value } = next;
       if (done) { ended = true;break; }
       bytes += value.byteLength;
       if (bytes > MAX_TERMINAL_DRAIN_BYTES) break;
@@ -61,7 +63,7 @@ async function drainAfterMessageStop(reader) {
   } catch { /* The response has already ended for the client. */ }
   finally {
     clearTimeout(timer);if (!ended) cancel();
-    try { reader.releaseLock(); } catch {}
+    try { releaseSourceReader(reader); } catch {}
   }
 }
 const hasMessageState = block => Boolean(block && (block.id || block.signature || block.data
@@ -296,7 +298,7 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
         } : selectedProvider.client.messages;
         const call = privacy?.wrap(sourceCall, { res, protocol: "messages", client: privacyClient }) || sourceCall;
         let upstreamHeadersObserved = false;
-        const callOptions = { headers: req.headers, countTokens, signal: abort.signal,
+        const callOptions = { headers: req.headers, countTokens, signal: abort.signal, sourceBodyManaged: true,
           onUpstreamErrorHeaders(status) { upstreamHeadersObserved = true;tracker?.upstreamHeaders(status);body = null;release();release = () => {}; },
           onCountObservation(value) {
             context.countObservation = { ...context.countObservation, ...value };
@@ -352,7 +354,7 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
           const outgoing = clientModel && !countTokens && upstream.ok && value?.type === "message" ? JSON.stringify({ ...value, model: clientModel }) : raw;
           if (!res.destroyed && !res.writableEnded) { res.writeHead(upstream.status, headers);res.end(outgoing); }
         } else {
-          if (!/^text\/event-stream(?:\s*;|$)/i.test(upstream.headers.get("content-type") || "")) throw new Error("Expected a Claude event stream");
+          if (!/^text\/event-stream(?:\s*;|$)/i.test(upstream.headers.get("content-type") || "")) { await cancelSourceResponse(upstream).catch(() => {});throw new Error("Expected a Claude event stream"); }
           abort.setTimeout(config.streamIdleTimeoutMs, "stream_idle_timeout");
           res.writeHead(upstream.status, { ...headers, "Cache-Control": "no-cache" });
           let commitState = null, conversationCommitted = false;
@@ -382,16 +384,17 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
               usage = { ...usage, ...Object.fromEntries(Object.entries(event.usage || {}).filter(([, value]) => value != null)) };
               stopReason = event.delta?.stop_reason || stopReason;
             }
-            if (event.type === "message_stop") { sawStop = true;outcome = stopReason === "max_tokens" ? "incomplete" : "completed"; }
+            if (event.type === "message_stop") { sawStop = true;sourceResponseAccepted(upstream);outcome = stopReason === "max_tokens" ? "incomplete" : "completed"; }
           };
           const observer = toolGuard
             ? createGuardedMessagesObserver(observe, config.maxSseBufferBytes, clientModel, toolGuard, restoreToolInput)
             : createMessagesObserver(observe, config.maxSseBufferBytes, clientModel);
-          const reader = upstream.body.getReader();
+          const reader = sourceResponseReader(upstream);
           let draining = false;
           try {
             while (true) {
-              const { value, done } = await reader.read();if (done) break;
+              let next;try { next = await reader.read(); } catch (error) { failSourceRead(reader);throw error; }
+              observeSourceRead(reader, next);const { value, done } = next;if (done) break;
               tracker?.upstreamActivity();abort.setTimeout(config.streamIdleTimeoutMs, "stream_idle_timeout");
               const frames = observer.write(value);
               await commitOutput();
@@ -408,7 +411,7 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
               draining = true;void drainAfterMessageStop(reader);
             }
           } finally {
-            if (!draining) { await reader.cancel().catch(() => {});reader.releaseLock(); }
+            if (!draining) { await cancelSourceReader(reader).catch(() => {});releaseSourceReader(reader); }
           }
         }
       } catch (error) {

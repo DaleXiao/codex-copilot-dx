@@ -104,6 +104,7 @@ export async function openCopilotResponse(reqContext, upstream = copilotResponse
       try {
         options.assertPrepareActive?.();
         resp = await upstream(reqContext.body, {
+          sourceBodyManaged: true,
           assertActive: options.assertPrepareActive,
           signal: options.signal,
           currentInputStart: reqContext.currentInputStart,

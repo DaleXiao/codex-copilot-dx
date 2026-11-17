@@ -90,10 +90,27 @@ test("manual ceilings update immediately, keep in-flight requests and validate i
 test("stable recovery grows on real waiting demand, not on idle traffic", async () => {
   let now = 0;const scheduler = createSourceAdmission({ initialLimit: 1, now: () => now, stableMs: 1 });
   for (let i = 0; i < 8; i++) await (await scheduler.run(descriptor("github"), async () => Response.json({}))).text();
-  now = 1000;assert.equal(scheduler.snapshot()[0].limit, 1);
+  now = 1000;await (await scheduler.run(descriptor("github"), async () => Response.json({}))).text();assert.equal(scheduler.snapshot()[0].limit, 1);
   const stream = busyStream(), first = await scheduler.run(descriptor("github"), async () => stream.response);
   const second = scheduler.run(descriptor("github"), async () => Response.json({}));stream.finish();await first.text();await (await second).text();
   assert.equal(scheduler.snapshot()[0].limit, 2);scheduler.close();
+});
+
+test("idle maturity is retained without increasing stable-cache notification frequency", async () => {
+  let now = 0;const notices = [], scheduler = createSourceAdmission({ now: () => now, stableMs: 10, onStable: (...value) => notices.push(value) });
+  await (await scheduler.run(descriptor("github"), async () => Response.json({ error: { code: "concurrency_limit", limit: 1 } }, { status: 429 }))).text();
+  now = 1001;for (let i = 0; i < 30; i++) await (await scheduler.run(descriptor("github"), async () => Response.json({}))).text();
+  assert.equal(notices.length, 1);assert.equal(scheduler.snapshot()[0].limit, 1);
+  const stream = busyStream(), first = await scheduler.run(descriptor("github"), async () => stream.response);
+  const second = scheduler.run(descriptor("github"), async () => Response.json({}));stream.finish();await first.text();await (await second).text();
+  assert.equal(scheduler.snapshot()[0].limit, 2);assert.equal(notices.length, 1);scheduler.close();
+});
+
+test("one raw 429 body cannot extend its original Retry-After when read later", async () => {
+  let now = 0;const scheduler = createSourceAdmission({ now: () => now });
+  const response = await scheduler.run(descriptor("github"), async () => Response.json({ error: { code: "concurrency_limit", limit: 1 } }, { status: 429, headers: { "retry-after": "2" } }));
+  assert.equal(scheduler.snapshot()[0].retry_after_ms, 2000);now = 500;await response.text();
+  assert.equal(scheduler.snapshot()[0].retry_after_ms, 1500);assert.equal(scheduler.snapshot()[0].limit, 1);scheduler.close();
 });
 
 test("a manual ceiling cannot train unobserved higher capacity", async () => {

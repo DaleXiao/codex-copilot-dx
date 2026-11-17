@@ -1,3 +1,5 @@
+import { cancelSourceResponse } from "./source-response.mjs";
+
 const DEFAULT_BLANK_TOOL_ARGUMENT_LIMIT = 20;
 
 function streamProtocolError(message, code) {
@@ -49,7 +51,7 @@ export async function requireUpstreamEventStream(response) {
   }
 
   if (!error) return;
-  await response?.body?.cancel?.().catch(() => {});
+  await cancelSourceResponse(response).catch(() => {});
   throw error;
 }
 

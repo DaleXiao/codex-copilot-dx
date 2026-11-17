@@ -463,6 +463,7 @@ export function createResponsesHandler(options) {
             const toolChoice = chatReq.tool_choice;
             startUpstreamTimeout();
             const upstream = await chatCompletionsFn(chatReq, {
+              sourceBodyManaged: true,
               signal: abort.signal,
               bodyText,
               onUpstreamStart: startUpstreamTimeout,

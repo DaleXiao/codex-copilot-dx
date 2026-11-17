@@ -141,7 +141,7 @@ export function createServiceControl({ env = process.env, home, platform = proce
     }
     return snapshot();
   }
-  return { snapshot, busy: () => pending > 0,
+  return { snapshot, applicationControl, busy: () => pending > 0 || applicationControl.busy?.() === true,
     async inspectApplication(id, fresh = false) { await applicationControl.check(id, fresh);return snapshot(); },
     action(input) {
     if (input?.action === "client_versions") {

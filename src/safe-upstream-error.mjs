@@ -1,6 +1,7 @@
 import { isMissingCallIdError } from "./responses-tool-output.mjs";
 import { isRootToolSchemaError } from "./messages-tool-schema.mjs";
 import { redactDiagnosticText, boundedDiagnosticText } from "./diagnostic-text.mjs";
+import { sourceResponseReader, observeSourceRead, failSourceRead, cancelSourceReader, releaseSourceReader, cancelSourceResponse } from "./source-response.mjs";
 
 // Default evidence contains only fixed categories. A separately authorized
 // one-shot capture can retain a bounded, redacted technical message.
@@ -25,10 +26,6 @@ const reasons = new Map([
 ]);
 const MAX_ACTIVE_READS = 4;
 let activeReads = 0;
-
-function cancelBody(body) {
-  try { void Promise.resolve(body?.cancel()).catch(() => {}); } catch {}
-}
 
 export function safeUpstreamReason(code, status) {
   const reason = typeof code === "string" ? reasons.get(code) : null;
@@ -78,7 +75,7 @@ function readChunk(reader, signal) {
     const finish = (fn, value) => { if (settled) return;settled = true;signal.removeEventListener("abort", onAbort);fn(value); };
     const onAbort = () => finish(reject, signal.reason);
     signal.addEventListener("abort", onAbort, { once: true });
-    reader.read().then(value => finish(resolve, value), error => finish(reject, error));
+    reader.read().then(value => { observeSourceRead(reader, value);finish(resolve, value); }, error => { failSourceRead(reader);finish(reject, error); });
     if (signal.aborted) onAbort();
   });
 }
@@ -87,11 +84,11 @@ function readChunk(reader, signal) {
 // the caller beyond the budget. The original request's cancellation wins.
 export async function readSafeUpstreamReason(response, { signal, timeoutMs = 200, maxBytes = 64 * 1024, missingCallId = false, rootToolSchema = false, diagnosticRedact, onSourceLimit } = {}) {
   if (signal?.aborted) {
-    cancelBody(response?.body);
+    void cancelSourceResponse(response).catch(() => {});
     signal.throwIfAborted();
   }
   if (!response?.body) return null;
-  if (activeReads >= MAX_ACTIVE_READS) { cancelBody(response.body);return null; }
+  if (activeReads >= MAX_ACTIVE_READS) { void cancelSourceResponse(response).catch(() => {});return null; }
   activeReads++;
   const deadline = performance.now() + timeoutMs;
   const controller = new AbortController(), timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -100,7 +97,7 @@ export async function readSafeUpstreamReason(response, { signal, timeoutMs = 200
   try {
     const length = Number(response.headers?.get?.("content-length"));
     if (Number.isFinite(length) && length > maxBytes) return null;
-    reader = response.body.getReader();const chunks = [];let bytes = 0;
+    reader = sourceResponseReader(response);const chunks = [];let bytes = 0;
     while (true) {
       if (performance.now() >= deadline) controller.abort();
       const { done, value } = await readChunk(reader, readSignal);
@@ -128,9 +125,9 @@ export async function readSafeUpstreamReason(response, { signal, timeoutMs = 200
   } finally {
     clearTimeout(timer);
     if (!finished) {
-      try { void Promise.resolve(reader ? reader.cancel() : response.body.cancel()).catch(() => {}); } catch {}
+      try { void (reader ? cancelSourceReader(reader) : cancelSourceResponse(response)).catch(() => {}); } catch {}
     }
-    try { reader?.releaseLock(); } catch {}
+    try { releaseSourceReader(reader); } catch {}
     activeReads--;
   }
 }

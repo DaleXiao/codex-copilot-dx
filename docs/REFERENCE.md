@@ -103,9 +103,9 @@ error rather than successful completion.
 This Copilot selection does not restrict Antigravity's original Google model directory. Google wire IDs such as `gemini-3.8-flash-tiered` can therefore appear in usage without being CCDX-added model choices. The recorded provider distinguishes Google and GitHub Copilot; the ID alone does not establish a background task or a fallback. Known conversation compaction retains its observed source and model.
 
 `enable` saves CCDX settings and prepares its local source guard. `open --preview` shows the inspected application state without launching it.
-`open` starts a closed, verified `/Applications/Gemini.app` with a process-local
-Antigravity endpoint. An already running App is kept open and must be quit by
-the user before reopening. Existing gateway environment settings cause a
+`open` starts a closed, verified Gemini App in `/Applications` or `~/Applications` with a process-local
+Antigravity endpoint. An already running App is focused. Reopen requests a normal
+exit after confirmation, through the same controller used by the page header. Existing gateway environment settings cause a
 conflict instead of being overwritten. The Gemini bundle, Google credentials,
 global proxy and certificates are untouched. Endpoint adoption remains
 unconfirmed until an Antigravity request is observed.

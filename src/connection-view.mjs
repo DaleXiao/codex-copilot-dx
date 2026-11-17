@@ -7,7 +7,7 @@ import { deploymentModelId, resolveModelCapabilities, deploymentRevision } from 
 import { claudeEffortControl } from "./client-effort.mjs";
 
 export function createConnectionView({ legacy, env, binding, plan, getSource, enabled, editable, modelDisplay, discoveries,
-  setup, credentialStates, lastClients, memoryModel, capabilitySupport, sharedSync, isManaged, getSettings, corePort, permitted }) {
+  setup, credentialStates, lastClients, memoryModel, capabilitySupport, sharedSync, isManaged, getSettings, corePort, permitted, sourceAdmission }) {
   const summaries = new WeakMap();
   function summary(api) {
     if (!summaries.has(api))
@@ -107,7 +107,7 @@ export function createConnectionView({ legacy, env, binding, plan, getSource, en
       if (!localPlans.has(id)) localPlans.set(id, plan(id));
       return localPlans.get(id);
     };
-    return structuredClone({
+    const result = structuredClone({
       source: "connections",
       providers: [
         {
@@ -161,6 +161,12 @@ export function createConnectionView({ legacy, env, binding, plan, getSource, en
       ...(!compact ? { management_version: 1 } : {}),
       m365_state: state.m365.state,
     });
+    const states = sourceAdmission?.snapshot() || [];
+    for (const provider of result.providers) provider.concurrency = { mode: "auto", maximum: config.source_limits?.[provider.id] || null,
+      active: states.filter(row => row.source === provider.id).reduce((sum, row) => sum + row.active, 0),
+      queued: states.filter(row => row.source === provider.id).reduce((sum, row) => sum + row.queued, 0),
+      accounts: states.filter(row => row.source === provider.id) };
+    return result;
   }
   const clientRevision = id =>
     createHash("sha256")
@@ -194,7 +200,7 @@ export function createConnectionView({ legacy, env, binding, plan, getSource, en
     return {
       clients,
       revision: createHash("sha256")
-        .update(JSON.stringify([source, enabled(source), profile, CLIENT_IDS.map(id => binding(id))]))
+        .update(JSON.stringify([source, enabled(source), profile, getSettings().source_limits?.[source] || null, CLIENT_IDS.map(id => binding(id))]))
         .digest("hex"),
     };
   }

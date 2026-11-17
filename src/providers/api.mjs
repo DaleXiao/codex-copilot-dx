@@ -24,6 +24,7 @@ import { loadRuntimeConfig } from "../runtime-config.mjs";
 import { currentRequestContext } from "../request-context.mjs";
 import { redactDiagnosticText } from "../diagnostic-text.mjs";
 import { createProviderCooldown, confirmedNetworkFailure } from "../provider-cooldown.mjs";
+import { SOURCE_LIMIT_EVIDENCE, sourceLimitFeedback } from "../source-admission.mjs";
 
 const paths = { messages: "/v1/messages", responses: "/v1/responses", chat: "/v1/chat/completions" };
 export function apiCatalog(config, env = process.env) {
@@ -110,9 +111,10 @@ export function createApiProvider({ config, secrets, env = process.env, platform
         if (!adapted && !schemaCandidate) try { options.onUpstreamErrorHeaders?.(result.status); } catch { /* Optional admission release cannot hide the upstream response. */ }
         const context = currentRequestContext();
         const finishCapture = options.countTokens ? null : errorCapture?.claim(config.id, body?.model, api, result.status, context?.requestId);
-        let reason;
+        let reason, sourceLimit;
         try {
           reason = await readSafeUpstreamReason(result, { signal: options.signal, missingCallId: Boolean(adapted), rootToolSchema: schemaCandidate,
+            onSourceLimit: value => { sourceLimit = sourceLimitFeedback(result.status, result.headers, value, now()); },
             ...(finishCapture ? { diagnosticRedact: text => text.replaceAll(key, "[redacted]") } : {}) });
         } finally {
           const retained = finishCapture?.(reason?.diagnostic_message);
@@ -145,8 +147,10 @@ export function createApiProvider({ config, secrets, env = process.env, platform
         const contextOverflow = api === "messages" && ["context_length_exceeded", "context_window_exceeded"].includes(reason?.code);
         const message=(contextOverflow ? "prompt is too long. " : "")+(reason?.message||"The source rejected the request (HTTP "+result.status+"); no recognised technical reason was returned.")+" Source: "+redactDiagnosticText(config.name||config.id)+". Model: "+redactDiagnosticText(body?.model||"unknown")+". API: "+api+"."+(requestId?" Request: "+requestId+".":"");
         const errorType = api === "messages" && ["input_length_invalid", "context_length_exceeded", "context_window_exceeded"].includes(reason?.code) ? "invalid_request_error" : "api_error";
-        return new Response(JSON.stringify({ type: "error", error: { type: errorType, code, message,
+        const failure = new Response(JSON.stringify({ type: "error", error: { type: errorType, code, message,
           ...(reason ? { upstream_code: reason.code, ...(reason.parameter ? { param: reason.parameter } : {}), ...(reason.maximum ? { maximum: reason.maximum } : {}) } : {}) } }), { status: result.status, headers: safeHeaders });
+        if (sourceLimit) Object.defineProperty(failure, SOURCE_LIMIT_EVIDENCE, { value: sourceLimit });
+        return failure;
       }
       return result;
     } catch (error) {

@@ -17,16 +17,16 @@ function fakeSpawn(exitPlan) {
   return { spawnImpl, calls };
 }
 
-test("autoLaunchEnabled defaults to true", () => {
-  assert.equal(autoLaunchEnabled({}), true);
-  assert.equal(autoLaunchEnabled({ CCDX_AUTO_LAUNCH: "" }), true);
+test("autoLaunchEnabled defaults off and preserves explicit opt-in", () => {
+  assert.equal(autoLaunchEnabled({}), false);
+  assert.equal(autoLaunchEnabled({ CCDX_AUTO_LAUNCH: "" }), false);
   assert.equal(autoLaunchEnabled({ CCDX_AUTO_LAUNCH: "1" }), true);
 });
 
 test("image host launch uses only the verified App and composes with prediction arguments", async () => {
   const args = ["/Applications/ChatGPT.app", "--env", "CODEX_CLI_PATH=/owned/image-host", "--args", "--proxy-pac-url=http://127.0.0.1:12345/proxy.pac"];
   const { spawnImpl, calls } = fakeSpawn({ [JSON.stringify(args)]: 0 });let inspections = 0;
-  assert.equal(await openCodex({ env: {}, platform: "darwin", spawnImpl, log() {},
+  assert.equal(await openCodex({ env: { CCDX_AUTO_LAUNCH: "1" }, platform: "darwin", spawnImpl, log() {},
     imageHost: { app: "/Applications/ChatGPT.app", env: { CODEX_CLI_PATH: "/owned/image-host" } },
     predictionPacUrl: "http://127.0.0.1:12345/proxy.pac", predictionApp: "/Applications/ChatGPT.app",
     macAppProcesses: () => ++inspections === 1 ? [] : [{ pid: 123, readable: true, route: "http://127.0.0.1:12345/proxy.pac" }] }), true);
@@ -37,15 +37,15 @@ test("an already running App is not relaunched and reports how to activate a mis
   const imageHost = { app: "/Applications/ChatGPT.app", env: { CODEX_CLI_PATH: "/owned/image-host" } };
   const args = [imageHost.app, "--env", "CODEX_CLI_PATH=/owned/image-host"], attempt = fakeSpawn({ [JSON.stringify(args)]: 0 }), logs = [];
   const running = () => [{ pid: 123, readable: true, route: "http://127.0.0.1:12345/proxy.pac" }];
-  assert.equal(await openCodex({ env: {}, platform: "darwin", imageHost, spawnImpl: attempt.spawnImpl, macAppProcesses: running, log: value => logs.push(value) }), true);
+  assert.equal(await openCodex({ env: { CCDX_AUTO_LAUNCH: "1" }, platform: "darwin", imageHost, spawnImpl: attempt.spawnImpl, macAppProcesses: running, log: value => logs.push(value) }), true);
   assert.deepEqual(attempt.calls, [args]);assert.match(logs.join("\n"), /already running.*fully quit/i);
   logs.length = 0;
-  assert.equal(await openCodex({ env: {}, platform: "darwin", imageHost, macAppProcesses: running,
+  assert.equal(await openCodex({ env: { CCDX_AUTO_LAUNCH: "1" }, platform: "darwin", imageHost, macAppProcesses: running,
     predictionApp: imageHost.app, predictionPacUrl: "http://127.0.0.1:12345/proxy.pac", log: value => logs.push(value),
     spawnImpl() { assert.fail("the running App must not be restarted"); } }), true);
   assert.match(logs.join("\n"), /already running.*fully quit/i);
   logs.length = 0;
-  assert.equal(await openCodex({ env: {}, platform: "darwin", imageHost, spawnImpl: attempt.spawnImpl,
+  assert.equal(await openCodex({ env: { CCDX_AUTO_LAUNCH: "1" }, platform: "darwin", imageHost, spawnImpl: attempt.spawnImpl,
     macAppProcesses() { throw new Error("process access unavailable"); }, log: value => logs.push(value) }), true);
   assert.match(logs.join("\n"), /could not check.*running Codex App/i);
 });
@@ -64,14 +64,14 @@ test("launchAttempts tries bundle id first", () => {
 
 test("openCodex succeeds via bundle id without falling back", async () => {
   const { spawnImpl, calls } = fakeSpawn({ '["-b","com.openai.codex"]': 0 });
-  const ok = await openCodex({ env: {}, spawnImpl, platform: "darwin" });
+  const ok = await openCodex({ env: { CCDX_AUTO_LAUNCH: "1" }, spawnImpl, platform: "darwin" });
   assert.equal(ok, true);
   assert.equal(calls.length, 1);
 });
 
 test("openCodex falls back to app path when bundle id fails", async () => {
   const { spawnImpl, calls } = fakeSpawn({ '["/Applications/ChatGPT.app"]': 0 });
-  const ok = await openCodex({ env: {}, spawnImpl, platform: "darwin" });
+  const ok = await openCodex({ env: { CCDX_AUTO_LAUNCH: "1" }, spawnImpl, platform: "darwin" });
   assert.equal(ok, true);
   // bundle id + Codex.app both fail, ChatGPT.app succeeds
   assert.equal(calls.length, 3);
@@ -79,7 +79,7 @@ test("openCodex falls back to app path when bundle id fails", async () => {
 
 test("openCodex returns false when nothing launches", async () => {
   const { spawnImpl } = fakeSpawn({});
-  const ok = await openCodex({ env: {}, spawnImpl, platform: "darwin" });
+  const ok = await openCodex({ env: { CCDX_AUTO_LAUNCH: "1" }, spawnImpl, platform: "darwin" });
   assert.equal(ok, false);
 });
 
@@ -92,7 +92,7 @@ test("openCodex skips launching when disabled", async () => {
 
 test("openCodex is a no-op on non-darwin", async () => {
   const { spawnImpl, calls } = fakeSpawn({});
-  const ok = await openCodex({ env: {}, spawnImpl, platform: "linux" });
+  const ok = await openCodex({ env: { CCDX_AUTO_LAUNCH: "1" }, spawnImpl, platform: "linux" });
   assert.equal(ok, false);
   assert.equal(calls.length, 0);
 });
@@ -101,7 +101,7 @@ test("prediction route launches only the exact verified App, without profile or 
   const args = ["/Applications/ChatGPT.app", "--args", "--proxy-pac-url=http://127.0.0.1:12345/proxy.pac"];
   const { spawnImpl, calls } = fakeSpawn({ [JSON.stringify(args)]: 0 });
   let inspections = 0;
-  assert.equal(await openCodex({ env: {}, platform: "darwin", spawnImpl,
+  assert.equal(await openCodex({ env: { CCDX_AUTO_LAUNCH: "1" }, platform: "darwin", spawnImpl,
     predictionPacUrl: "http://127.0.0.1:12345/proxy.pac", predictionApp: "/Applications/ChatGPT.app",
     macAppProcesses: () => ++inspections === 1 ? [] : [{ pid: 123, readable: true, route: "http://127.0.0.1:12345/proxy.pac" }] }), true);
   assert.deepEqual(calls, [args]);
@@ -134,7 +134,7 @@ test("macOS prediction inspection reads only exact App main-process arguments an
 
 test("macOS prediction reuse verifies the current route without spawning or stopping an App", async () => {
   const pac = "http://127.0.0.1:12345/proxy.pac";
-  const options = { env: {}, platform: "darwin", predictionApp: "/Applications/ChatGPT.app", predictionPacUrl: pac,
+  const options = { env: { CCDX_AUTO_LAUNCH: "1" }, platform: "darwin", predictionApp: "/Applications/ChatGPT.app", predictionPacUrl: pac,
     spawnImpl() { assert.fail("running App must not be relaunched"); } };
   assert.equal(await openCodex({ ...options, macAppProcesses: () => [{ pid: 123, readable: true, route: pac }] }), true);
   for (const processes of [
@@ -154,11 +154,11 @@ test("macOS recognizes the stable revision URL but never mistakes a cached legac
   } });
   assert.equal(row.route, pac);
   const logs = [];
-  assert.equal(await openCodex({ env: {}, platform: "darwin", predictionApp: app, predictionPacUrl: pac,
+  assert.equal(await openCodex({ env: { CCDX_AUTO_LAUNCH: "1" }, platform: "darwin", predictionApp: app, predictionPacUrl: pac,
     macAppProcesses: () => [{ pid: 101, readable: true, route: pac.replace("?v=2", "") }],
     spawnImpl() { assert.fail("running legacy App must not be restarted"); }, log: text => logs.push(text) }), false);
   assert.match(logs.join("\n"), /old or unverified/);
-  assert.equal(await openCodex({ env: {}, platform: "darwin", predictionApp: app, predictionPacUrl: pac,
+  assert.equal(await openCodex({ env: { CCDX_AUTO_LAUNCH: "1" }, platform: "darwin", predictionApp: app, predictionPacUrl: pac,
     macAppProcesses: () => [row], spawnImpl() { assert.fail("matching App must be reused"); }, log() {} }), true);
 });
 
@@ -166,7 +166,7 @@ test("macOS prediction launch does not report success when the active App drops 
   const pac = "http://127.0.0.1:12345/proxy.pac";
   const args = ["/Applications/ChatGPT.app", "--args", `--proxy-pac-url=${pac}`];
   const { spawnImpl } = fakeSpawn({ [JSON.stringify(args)]: 0 });let inspections = 0;
-  assert.equal(await openCodex({ env: {}, platform: "darwin", spawnImpl, predictionApp: args[0], predictionPacUrl: pac,
+  assert.equal(await openCodex({ env: { CCDX_AUTO_LAUNCH: "1" }, platform: "darwin", spawnImpl, predictionApp: args[0], predictionPacUrl: pac,
     macAppProcesses: () => ++inspections === 1 ? [] : [{ pid: 123, readable: true, route: null }] }), false);
   assert.equal(inspections, 2, "an observed wrong route fails immediately rather than waiting or relaunching");
 });
@@ -174,7 +174,7 @@ test("macOS prediction launch does not report success when the active App drops 
 test("a persisted App preference is reuse evidence, not a verified launch route or permission to restart", async () => {
   let route;
   const logs = [];
-  const ok = await openCodex({ env: {}, platform: "darwin", predictionApp: "/Applications/ChatGPT.app",
+  const ok = await openCodex({ env: { CCDX_AUTO_LAUNCH: "1" }, platform: "darwin", predictionApp: "/Applications/ChatGPT.app",
     predictionPacUrl: "http://127.0.0.1:12345/proxy.pac", persistedPredictionRoute: true,
     macAppProcesses: () => [{ pid: 123, readable: true, route: null }], onPredictionRoute: value => { route = value; },
     log: value => logs.push(value), preparePredictionRoute() { assert.fail("running App must not be edited"); },
@@ -186,11 +186,11 @@ test("a persisted App preference is reuse evidence, not a verified launch route 
 test("macOS prediction launch allows delayed main-process visibility without an unbounded watcher", async () => {
   const pac = "http://127.0.0.1:12345/proxy.pac", args = ["/Applications/ChatGPT.app", "--args", `--proxy-pac-url=${pac}`];
   const { spawnImpl } = fakeSpawn({ [JSON.stringify(args)]: 0 });let inspections = 0;
-  assert.equal(await openCodex({ env: {}, platform: "darwin", spawnImpl, predictionApp: args[0], predictionPacUrl: pac,
+  assert.equal(await openCodex({ env: { CCDX_AUTO_LAUNCH: "1" }, platform: "darwin", spawnImpl, predictionApp: args[0], predictionPacUrl: pac,
     macAppProcesses: () => ++inspections < 4 ? [] : [{ pid: 123, readable: true, route: pac }] }), true);
   assert.equal(inspections, 4);
   const failure = fakeSpawn({});
-  assert.equal(await openCodex({ env: {}, platform: "darwin", spawnImpl: failure.spawnImpl, predictionApp: args[0], predictionPacUrl: pac,
+  assert.equal(await openCodex({ env: { CCDX_AUTO_LAUNCH: "1" }, platform: "darwin", spawnImpl: failure.spawnImpl, predictionApp: args[0], predictionPacUrl: pac,
     macAppProcesses: () => [] }), false);
   assert.equal(failure.calls.length, 1, "no unverified App fallback when the exact prediction launch fails");
 });
@@ -198,7 +198,7 @@ test("macOS prediction launch allows delayed main-process visibility without an 
 test("disabled auto-launch and ordinary macOS launch never inspect prediction processes", async () => {
   const { spawnImpl } = fakeSpawn({ '["-b","com.openai.codex"]': 0 });
   const options = { platform: "darwin", spawnImpl, macAppProcesses() { assert.fail("must not inspect"); } };
-  assert.equal(await openCodex({ ...options, env: {} }), true);
+  assert.equal(await openCodex({ ...options, env: { CCDX_AUTO_LAUNCH: "1" } }), true);
   assert.equal(await openCodex({ ...options, env: { CCDX_AUTO_LAUNCH: "0" },
     predictionApp: "/Applications/ChatGPT.app", predictionPacUrl: "http://127.0.0.1:12345/proxy.pac" }), false);
 });
@@ -209,7 +209,7 @@ test("untrusted prediction launch metadata cannot inject App arguments", async (
     { predictionPacUrl: "http://127.0.0.1:12345/proxy.pac", predictionApp: "--bad-option" },
   ]) {
     const { spawnImpl, calls } = fakeSpawn({ '["-b","com.openai.codex"]': 0 });
-    await openCodex({ env: {}, platform: "darwin", spawnImpl, ...overrides });
+    await openCodex({ env: { CCDX_AUTO_LAUNCH: "1" }, platform: "darwin", spawnImpl, ...overrides });
     assert.deepEqual(calls, [["-b", "com.openai.codex"]]);
   }
 });

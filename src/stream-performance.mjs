@@ -13,7 +13,7 @@ const TERMINAL_OUTCOMES = Object.freeze(["completed", "incomplete", "failed", "c
 const INCOMPLETE_REASONS = new Set(["max_output_tokens", "max_messages", "content_filter", "steered"]);
 const TERMINAL_ORIGINS = new Set([
   "upstream_response", "upstream_event", "chat_completion", "client_validation",
-  "upstream_http", "transport", "privacy", "client_disconnect", "unclassified",
+  "upstream_http", "transport", "privacy", "source_admission", "client_disconnect", "unclassified",
 ]);
 const MAX_MODEL_OUTCOME_LABELS = 32;
 const MAX_RECENT_REQUESTS = 20;
@@ -357,6 +357,8 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
         attemptTimings() { return attemptTimings.map(attempt => ({ ...attempt })); },
         observeContext(values) {
           if (finished || !values || typeof values !== "object") return;
+          if (Number.isSafeInteger(values.source_queue_ms) && values.source_queue_ms >= 0) context.source_queue_ms = values.source_queue_ms;
+          if (values.delivery_cancelled === 1) context.delivery_cancelled = 1;
           if (Number.isSafeInteger(values.cached_input_tokens) && values.cached_input_tokens >= 0) cachedInput = values.cached_input_tokens;
           for (const key of [...Object.keys(context), "compaction", "requested_model", "reasoning_effort_requested", "reasoning_effort_sent", "usage_state", "capability_revision", "capability_constraints", "privacy_count", "privacy_ms", "privacy_state", "privacy_pending_bytes", "privacy_new_bytes", "privacy_pending_windows", "privacy_wait_budget_ms", "privacy_error", "privacy_event_type", "privacy_channel_type", "privacy_buffered_bytes", "privacy_terminal_seen", "client_tool_errors_received"]) {
             const value = values[key];

@@ -6,7 +6,7 @@ import { currentRequestContext } from "./request-context.mjs";
 
 export function createConnectionRouting({ legacy, legacyClaudeAccess, isManaged, getSettings, binding, plan, permitted, getSource,
   resolveDeployment, codexAccessMode, codexRequiresKey, requireCodexKey, identities, track, guardConversation, messagesTransfer,
-  acquireClaudeRequest, privacy, env, log, lastClients, capabilitySupport }) {
+  acquireClaudeRequest, privacy, env, log, lastClients, capabilitySupport, applicationEvidence }) {
   const handlers = new Map();
   function requireSource(clientId, id) {
     if (!permitted(clientId, id)) throw accessError("ccdx_client_source_disabled", 503);
@@ -123,17 +123,21 @@ export function createConnectionRouting({ legacy, legacyClaudeAccess, isManaged,
       return { historyNamespace: target.profileId() };
     },
     async handleClaude(req, res) {
+      const catalogRequest = req.method === "GET" && /^\/v1\/models(?:\?|$)/.test(req.url);
       if (!isManaged()) {
+        if (catalogRequest) applicationEvidence?.notice(req, res, "claude_app", "catalog");
         if (!legacyClaudeAccess) throw accessError("ccdx_client_source_disabled", 503);
         return legacy.handleClaude(req, res);
       }
       if (!getSettings().claude_private_keys) {
+        if (catalogRequest) applicationEvidence?.notice(req, res, "claude_app", "catalog");
         if (["claude_app", "claude_code"].every(id => permitted(id, "m365") && binding(id).source === "m365"))
           return legacy.handleClaude(req, res);
         throw accessError("ccdx_client_source_disabled", 503);
       }
       const id = gatewayClient(req.headers, identities());
       if (!id || id === "codex") throw accessError("ccdx_client_credential_required", 401);
+      if (id === "claude_app" && catalogRequest) applicationEvidence?.notice(req, res, id, "catalog");
       const compiled = plan(id);
       if (!binding(id).enabled || !compiled.models.length)
         throw accessError("ccdx_client_source_disabled", 503);
@@ -167,8 +171,9 @@ export function createConnectionRouting({ legacy, legacyClaudeAccess, isManaged,
             };
           },
           validateConversation: (body, headers, source, signal) => validateConversation(body, headers, source, signal, id),
-          onRequest() {
+          onRequest(_event, req) {
             lastClients[id] = new Date().toISOString();
+            if (id === "claude_app") applicationEvidence?.accept(req, id, "inference");
           },
         });
         cached = { compiled, handler };

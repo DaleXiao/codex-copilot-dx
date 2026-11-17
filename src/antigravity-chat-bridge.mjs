@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { webStreamLines } from "./stream.mjs";
 import { MAX_UPSTREAM_CHAT_SUCCESS_BODY_BYTES } from "./http-transport.mjs";
 import { ToolArgumentDeltaGuard, upstreamChatStreamError } from "./stream-contract.mjs";
+import { observeSourceStreamFailure } from "./source-admission.mjs";
 
 const object = value => value !== null && typeof value === "object" && !Array.isArray(value);
 const names = /^[A-Za-z0-9_-]{1,64}$/;
@@ -187,7 +188,7 @@ export async function* chatStreamToAntigravity(response, originalNames, { onChun
     const raw = data.join("\n");data.length = 0;
     if (raw === "[DONE]") { done = true;return; }
     let event;try { event = JSON.parse(raw); } catch { throw invalid("Invalid upstream Chat stream event", 502); }
-    const upstreamError = upstreamChatStreamError(event);if (upstreamError) throw upstreamError;
+    const upstreamError = upstreamChatStreamError(event);if (upstreamError) { observeSourceStreamFailure(response, event.error);throw upstreamError; }
     if (event?.usage) usage = event.usage;
     if (event?.usage || event?.copilot_usage) onUsage?.(event);
     const choice = event?.choices?.[0];

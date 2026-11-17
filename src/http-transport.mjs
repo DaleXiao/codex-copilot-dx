@@ -99,7 +99,7 @@ async function readRequestBuffer(req, maxBytes, signal) {
   return Buffer.concat(chunks);
 }
 
-async function readIdentityText(req, maxBodyBytes, maxDecodedBodyBytes, signal) {
+async function readIdentityText(req, maxBodyBytes, maxDecodedBodyBytes, signal, onBytes) {
   const contentLength = requestContentLength(req);
   if (Number.isFinite(contentLength) && contentLength > maxBodyBytes) {
     throw payloadTooLarge("Raw", maxBodyBytes);
@@ -138,6 +138,7 @@ async function readIdentityText(req, maxBodyBytes, maxDecodedBodyBytes, signal) 
       }
     },
   });
+  onBytes?.(total);
   if (preallocatedLength) {
     if (!allocated) return "";
     return new TextDecoder().decode(overflow ? Buffer.concat(overflow, total) : allocated.subarray(0, total));
@@ -198,9 +199,10 @@ export async function readJsonBody(req, {
   if (signal?.aborted) throw admissionAbortError(signal);
   const encodings = contentEncodings(req.headers?.["content-encoding"]);
   if (encodings.every((encoding) => encoding === "identity")) {
-    return parse(await readIdentityText(req, maxBodyBytes, maxDecodedBodyBytes, signal));
+    return parse(await readIdentityText(req, maxBodyBytes, maxDecodedBodyBytes, signal, bytes => admission?.resize?.(bytes)));
   }
   const buffer = await readRequestBuffer(req, maxBodyBytes, signal);
+  admission?.resize?.(buffer.length);
   let releaseDecompression = () => {};
   let decodedReservation;
   let retainDecodedReservation = false;
@@ -272,6 +274,7 @@ export function sendJsonError(res, err, fallbackStatus = 400) {
   context?.onHttpError?.({ code: err?.code || err?.jsonBody?.error?.code,
     origin: context.errorOrigin || (statusCode < 500 ? "client_validation" : "local_transport") });
   const headers = { "Content-Type": "application/json" };
+  if (Number.isFinite(err?.retryAfterMs) && err.retryAfterMs > 0) headers["Retry-After"] = String(Math.ceil(err.retryAfterMs / 1000));
   if (err?.origin === "privacy" && Number.isInteger(err.retryAfter) && err.retryAfter > 0) headers["Retry-After"] = String(err.retryAfter);
   if (statusCode === 408 || statusCode === 413) headers.Connection = "close";
   res.writeHead(statusCode, headers);

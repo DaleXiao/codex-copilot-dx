@@ -23,7 +23,7 @@ const AUTO_REVIEW_REASONING_KEY = "auto_review_reasoning";
 const TERMINAL_ANIMATION_KEY = "terminal_animation";
 const RESPONSE_HISTORY_MAX_MIB_KEY = "response_history_max_mib";
 const DECODED_BODY_LIMIT_MIB_KEY = "decoded_body_limit_mib";
-const SERVICE_FLAGS = ["terminal_animation_enabled", "open_webui", "image_enabled", "prediction_enabled", "context_compaction_enabled"];
+const SERVICE_FLAGS = ["terminal_animation_enabled", "open_webui", "image_enabled", "prediction_enabled", "context_compaction_enabled", "codex_auto_launch"];
 export const DECODED_BODY_LIMIT_MIN_MIB = RUNTIME_DEFAULTS.maxDecodedBodyBytes / MIB;
 export const DECODED_BODY_LIMIT_MAX_MIB = 512;
 export { RESPONSE_HISTORY_MAX_MIB, RESPONSE_HISTORY_MIN_MIB };
@@ -138,7 +138,7 @@ export function writeNightlyUpdatePreference(enabled, options = {}) {
     return enabled;
   });
 }
-const serviceFlags = settings => Object.fromEntries(SERVICE_FLAGS.map(key => [key, settings[key] !== false]));
+const serviceFlags = settings => Object.fromEntries(SERVICE_FLAGS.map(key => [key, key === "codex_auto_launch" ? settings[key] === true : settings[key] !== false]));
 
 // One strict read gives each status update a coherent view; no stale cache.
 export function serviceSettingsSnapshot(options = {}) {

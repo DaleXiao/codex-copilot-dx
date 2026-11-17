@@ -274,7 +274,7 @@ if (CLI.command === "start" && !(process.send && process.env.CCDX_SUPERVISED_SER
 }
 
 // Startup components are loaded only after read-only and local tool commands exit.
-const { ensureAuth, openCodex } = await import("../src/launcher.mjs");
+const { ensureAuth, openCodex, autoLaunchEnabled } = await import("../src/launcher.mjs");
 const { startAdapter } = await import("../src/adapter.mjs");
 const { defaultCopilotClient, refreshVSCodeVersion } = await import("../src/copilot.mjs");
 const { configureLogging } = await import("../src/log.mjs");
@@ -402,7 +402,7 @@ async function reuseRunningAdapterIfAvailable() {
       if (!predictionPacUrl) console.warn(status("warn", "Restart ccdx to activate the newly enabled prediction bridge"));
     }
   } catch (error) { console.warn(status("warn", error.message)); }
-  const imageHost = codexEnabled && imageEnabled ? await (await clientIntegrations()).imageHostLaunch() : null;
+  const imageHost = codexEnabled && imageEnabled && autoLaunchEnabled() ? await (await clientIntegrations()).imageHostLaunch() : null;
   if (codexEnabled) await openCodex({ predictionPacUrl, predictionApp, predictionProfile, persistedPredictionRoute, imageHost,
     onPredictionRoute: route => { launchRoute = route; }, log: startupLogger("App") });
   console.log(predictionStartupCheck({ configured: predictionConfigured, bridge: predictionPacUrl ? "running" : "unknown", launch_route: launchRoute }));
@@ -480,6 +480,7 @@ try {
     log: (kind, message) => console.log(startupComplete ? status(kind, message) : startupCheck(kind, "Models", message)),
   });
   providerRuntime = createProviderRuntime({ githubClient: profileRuntime.codexClient, githubRegistry: profileModels.codexRegistry,
+    persistSourceState: true,
     refreshGithubCatalog: () => profileModels.refreshCodex({ strict: true }),
     corePort: ADAPTER_PORT, preserveClientConfiguration: () => serviceWorker?.preserving === true || serviceWorker?.draining === true,
     clientVersionsSnapshot: clientVersions.snapshot,
@@ -533,7 +534,7 @@ try {
   activeServer = await startAdapter(serviceWorker?.warming ? 0 : ADAPTER_PORT, serviceWorker?.warming ? "127.0.0.1" : ADAPTER_HOST, {
     log: startupLogger("Service"),
     autoReviewModelResolver: () => autoReviewPreference(),
-    codexClient: profileRuntime.codexClient,
+    codexClient: providerRuntime.source("github").client,
     codexModelCatalog,
     codexModelRegistry: profileModels.codexRegistry,
     providerRuntime,
@@ -560,7 +561,7 @@ try {
   const persistentRoute = await nativePrediction?.prepareRoute();
 
   // Launch Codex when available. A running App is never forcibly restarted.
-  const imageHost = codexEnabled && imageEnabled ? await clientIntegration.imageHostLaunch() : null;
+  const imageHost = codexEnabled && imageEnabled && autoLaunchEnabled() ? await clientIntegration.imageHostLaunch() : null;
   if (codexEnabled) await openCodex({ predictionPacUrl: nativePrediction?.pacUrl, predictionApp: nativePrediction?.app, predictionProfile: nativePrediction?.profile, imageHost,
     preparePredictionRoute: () => nativePrediction?.prepareRoute(), persistedPredictionRoute: persistentRoute?.status === "installed",
     onPredictionRoute: route => clientIntegration?.launched(route), log: startupLogger("App") });

@@ -2,6 +2,7 @@ import { readSavedGithubToken } from "./auth-credentials.mjs";
 import { githubTokenFingerprint } from "./github-identity.mjs";
 import { httpError, readBoundedResponseText } from "./http-transport.mjs";
 import { localPackageVersion } from "./version.mjs";
+import { SOURCE_ADMISSION } from "./source-admission.mjs";
 
 const trustedHosts = new Set(["api.githubcopilot.com", "api.enterprise.githubcopilot.com"]);
 const unsupported = ["image_query", "literature_search_query", "screenshot", "finance", "weather", "sports", "time"];
@@ -98,6 +99,8 @@ function pageLinks(text, base) {
 export function createCopilotWeb({ client, query = copilotQuery, readToken = readSavedGithubToken, fetchImpl = fetch,
   pageReader = async options => (await import("./copilot-web-fetch.mjs")).createCopilotPageReader(options) } = {}) {
   const store = referenceStore();
+  const source = client?.[SOURCE_ADMISSION], network = source ? (url, init) => source.scheduler.run(source.descriptor(), () => fetchImpl(url, init),
+    { signal: init.signal, model: "web_search", client: "search", bytes: () => Buffer.byteLength(init.body || "") }) : fetchImpl;
   async function search(body, { signal, providerProfile } = {}) {
     if (typeof body.id !== "string" || !body.id || body.id.length > 160 || !body.commands || typeof body.commands !== "object"
       || Array.isArray(body.commands)) throw failure("Invalid Copilot search request", "ccdx_copilot_search_invalid", 400);
@@ -137,7 +140,7 @@ export function createCopilotWeb({ client, query = copilotQuery, readToken = rea
       const domains = (item.domains || []).map(value => value.toLowerCase().replace(/^\.+|\.+$/g, ""));
       const constraints = [domains.length ? "Limit results to these domains: " + domains.join(", ") + "." : "",
         item.recency ? "Prefer sources from the past " + item.recency + " days." : ""].filter(Boolean).join(" ");
-      const data = await query(item.q + (constraints ? "\n" + constraints : ""), { endpoint, credential, signal, fetchImpl });
+      const data = await query(item.q + (constraints ? "\n" + constraints : ""), { endpoint, credential, signal, fetchImpl: network });
       output.push("GitHub Copilot search: " + item.q);
       let count = 0;
       for (const group of data.search_result_groups || []) {

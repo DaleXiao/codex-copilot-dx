@@ -34,8 +34,8 @@ export async function controlCodexLaunch(operation, { intent = "image", integrat
   prepare = prepareImageHostLaunch, launch = openCodex, readSummary = imageSetupSummary,
   readPrediction = predictionControlSnapshot, nativeOperation = runPredictionOperation,
   discover = installedPredictionApp, inspect = inspectCodexApp, appControl = controlCodexApp,
-  confirmed = false, wait = sleep, now = Date.now, quitTimeoutMs = 10000, ...options } = {}) {
-  if (!["check", "repair", "open", "focus", "restart"].includes(operation) || !["image", "prediction"].includes(intent)) throw new Error("Unknown Codex App control");
+  confirmed = false, configureClient = true, wait = sleep, now = Date.now, quitTimeoutMs = 10000, ...options } = {}) {
+  if (!["check", "repair", "open", "focus", "restart"].includes(operation) || !["image", "prediction", "app"].includes(intent)) throw new Error("Unknown Codex App control");
   if (operation === "restart" && confirmed !== true) throw new Error("Confirm that restarting Codex can interrupt its running tasks");
   const platform = options.platform || process.platform;
   let image, prediction;
@@ -73,9 +73,9 @@ export async function controlCodexLaunch(operation, { intent = "image", integrat
   if (intent === "image" && !image.enabled) throw new Error("Enable images before repairing image access");
   if (intent === "prediction" && !prediction.configured && !prediction.display_pending) throw new Error("Enable predictions before opening Codex");
   const env = { ...(options.env || process.env), CCDX_AUTO_LAUNCH: "1" };
-  await integration.configure();
+  if (configureClient) await integration.configure();
   let imageHost = null, imagePrepFailed = false, imageWarning = intent === "prediction" && image.enabled && (!image.configured || !image.selected_available);
-  if (image.enabled) {
+  if (image.enabled && (intent !== "app" || image.configured && image.selected_available)) {
     try { imageHost = await prepare({ ...options, env, host, port }); }
     catch (error) { if (intent === "image") throw error;imageWarning = true;imagePrepFailed = true; }
     if (!imageHost) { if (intent === "image") return { status: "unsupported", prepared: false };imageWarning = true;imagePrepFailed = true; }
@@ -94,9 +94,9 @@ export async function controlCodexLaunch(operation, { intent = "image", integrat
   if (operation === "restart" && current.status === "running" && !current.needs_restart) return { status: "already_connected", prepared: true, app: publicAppState(current) };
   // Never lose a currently connected image host due to a failed preparation.
   if (imagePrepFailed && current.status === "running" && current.host === "connected") return { status: "image_unavailable", prepared: true, app: publicAppState(current) };
-  const native = await integration.start();
-  if (prediction.status === "unavailable") return { status: "prediction_unavailable", prepared: true, app: publicAppState(current) };
-  if (!native && prediction.configured && prediction.enabled) return { status: "prediction_unavailable", prepared: true, app: publicAppState(current) };
+  const native = await integration.start({ autoSetup: intent !== "app" });
+  if (intent !== "app" && prediction.status === "unavailable") return { status: "prediction_unavailable", prepared: true, app: publicAppState(current) };
+  if (intent !== "app" && !native && prediction.configured && prediction.enabled) return { status: "prediction_unavailable", prepared: true, app: publicAppState(current) };
   await native?.prepareRoute?.();
   if (native?.pacUrl && native.app && native.app !== app) return { status: "app_route_conflict", prepared: true };
   if (operation === "restart") {

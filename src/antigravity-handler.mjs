@@ -36,7 +36,7 @@ function groundedSearch(result,query){
     groundingMetadata:{webSearchQueries:[query],groundingChunks:sources.map(item=>({web:{uri:item.url,title:item.title||item.url}}))}}]};
 }
 
-export function createAntigravityHandler({client,models=()=>[],selectedModels=()=>null,enabled=()=>false,privacy,searchFn,imageFn,guardSource,acquireRequest=async()=>()=>{},
+export function createAntigravityHandler({client,models=()=>[],selectedModels=()=>null,enabled=()=>false,privacy,searchFn,imageFn,guardSource,acquireRequest=async()=>()=>{},sourceAdmission,applicationEvidence,
   compaction,compactionProfile=()=>"github",rememberConversationSource=()=>{},resolveCompactionSource=()=>null,recordUsageFn=recordUsage,fetchGoogle=fetch,googleOrigin=GOOGLE_ORIGIN,requestBodyTimeoutMs=120000,upstreamTimeoutMs=180000,streamIdleTimeoutMs=60000}={}) {
   if(![GOOGLE_ORIGIN,"https://cloudcode-pa.googleapis.com"].includes(googleOrigin))throw new Error("Unrecognized Google control origin");
   let active=0,observed=false,catalogModels=null;const nativeWindows=new Map();
@@ -70,6 +70,7 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
       const match=/^\/v1internal(?::|\/)([A-Za-z][A-Za-z0-9]*)$/.exec(route);
       if(!local.pathname.startsWith(PREFIX+"/")||!match)throw httpError("Unknown Antigravity endpoint",404);
       const method=match[1];
+      if(controlMethods.has(method))applicationEvidence?.notice(req,res,"antigravity","control");
       if(req.method==="POST"&&!/^application\/json(?:;|$)/i.test(req.headers["content-type"]||""))throw httpError("Antigravity requires JSON",415);
       phase="admission";release=await measureRequestStageAsync("admission",()=>acquireRequest(req,{signal:abort.signal}));
       phase="body";abort.setTimeout(requestBodyTimeoutMs,"request_body_timeout");
@@ -96,10 +97,15 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
         }
         const open=async(value,options={})=>{
           const internal=options.internal===true,path=internal?"/v1internal:streamGenerateContent?alt=sse":route+local.search;
-          if(generation){abort.setTimeout(upstreamTimeoutMs,"upstream_timeout");markUpstreamStarted(internal||method==="streamGenerateContent")}
-          const result=await fetchGoogle(googleOrigin+path,{method:internal?"POST":req.method,headers:{...nativeHeaders(req),...(value?{"content-type":"application/json"}:{}),...(internal?{accept:"text/event-stream"}:{})},
-            ...(value?{body:JSON.stringify(value)}:{}),signal:options.signal||abort.signal,redirect:"error"});
-          if(generation)markUpstreamHeaders(result.status);return result;
+          const serialized=value?JSON.stringify(value):undefined,signal=options.signal||abort.signal;
+          const perform=()=>{
+            if(generation){abort.setTimeout(upstreamTimeoutMs,"upstream_timeout");markUpstreamStarted(internal||method==="streamGenerateContent")}
+            return fetchGoogle(googleOrigin+path,{method:internal?"POST":req.method,headers:{...nativeHeaders(req),...(value?{"content-type":"application/json"}:{}),...(internal?{accept:"text/event-stream"}:{})},
+              ...(serialized?{body:serialized}:{}),signal,redirect:"error"});
+          };
+          const result=generation&&sourceAdmission?await sourceAdmission.run({source:"google",account:createHash("sha256").update(req.headers.authorization||"").digest("hex")},perform,
+            {signal,model:value?.model,client:"gemini_app",bytes:()=>Buffer.byteLength(serialized||"")}):await perform();
+          if(generation){markUpstreamHeaders(result.status);applicationEvidence?.accept(req,"antigravity","inference")}return result;
         };
         phase="upstream";
         const upstream=compacting&&compaction?await compaction.run({body,protocol:"gemini",scope:JSON.stringify(["gemini","google",createHash("sha256").update(req.headers.authorization||"").update(String(body.project||"")).digest("hex")]),
@@ -188,6 +194,7 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
         summarize:compactionSummarizer(session.body,"chat",client.chatCompletions),onActivity:()=>abort.setTimeout(streamIdleTimeoutMs,"compaction_idle_timeout")}):await client.chatCompletions(session.body,callOptions);
       releaseInput();
       markUpstreamHeaders(upstream.status);
+      applicationEvidence?.accept(req,"antigravity","inference");
       if(!upstream.ok){markResponseErrorOrigin("upstream_http");await upstream.body?.cancel();throw httpError("Copilot generation was refused (HTTP "+upstream.status+")",upstream.status)}
       if(!stream){
         const data=JSON.parse(await readBoundedResponseText(upstream,{maxBytes:MAX_REPLY,signal:abort.signal,label:"Copilot response"}));captureUsage(data);
@@ -215,7 +222,9 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
       else if(phase==="admission")error=Object.assign(httpError(error.message,error.statusCode||503),{code:"ccdx_request_admission_unavailable"});
       if(typeof error.code==="string"&&error.code.startsWith("ccdx_compaction_"))res.setHeader("x-should-retry","false");
       counts.failed++;
-      outcome=abort.signal.aborted&&["client_closed","client_aborted"].includes(abort.reason)?"cancelled":"failed";
+      const cancelled=abort.signal.aborted&&["client_closed","client_aborted"].includes(abort.reason);
+      if(cancelled)markRequestObservation({delivery_cancelled:1});
+      if(!cancelled||!["completed","incomplete"].includes(outcome))outcome=cancelled?"cancelled":"failed";
       const origin=outcome==="cancelled"?"client_disconnect":currentRequestContext()?.errorOrigin||(abort.reason||phase==="admission"?"transport":error.origin==="privacy"?"privacy":error.statusCode<500?"client_validation":"transport");
       markResponseErrorOrigin(origin);markResponseTerminal(outcome,{origin});
       if(res.headersSent&&!res.writableEnded&&!res.destroyed){res.end("data: "+JSON.stringify({error:{code:error.statusCode||502,message:error.message}})+"\n\n");}
@@ -231,7 +240,7 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
           markRequestObservation({input_tokens:record.usage?.input_tokens,cached_input_tokens:record.usage?.cached_input_tokens});
           const context=currentRequestContext();
           recordUsageFn({...record,provider:usageProvider,client:"gemini",request_id:context?.requestId,requested_model:context?.requestedModel,
-            outcome:outcome||"unknown",...(outcome!=="completed"?{partial:true}:{})});
+            outcome:outcome||"unknown",...(outcome!=="completed"||abort.signal.aborted?{partial:true}:{})});
         }
       }
     }

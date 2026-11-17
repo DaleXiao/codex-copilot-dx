@@ -25,6 +25,7 @@ export function createConnectionPolicy({ validObject, binding, catalogRefresh, s
     const previousRef = existing.secret_ref;
     catalogRefresh.cancel(input.id);
     next.apis = next.apis.filter(api => api.id !== input.id);
+    if (next.source_limits) delete next.source_limits[input.id];
     for (const id of CLIENT_IDS)
       next.clients[id].allowed = next.clients[id].allowed.filter(source => source !== input.id);
     save(next);
@@ -44,12 +45,13 @@ export function createConnectionPolicy({ validObject, binding, catalogRefresh, s
         "models",
         "key_env",
         "model_display",
+        "concurrency",
       ])
     )
       throw accessError("ccdx_api_config_invalid");
     // Existing clients round-trip catalog data. New display-only fields must
     // remain readable without becoming editable connection configuration.
-    const { model_display, ...editableConfig } = input.config;
+    const { model_display, concurrency, ...editableConfig } = input.config;
     input = {
       ...input,
       config: {

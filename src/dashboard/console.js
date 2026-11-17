@@ -2,8 +2,8 @@
   const el = id => document.getElementById(id);
   const label = (node, key, values = {}) => globalThis.ccdxLanguage.set(node, key, values);
   const titles = { overview: "overview", codex: "Codex", claude: "Claude", gemini: "Antigravity", models: "model_services", usage: "usage_and_diagnostics", requests: "request_records", checks: "tools_checks_title", system: "system_and_settings" };
-  const settingsViews = ["codex", "claude", "models", "system", "checks"];
-  let current = "overview", settings = null, settingsPending = false, stopped = false, timer = null, ticks = 0;
+  const settingsViews = ["codex", "claude", "gemini", "models", "system", "checks"];
+  let current = "overview", settings = null, settingsPending = false, settingsReadPending = null, stopped = false, timer = null, ticks = 0;
   let sourceDirty = false, reviewDirty = false, sourceModels = [], modelsPreference = null, sourceGeneration = 0, modelsSource = null;
   let settingsReadAt = null;
   let accountsPending = false;
@@ -64,6 +64,7 @@
       if (item.dataset.route === next) item.setAttribute("aria-current", "page");else item.removeAttribute("aria-current");
     }
     label(el("page-title"), titles[next]);
+    applications?.routeChanged();
     el("page-settings-note").textContent = "";
     window.scrollTo(0, 0);
     el("main-content").focus({ preventScroll: true });
@@ -79,7 +80,7 @@
   async function api(body) {
     const response = await fetch("/_ccdx/ui/settings", { method: body ? "POST" : "GET", cache: "no-store",
       headers: { "X-CCDX-Dashboard": "1", ...(body ? { "Content-Type": "application/json" } : {}) },
-      ...(body ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout((body?.action === "prediction" || ["image", "codex_app"].includes(body?.action) && ["open", "restart"].includes(body?.operation)) ? 210000 : ["image", "codex_app"].includes(body?.action) || body?.operation === "account" ? 65000 : 15000) });
+      ...(body ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout((body?.action === "prediction" || ["image", "codex_app"].includes(body?.action) && ["open", "restart"].includes(body?.operation)) ? 210000 : ["image", "codex_app", "application"].includes(body?.action) || body?.operation === "account" ? 65000 : 15000) });
     const data = await response.json();if (!response.ok) throw Object.assign(new Error(data.error || `HTTP ${response.status}`), { code: data.code });return data;
   }
   const preferences = globalThis.ccdxDashboardPreferences?.create({ element: el, api, applied: applySettings, time,
@@ -87,6 +88,7 @@
     refreshAnimation() { dashboardRefresh.invalidate("animation");if (current === "system") void dashboardRefresh.refresh("animation", { force: true }); } });
   globalThis.ccdxSettingsPreferences = preferences;
   const features = globalThis.ccdxDashboardFeatures?.create({ element: el, api, apply: applySettings, change, localize: label });
+  const applications = globalThis.ccdxApplications?.create({ element: el, change, localize: label });
   const states = { needs_github_access: "image_needs_github", image_model_unavailable: "image_no_models", immediate: "effective_now", terminal_unavailable: "terminal_animation_unavailable_in_this_output_mode", next_start: "next_ccdx_start", next_call: "applies_to_new_calls", needs_setup: "setup_required",
     next_config_request: "next_configuration_request_cached_suggestions_may_remain", needs_app_relaunch: "reopen_the_client_to_finish", needs_service_restart: "restart_ccdx_to_finish" };
   const selectedSource = () => providerEntries.find(source => source.id === el("source-provider").value);
@@ -189,30 +191,32 @@
     }
     el("process-notice").textContent = data.terminal?.last_notice || "";
     preferences?.sync(data, meta);
+    applications?.sync(data);
   }
   window.addEventListener("ccdx:connections", event => { if (current === "codex" && event.detail?.imageChanged) void loadSettings(); });
   async function loadSettings() {
-    if (settingsPending) return;
+    if (settingsPending) return settingsReadPending;
     settingsPending = true;
     el("terminal-color-theme").disabled = true;
     syncAccountControls();
     const readVersion = preferences?.version;
-    try { applySettings(await api(), { readVersion });settingsReadAt = time(Date.now());void globalThis.ccdxConnections?.load(); }
+    try { settingsReadPending = api();applySettings(await settingsReadPending, { readVersion });settingsReadAt = time(Date.now());void globalThis.ccdxConnections?.load(); }
     catch (error) {
       for (const id of ["settings-note", ...(settingsViews.includes(current) ? ["page-settings-note"] : [])]) {
         label(el(id), settingsReadAt ? "showing_previous_data_updated_time" : "could_not_read_settings", { time: settingsReadAt });
         el(id).title = error.message;
       }
     }
-    finally { settingsPending = false;el("m365-enabled").disabled = !settings;el("terminal-color-theme").disabled = !settings;el("apply-source").disabled = !sourceReady();syncReviewButton();syncAccountControls(); }
+    finally { settingsReadPending = null;settingsPending = false;el("m365-enabled").disabled = !settings;el("terminal-color-theme").disabled = !settings;el("apply-source").disabled = !sourceReady();syncReviewButton();syncAccountControls(); }
   }
   async function change(body, button, { quiet = false } = {}) {
+    if (settingsReadPending) await settingsReadPending.catch(() => {});
     if (settingsPending) return;
     settingsPending = true;
     syncAccountControls();
     const controls = [...document.querySelectorAll("[role=switch], #save-history, #clean-history, #fix-prediction, #apply-source, #save-review, #source-provider, #source-model, #source-review, #source-review-effort, #terminal-color-theme, #m365-enabled, #prediction-continue, #prediction-open, #prediction-setup, #prediction-remove, #image-models input, #image-check, #image-repair, #image-open, #decoded-limit, #decoded-limit-save, #decoded-limit-default, #install-update")];
     controls.forEach(input => { input.disabled = true; });
-    const note = el(body.action === "codex_app" ? body.intent === "prediction" ? "prediction-open-note" : "image-action-note" : body.action === "prediction" ? body.operation === "open" ? "prediction-open-note" : "prediction-action-note" : body.action === "image" ? "effect-image_enabled" : body.action === "update" ? "manual-update-note" : body.action === "decoded_limit" ? "decoded-limit-note" : body.action === "nightly_update" ? "nightly-state" : body.key ? `effect-${body.key}` : body.action === "color_theme" ? "terminal-color-note"
+    const note = el(body.action === "application" ? "application-state" : body.key === "codex_auto_launch" ? "codex-auto-launch-note" : body.action === "codex_app" ? body.intent === "prediction" ? "prediction-open-note" : "image-action-note" : body.action === "prediction" ? body.operation === "open" ? "prediction-open-note" : "prediction-action-note" : body.action === "image" ? "effect-image_enabled" : body.action === "update" ? "manual-update-note" : body.action === "decoded_limit" ? "decoded-limit-note" : body.action === "nightly_update" ? "nightly-state" : body.key ? `effect-${body.key}` : body.action === "color_theme" ? "terminal-color-note"
       : body.action.startsWith("history_") ? "effect-history" : body.action === "prediction_fix" ? "prediction-note"
         : body.operation === "switch" ? "source-control-note" : body.operation === "auto-review" ? "review-control-note"
           : body.operation === "account" ? "m365-account-note" : "m365-control-note");
@@ -248,7 +252,9 @@
     } finally {
       settingsPending = false;controls.forEach(input => { input.disabled = false; });
       syncAccountControls();
-      if (settings) for (const [key, value] of Object.entries(settings.effective)) if (value.locked) el(`setting-${key}`).disabled = true;
+      if (settings) for (const [key, value] of Object.entries(settings.effective)) if (value.locked) {
+        const node = el(key === "codex_auto_launch" ? "codex-auto-launch" : `setting-${key}`);if (node) node.disabled = true;
+      }
       if (settings?.history.source === "environment") el("save-history").disabled = true;
       el("apply-source").disabled = !sourceReady();el("source-model").disabled = !selectedSource()?.selection.models_required;syncReviewButton();
       features?.render(settings, { notes: false });
@@ -343,6 +349,7 @@
   });
   el("auto-refresh").addEventListener("click", schedule);
   el("refresh").addEventListener("click", () => { if (settingsViews.includes(current)) void loadSettings(); });
+  el("refresh").addEventListener("click", () => applications?.refresh());
   document.addEventListener("ccdx:privacy-preferences", event => { if (event.detail?.preferences) preferences?.sync(event.detail);else if (settingsViews.includes(current)) void loadSettings(); });
   window.addEventListener("pagehide", () => { stopped = true;clearTimeout(timer); });
   window.addEventListener("pageshow", () => { stopped = false;schedule(); });

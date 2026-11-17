@@ -34,6 +34,7 @@ import { inspectClaudeAppContract, watchClaudeAppContract } from "./claude-app-c
 import { deploymentModelId, deploymentRevision } from "./model-capabilities.mjs";
 import { m365Paths } from "./m365-settings.mjs";
 import { createUpstreamErrorCapture } from "./upstream-error-capture.mjs";
+import { admittedSource } from "./source-admission.mjs";
 
 export function createConnectionRuntime({
   legacy,
@@ -53,6 +54,8 @@ export function createConnectionRuntime({
   clientVersionsSnapshot,
   now = Date.now,
   log = () => {},
+  sourceAdmission,
+  applicationEvidence,
 } = {}) {
   const options = { home, env, platform, preserveClientConfiguration },
     secrets = secretStore || createApiSecretStore(options),
@@ -71,6 +74,7 @@ export function createConnectionRuntime({
     serial = Promise.resolve(),
     keys,
     closed = false;
+  for (const [source, maximum] of Object.entries(settings.source_limits || {})) sourceAdmission?.configure(source, maximum);
   const legacyClaudeAccess = fs.existsSync(m365Paths(options).ownership);
   const instances = new Map(),
     setup = {},
@@ -157,14 +161,14 @@ export function createConnectionRuntime({
     if (previous?.config === config && previous.revision === revision) return previous.source;
     const signature = JSON.stringify(config) + revision;
     if (previous?.signature === signature) return previous.source;
-    const source = createApi({
+    const source = admittedSource(createApi({
       config,
       secrets,
       env: { ...env },
       platform,
       modelDisplay: model => modelDisplay.get(id, revision, model),
       errorCapture,
-    });
+    }), sourceAdmission);
     instances.set(id, { signature, source, config, revision });
     lifecycle.rememberSource(source, config.secret_ref);
     if (previous) retire(previous.source);
@@ -270,15 +274,15 @@ export function createConnectionRuntime({
   const { syncClients, capabilitySupportForSync } = clientSync;
   const view = createConnectionView({ legacy, env, binding, plan, getSource, enabled, editable, modelDisplay, discoveries,
     setup, credentialStates, lastClients, memoryModel, capabilitySupport, sharedSync: () => clientSync.shared(),
-    isManaged: () => managed, getSettings: () => settings, corePort, permitted });
+    isManaged: () => managed, getSettings: () => settings, corePort, permitted, sourceAdmission });
   const { imageModels, snapshot, sourceImpact, clientRevision, catalogVisibility } = view;
   const management = createConnectionManagement({
     binding, catalogRefresh, save, discoveries, getSettings: () => settings, env, imageModels, enabled, getSource, legacy,
     capabilitySupport, capabilitySupportForSync, plan, snapshot, options, permitted, sourceImpact, isManaged: () => managed, isClosed: () => closed,
-    clientRevision, editable, syncClients, clientAccessChanged, setup, secrets, lifecycle, retire, memoryModel, enqueue, catalogVisibility });
+    clientRevision, editable, syncClients, clientAccessChanged, setup, secrets, lifecycle, retire, memoryModel, enqueue, catalogVisibility, sourceAdmission });
   const { requireSource, methods: routing } = createConnectionRouting({ legacy, legacyClaudeAccess, isManaged: () => managed,
     getSettings: () => settings, binding, plan, permitted, getSource, resolveDeployment, codexAccessMode, codexRequiresKey, requireCodexKey,
-    identities, track, guardConversation, messagesTransfer, acquireClaudeRequest, privacy, env, log, lastClients, capabilitySupport });
+    identities, track, guardConversation, messagesTransfer, acquireClaudeRequest, privacy, env, log, lastClients, capabilitySupport, applicationEvidence });
 
 
   async function applyCatalog(id, models, revision, checkedAt, active) {
@@ -325,6 +329,17 @@ export function createConnectionRuntime({
 
   return {
     ...legacy,
+    sourceAdmission,
+    applicationEvidence,
+    async prepareApplication(id) {
+      if (!["codex", "claude_app"].includes(id)) throw accessError("ccdx_connections_action_invalid");
+      const selected = binding(id);
+      if (selected.enabled && selected.auto_sync !== false) {
+        if (id === "claude_app") await refreshClientCapabilities({ sync: false });
+        await syncClients([id]);
+      }
+      return snapshot().clients.find(client => client.id === id);
+    },
     managesClaude() {
       return !managed
         ? !legacyClaudeAccess
@@ -436,6 +451,7 @@ export function createConnectionRuntime({
     action: management.action,
     async close() {
       closed = true;
+      await sourceAdmission?.close();
       capabilityWatch?.close();
       await capabilityFlight;
       privacy.close();

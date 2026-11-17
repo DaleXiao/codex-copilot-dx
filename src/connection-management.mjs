@@ -10,7 +10,7 @@ const validObject = (value, keys) =>
   Object.keys(value).every(key => keys.includes(key));
 export function createConnectionManagement({ binding, catalogRefresh, save, discoveries, getSettings, env,
   imageModels, enabled, getSource, legacy, capabilitySupport, capabilitySupportForSync, plan, snapshot, options, permitted, sourceImpact,
-  isManaged, isClosed, clientRevision, editable, syncClients, clientAccessChanged, setup, secrets, lifecycle, retire, memoryModel, enqueue, catalogVisibility }) {
+  isManaged, isClosed, clientRevision, editable, syncClients, clientAccessChanged, setup, secrets, lifecycle, retire, memoryModel, enqueue, catalogVisibility, sourceAdmission }) {
   const { removeApi, prepareApiSave, applyClientSelection, applyProviderEnabled } = createConnectionPolicy({
     validObject, binding, catalogRefresh, save, discoveries, getSettings, env, imageModels, enabled, getSource, legacy,
     capabilitySupport, capabilitySupportForSync, plan, snapshot, options, permitted, sourceImpact });
@@ -36,6 +36,7 @@ export function createConnectionManagement({ binding, catalogRefresh, save, disc
         "auto_sync",
         "image_model",
         "client_revision",
+        "maximum",
       ])
     )
       throw accessError("ccdx_connections_action_invalid");
@@ -51,6 +52,13 @@ export function createConnectionManagement({ binding, catalogRefresh, save, disc
       input.impact_revision !== sourceImpact(input.id).revision
     )
       throw accessError("ccdx_connections_conflict", 409);
+    if (input.operation === "source_limits") {
+      if (!validObject(input, ["operation", "id", "maximum", "impact_revision"]) || !["github", "m365", ...getSettings().apis.map(api => api.id)].includes(input.id)
+        || input.maximum !== null && (!Number.isSafeInteger(input.maximum) || input.maximum < 1 || input.maximum > 128)) throw accessError("ccdx_source_limit_invalid");
+      const next = editable();next.source_limits ||= {};
+      if (input.maximum === null) delete next.source_limits[input.id];else next.source_limits[input.id] = input.maximum;
+      save(next);sourceAdmission?.configure(input.id, input.maximum);return snapshot();
+    }
     if (input.operation === "image_model") {
       if (!validObject(input, ["operation", "id", "model", "client_revision"]) || input.id !== "codex"
         || !imageModels().models.some(model => model.id === input.model)) throw accessError("ccdx_api_model_unavailable");

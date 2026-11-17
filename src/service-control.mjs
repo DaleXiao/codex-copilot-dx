@@ -10,15 +10,29 @@ import { isTerminalAnimationTheme } from "./terminal-animation.mjs";
 import { settingsPreferencesSnapshot, writeSettingsPreferences } from "./settings-preferences.mjs";
 import { predictionControlSnapshot, controlPrediction } from "./prediction-control.mjs";
 import { imageSetupSummary, configureImageSetup } from "./image-setup.mjs";
+import { createApplicationControl } from "./application-control.mjs";
+import { openCodex, autoLaunchEnabled } from "./launcher.mjs";
 
-export function createServiceControl({ env = process.env, home, providerRuntime, clientIntegration, terminal,
+export function createServiceControl({ env = process.env, home, platform = process.platform, providerRuntime, clientIntegration, terminal,
   nightlyStatus = () => null, nightlyChanged = () => {},
   manualUpdate, predictionControl = controlPrediction, imageControl = configureImageSetup, imageHostControl = controlImage, codexLaunchControl = controlCodexLaunch,
-  clientVersions,
+  clientVersions, applicationControlFactory = createApplicationControl,
   adapterPort = 2026, adapterHost = "127.0.0.1",
   readImages = () => imageSetupSummary({ env, home }).configured, readPrediction = () => readPredictionSettings({ env, home }) } = {}) {
-  const options = { env, home };
+  const options = { env, home, platform };
   const imageHostState = createImageHostState();
+  const applicationControl = applicationControlFactory({ ...options, providerRuntime, clientIntegration, imageHostState, port: adapterPort, host: adapterHost,
+    async openCodexApp() {
+      if (platform === "win32") {
+        const native = await clientIntegration?.start({ autoSetup: false });
+        if (!native?.pacUrl) return null;
+        const opened = await openCodex({ env: { ...env, CCDX_AUTO_LAUNCH: "1" }, platform, predictionPacUrl: native.pacUrl,
+          predictionApp: native.app, predictionProfile: native.profile, preparePredictionRoute: () => native.prepareRoute?.() });
+        return { status: opened ? "opened" : "open_failed" };
+      }
+      return codexLaunchControl("open", { ...options, intent: "app", configureClient: false, host: adapterHost, port: adapterPort,
+        integration: clientIntegration, state: imageHostState, models: providerRuntime?.imageModels?.().models || [] });
+    } });
   let serial = Promise.resolve(), lastOperation = null, pending = 0;
   const featureSnapshot = read => { try { return read(options); } catch { return { status: "unavailable" }; } };
   function snapshot() {
@@ -30,6 +44,7 @@ export function createServiceControl({ env = process.env, home, providerRuntime,
     const enabled = nightlyUpdatePreference(options), nightly = nightlyStatus();
     const localPrivacy = providerRuntime?.privacy?.snapshot();
     return { source: "service_settings", saved, theme, color_theme, preferences: settingsPreferencesSnapshot(options), local_privacy: localPrivacy,
+      applications: applicationControl.snapshot(),
       features: { prediction: { ...featureSnapshot(predictionControlSnapshot), bridge: prediction?.bridge || "stopped", active: prediction?.active === true }, image: { ...image, runtime: imageHostState.snapshot() } },
       decoded_body: decodedBodyLimitPreference(options), manual_update: { available: typeof manualUpdate === "function" }, last_operation: lastOperation,
       ...(providerRuntime?.errorCaptureSnapshot ? { error_capture: providerRuntime.errorCaptureSnapshot() } : {}),
@@ -41,6 +56,7 @@ export function createServiceControl({ env = process.env, home, providerRuntime,
         terminal_animation_enabled: { value: terminal?.enabled === true && saved.terminal_animation_enabled && !/^(0|false|no|off)$/i.test(env.CCDX_TERMINAL_ANIMATION || ""),
           state: terminal?.enabled === true ? "immediate" : "terminal_unavailable", locked: /^(0|false|no|off)$/i.test(env.CCDX_TERMINAL_ANIMATION || "") },
         open_webui: { value: saved.open_webui, state: "next_start" },
+        codex_auto_launch: { value: env.CCDX_AUTO_LAUNCH ? autoLaunchEnabled(env, options) : saved.codex_auto_launch, state: "next_start", locked: Boolean(env.CCDX_AUTO_LAUNCH) },
         image_enabled: { value: saved.image_enabled && imageConfigured && image.selected_available === true, state: !imageConfigured ? "needs_github_access" : image.selected_available ? "next_call" : "image_model_unavailable", configured: imageConfigured },
         prediction_enabled: { value: prediction?.active === true, state: !predictionConfigured ? "needs_setup"
           : prediction?.environment?.status === "needs_app_relaunch" ? "needs_app_relaunch" : prediction?.bridge !== "running" ? "needs_service_restart" : "next_config_request", configured: predictionConfigured },
@@ -53,13 +69,18 @@ export function createServiceControl({ env = process.env, home, providerRuntime,
       history_limit: ["action", "mib"], history_clean: ["action"], prediction_fix: ["action"],
       prediction: ["action", "operation"], image: ["action", "operation", "model", "evidence", "confirmed"],
       codex_app: ["action", "operation", "intent", "confirmed"],
+      application: ["action", "id", "operation", "confirmed", "fresh", "expected_pid", "expected_started"],
       update: ["action", "confirmed"], decoded_limit: ["action", "mib"],
       error_capture: ["action", "operation", "source", "model"],
       preferences: ["action", "values", "revision"], reset_preferences: ["action", "revision", "backup_id", "scope"], restore_preferences: ["action", "revision", "backup_id", "scope"],
       provider: ["action", "operation", "provider", "model", "auto_review_model", "auto_review_effort", "account_id"] }[input.action];
     if (!allowed || Object.keys(input).some(key => !allowed.includes(key))) throw new Error("Unknown setting action or field");
     lastOperation = null;
-    if (input.action === "error_capture") {
+    if (input.action === "application") {
+      if (input.fresh !== undefined && typeof input.fresh !== "boolean") throw new Error("Invalid application check");
+      if (input.expected_pid !== undefined && (!Number.isSafeInteger(input.expected_pid) || input.expected_pid <= 0 || !Number.isFinite(Date.parse(input.expected_started)))) throw new Error("Invalid application identity");
+      lastOperation = { feature: "application", result: await applicationControl.action(input) };
+    } else if (input.action === "error_capture") {
       if (!providerRuntime?.captureUpstreamError) throw new Error("This service cannot capture upstream errors.");
       lastOperation = { feature: "error_capture", result: providerRuntime.captureUpstreamError(input) };
     } else if (input.action === "codex_app") {
@@ -92,6 +113,7 @@ export function createServiceControl({ env = process.env, home, providerRuntime,
     } else if (input.action === "nightly_update") {
       writeNightlyUpdatePreference(input.enabled, options);nightlyChanged(input.enabled);
     } else if (input.action === "preference") {
+      if (input.key === "codex_auto_launch" && env.CCDX_AUTO_LAUNCH) throw new Error("Automatic Codex launch is controlled by CCDX_AUTO_LAUNCH");
       if (input.key === "prediction_enabled") await predictionControl(input.value ? "enable" : "disable", { ...options, integration: clientIntegration });
       else writeServicePreference(input.key, input.value, options);
       terminal?.apply?.({ ...servicePreferences(options) });
@@ -119,7 +141,9 @@ export function createServiceControl({ env = process.env, home, providerRuntime,
     }
     return snapshot();
   }
-  return { snapshot, busy: () => pending > 0, action(input) {
+  return { snapshot, busy: () => pending > 0,
+    async inspectApplication(id, fresh = false) { await applicationControl.check(id, fresh);return snapshot(); },
+    action(input) {
     if (input?.action === "client_versions") {
       if (Object.keys(input).some(key => key !== "action")) return Promise.reject(new Error("Unknown setting action or field"));
       if (clientVersions?.refresh) void Promise.resolve().then(() => clientVersions.refresh()).catch(() => {});

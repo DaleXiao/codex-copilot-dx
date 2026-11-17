@@ -59,6 +59,23 @@ function fixture() {
   const run = args => runManagementCommand(parseCliArgs(args), options);
   return { state, data, calls, output, options, run };
 }
+test("desktop checks and previews are read-only; confirmed reopen binds the inspected process", async () => {
+  const f = fixture(), state = { status: "running", connection: "pending", pid: 321, started: "2026-11-17T00:00:00Z" };
+  f.options.request = async input => { f.calls.push(input);return input.body ? { last_operation: { result: { status: "opened" } } } : { applications: { claude_app: state } }; };
+  assert.equal(JSON.parse(await f.run(["app", "claude-app", "check", "--format", "json"])).connection, "pending");
+  await f.run(["app", "claude-app", "open", "--preview"]);assert.ok(f.calls.every(call => !call.body));
+  await f.run(["app", "claude-app", "restart", "--yes"]);
+  assert.deepEqual(f.calls.at(-1).body, { action: "application", id: "claude_app", operation: "restart", confirmed: true, expected_pid: 321, expected_started: state.started });
+});
+test("source concurrency supports read, preview, interactive ceiling and strict validation", async () => {
+  const f = fixture();f.state.providers[0].concurrency = { mode: "auto", maximum: null };
+  assert.equal(JSON.parse(await f.run(["source", "github", "limits", "--format", "json"])).mode, "auto");
+  await f.run(["source", "github", "limits", "--max", "3", "--preview"]);assert.ok(f.calls.every(call => !call.body));
+  for (const value of ["0", "129", "1.5", "NaN"]) await assert.rejects(f.run(["source", "github", "limits", "--max", value, "--yes"]), /1 to 128/);
+  f.options.prompt = async () => "4";await f.run(["source", "github", "limits", "--edit", "--yes"]);
+  assert.deepEqual(f.calls.at(-1).body, { operation: "source_limits", id: "github", maximum: 4, impact_revision: "github-revision" });
+  await f.run(["source", "github", "limits", "--max", "auto", "--yes"]);assert.equal(f.calls.at(-1).body.maximum, null);
+});
 test("tool observations are read-only and keep unknown service support explicit", async () => {
   const f = fixture();await assert.rejects(f.run(["requests", "tools"]), /updated running service/);
   f.data.stream_performance.tool_activity = { items: [{ id: "one", name: "read_file", state: "waiting" }, { id: "two", name: "run_command", state: "returned" }] };

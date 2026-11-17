@@ -70,6 +70,7 @@ export const MANAGED_COMMANDS = [
     "--refresh": "flag",
   }),
   command("source <source> check", "Check source access without inference", read),
+  command("source <source> limits", "Read adaptive source concurrency or set a ceiling", { ...read, ...confirm, "--max": "value", "--edit": "flag" }),
   command("source <source> edit", "Edit API configuration and model selection", {
     "--file": "value",
     "--key-stdin": "flag",
@@ -112,6 +113,8 @@ export const MANAGED_COMMANDS = [
   ...["gemini", "antigravity"].flatMap(app => ["status", "models", "enable", "disable", "open"].map(action => command(`app ${app} ${action}`,
     ({status:"Inspect Gemini App and Antigravity setup",models:"List compatible Copilot models for Antigravity",enable:"Enable Antigravity routing and Copilot background requests",disable:"Pause Antigravity Copilot access; reopen Gemini for native routing",open:"Open the original Gemini App with its prepared route"})[action], {...read,...confirm,...(action==="models"?{"--edit":"flag","--file":"value","--refresh":"flag"}:{})}))),
   command("app <app> status", "Show configuration, not process liveness", { ...read, "--details": "flag" }),
+  ...["open", "focus", "restart", "check"].map(action => command(`app <app> ${action}`, ({ open: "Open the native app or focus its current process", focus: "Focus the current app without relaunching", restart: "Confirm and gracefully reopen the app", check: "Inspect the current app without inference or writes" })[action], { ...read, ...confirm })),
+  ...["focus", "restart", "check"].map(action => command(`app antigravity ${action}`, "Control or inspect the current Antigravity app", { ...read, ...confirm })),
   command("app <app> models", "Show or edit the client's selected model plan", {
     ...read,
     "--edit": "flag",
@@ -288,7 +291,7 @@ export function parseManagedCommand(args) {
 const extras = {
   source:
     "Status reads local/cached evidence. check/--refresh may contact the source; no inference.\nsource import --file FILE previews supplied metadata. --select N --apply saves one source using private key input; no client access is granted.\nSource access grants do not select client models. Disable previews affected clients.\nGitHub login and company-account selection are source-specific.\nChoose visible models and defaults with app <app> models --edit.",
-  app: "Configured is not App adoption or process liveness. Unknown stays unknown.\nmodels shows the selected plan; Antigravity lists compatible Copilot models and their selection.\napp antigravity models --refresh reads the GitHub catalog without inference or changing saved choices.\nsource <id> models shows the upstream catalog.\nsetup/remove changes integration setup; pause/resume retains credentials.\nsync --preview shows the model/configuration plan, not a byte-level file diff.\nNo client program is force-restarted.",
+  app: "Configured is not App adoption or process liveness. Unknown stays unknown.\nmodels shows the selected plan; Antigravity lists compatible Copilot models and their selection.\napp antigravity models --refresh reads the GitHub catalog without inference or changing saved choices.\nsource <id> models shows the upstream catalog.\nsetup/remove changes integration setup; pause/resume retains credentials.\nsync --preview shows the model/configuration plan, not a byte-level file diff.\nopen focuses an already-running app; check is read-only and sends no inference.\nrestart asks before a graceful reopen. No client program is force-restarted.",
   config:
     "Only service and terminal preferences are in scope. Browser appearance stays in WebUI.\nReset keeps accounts, keys, model plans and chats and stores a pre-reset backup.\nSaved and effective values can differ; restart requirements remain explicit.",
   requests:
@@ -336,5 +339,5 @@ export function managedCommandHelp(parts) {
   );
 }
 export function rootCommandHelp() {
-  return `Usage:\n  ccdx [start] [--show-request-id] [--no-browser] [--verbose]\n\nCommon:\n  status             Show service state; --details expands diagnostics\n  web                Open local management tools\n  requests           Show retained model requests and failures\n  usage              Show recorded token usage\n  compact            Inspect and control context compression\n  doctor             Check local setup; deeper checks are explicit\n\nManage:\n  source             Accounts, APIs, catalogs and client authorization\n  app                Client model plans, sync and app-specific features\n  config             Service and terminal preferences\n\nUpdate:\n  update check       Check without installing\n  update github|npm  Install; restart the service normally afterward\n  version            Show installed package version\n\nHelp:\n  ccdx <command> --help\n  ccdx help app codex prediction\n\nStart keeps the existing configured-client setup and launch behavior.\nCLI output stays in English. Read-only commands do not start a service.`;
+  return `Usage:\n  ccdx [start] [--show-request-id] [--no-browser] [--verbose]\n\nCommon:\n  status             Show service state; --details expands diagnostics\n  web                Open local management tools\n  requests           Show retained model requests and failures\n  usage              Show recorded token usage\n  compact            Inspect and control context compression\n  doctor             Check local setup; deeper checks are explicit\n\nManage:\n  source             Accounts, APIs, catalogs and client authorization\n  app                Client model plans, sync and app-specific features\n  config             Service and terminal preferences\n\nUpdate:\n  update check       Check without installing\n  update github|npm  Install; restart the service normally afterward\n  version            Show installed package version\n\nHelp:\n  ccdx <command> --help\n  ccdx help app codex prediction\n\nStart preserves owned client setup. Automatic Codex opening is off by default; enable it on the Codex page or with config set codex_auto_launch true.\nCLI output stays in English. Read-only commands do not start a service.`;
 }

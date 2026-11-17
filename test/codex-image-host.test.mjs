@@ -80,7 +80,7 @@ test("launch files contain only executable paths and keep custom Codex routes", 
   const launch = await prepareImageHostLaunch(options);const source = await fs.readFile(launch.env.CODEX_CLI_PATH, "utf8");
   assert.match(source, /'\/node path\/node'/);assert.match(source, /http:\/\/127\.0\.0\.1:2026\/v1/);assert.doesNotMatch(source, /auth\.json|token|ephemeral/);
   await assert.rejects(() => prepareImageHostLaunch({ ...options, env: { CODEX_CLI_PATH: "/user/custom-codex" } }), /custom Codex/);
-  assert.equal(await prepareImageHostLaunch({ ...options, env: { CCDX_AUTO_LAUNCH: "0" } }), null);
+  assert.equal((await prepareImageHostLaunch({ ...options, env: { CCDX_AUTO_LAUNCH: "0" } })).env.CODEX_CLI_PATH, launch.env.CODEX_CLI_PATH, "Explicit preparation is independent of automatic App launch");
 });
 
 test("stdio pass-through preserves credential frames and stops reading when Codex exits", async t => {

@@ -25,6 +25,7 @@ if (mode !== "--worker") {
 }
 
 const root = args[0];assert.ok(root && path.isAbsolute(root));
+const loadStarted = performance.now();
 const load = relative => import(pathToFileURL(path.join(root, relative)).href);
 const { startAdapter } = await load("src/adapter.mjs");
 const { closeHttpServer } = await load("src/shutdown.mjs");
@@ -42,15 +43,17 @@ const runtime = fs.existsSync(path.join(root, "src/provider-runtime.mjs"))
   ? (await load("src/provider-runtime.mjs")).createProviderRuntime({ githubClient: client, githubRegistry: registry,
     githubCredentialFingerprint: "benchmark-account", home, env: { CCDX_M365: "0" }, platform: "linux" }) : null;
 const savedLog = console.log;console.log = console.warn = () => {};
-const server = await startAdapter(0, "127.0.0.1", { codexClient: client, modelRegistry: registry, providerRuntime: runtime,
+const server = await startAdapter(0, "127.0.0.1", { codexClient: runtime?.source("github")?.client || client, modelRegistry: registry, providerRuntime: runtime,
   terminalActivity: null, openAIModelEnv: {}, log: () => {} });
 const url = `http://127.0.0.1:${server.address().port}/v1/responses`;
+const loadMs = performance.now() - loadStarted;let firstRequestMs;
 const body = JSON.stringify({ model: "gpt-6-sol", stream: true, input: [{ role: "user", content: "Synthetic request context. ".repeat(300) }] });
 const samples = [];
 async function request(measured) {
   const start = performance.now();
   const response = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", session_id: "benchmark-thread" }, body });
   assert.equal(response.status, 200);assert.match(await response.text(), /response.completed/);
+  firstRequestMs ??= performance.now() - start;
   if (measured) samples.push(performance.now() - start);
 }
 try {
@@ -59,7 +62,7 @@ try {
   for (let i = 0; i < 100; i++) await Promise.all(Array.from({ length: 8 }, () => request(true)));
   const elapsed = performance.now() - started;samples.sort((a, b) => a - b);global.gc?.();
   const memory = process.memoryUsage();
-  savedLog(JSON.stringify({ requests: samples.length, requests_per_second: samples.length * 1000 / elapsed,
+  savedLog(JSON.stringify({ requests: samples.length, requests_per_second: samples.length * 1000 / elapsed, cold_start_ms: loadMs + firstRequestMs,
     p50_ms: samples[Math.floor(samples.length * .5)], p95_ms: samples[Math.floor(samples.length * .95)],
     heap_mib: memory.heapUsed / 1048576, rss_mib: memory.rss / 1048576 }));
 } finally { await closeHttpServer(server);await runtime?.close();fs.rmSync(home, { recursive: true, force: true }); }

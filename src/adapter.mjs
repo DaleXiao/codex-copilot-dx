@@ -159,7 +159,7 @@ async function sendLastKnownGoodModels(res, modelRegistry, options = {}) {
 // Shared request handler. Keeping this separate from the listener makes the
 // complete HTTP routing layer testable without opening a local port.
 export function createAdapterHandler(options = {}) {
-  const codexClient = options.codexClient || defaultCopilotClient;
+  const codexClient = options.codexClient || options.providerRuntime?.source?.("github")?.client || defaultCopilotClient;
   // Keep the established injection names because Responses may still use the
   // internal Chat Completions compatibility path for upstream models that need it.
   const chatCompletionsFn = options.codexChatCompletionsFn
@@ -193,6 +193,8 @@ export function createAdapterHandler(options = {}) {
     if (!antigravityLoading) antigravityLoading = (async () => {
       const { createAntigravityRuntime } = await import("./antigravity-runtime.mjs");
       antigravity = createAntigravityRuntime({ client: codexClient, models: () => codexModelRegistry?.models || [], privacy, compaction, acquireRequest,
+        sourceAdmission: options.providerRuntime?.sourceAdmission,
+        applicationEvidence: options.providerRuntime?.applicationEvidence,
         ...(options.providerRuntime?.dashboardCatalog?{refreshModels:async()=>{
           const result=await options.providerRuntime.dashboardCatalog({provider:"github"});
           if(!result)throw httpError("GitHub model catalog refresh is unavailable",503);
@@ -351,6 +353,8 @@ export function createAdapterHandler(options = {}) {
       }
       return carbonSearch(req, res);
     }
+    if (req.method === "GET" && pathname === "/v1/models" || req.method === "POST" && ["/v1/responses", "/v1/responses/compact"].includes(pathname))
+      options.providerRuntime?.applicationEvidence?.notice(req, res, "codex", pathname === "/v1/models" ? "catalog" : "inference");
     if (pathname.startsWith("/anthropic/")) {
       if (!isLoopbackAddress(req.socket?.remoteAddress) || !req.headers?.host || !isLoopbackHostHeader(req.headers.host)
         || Object.hasOwn(req.headers, "origin")) { sendJsonError(res, httpError("Claude requires native local clients", 403));return; }

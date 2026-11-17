@@ -11,7 +11,7 @@ export function summaryRequest(body, protocol, text) {
     stream: true, store: false, instructions: INSTRUCTION, input: [{ type: "message", role: "user", content: [{ type: "input_text", text }] }] };
   if (protocol === "messages") return { ...pick(body, ["model", "max_tokens", "thinking", "output_config", "temperature", "top_p"]),
     stream: true, system: INSTRUCTION, messages: [{ role: "user", content: text }] };
-  if (protocol === "chat") return { ...pick(body, ["model", "max_tokens", "max_completion_tokens", "reasoning_effort", "service_tier", "temperature", "top_p"]),
+  if (protocol === "chat") return { ...pick(body, ["model", body.max_completion_tokens !== undefined ? "max_completion_tokens" : "max_tokens", "reasoning_effort", "service_tier", "temperature", "top_p"]),
     stream: true, stream_options: { include_usage: true }, messages: [{ role: "system", content: INSTRUCTION }, { role: "user", content: text }] };
   if (protocol === "gemini") {
     const { contents, systemInstruction, tools, toolConfig, cachedContent, ...request } = body.request || {};

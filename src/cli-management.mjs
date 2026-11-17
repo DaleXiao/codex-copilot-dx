@@ -218,6 +218,17 @@ export async function runManagementCommand(command, options = {}) {
     writeSettingsPreferences(body, preferenceOptions);return print({ saved: settingsPreferencesSnapshot(preferenceOptions).values, effect: "Saved for the next CCDX start; no service was started" });
   }
   if (group === "app") {
+    if (path.length === 3 && ["open", "focus", "restart", "check"].includes(action)) {
+      const id = ["antigravity", "gemini"].includes(path[1]) ? "antigravity" : CLI_CLIENTS[ids.app || path[1]];
+      if (!["codex", "claude_app", "antigravity"].includes(id)) throw new Error("This command opens desktop apps. Run Claude Code in your terminal.");
+      const settings = await request({ path: "settings?application=" + id + "&fresh=1", timeoutMs: 15000 }), app = settings.applications?.[id];
+      if (!app) throw new Error("This command needs the updated running service; no app was changed.");
+      if (action === "check" || flags.preview) return print({ id, ...app, ...(flags.preview ? { action, performed: false } : {}) });
+      if (action === "restart") await confirm("Reopen " + path[1] + "? This may interrupt its current tasks.");
+      const result = await request({ path: "settings", body: { action: "application", id, operation: action,
+        ...(action === "restart" ? { confirmed: true, ...(app.pid ? { expected_pid: app.pid, expected_started: app.started } : {}) } : {}) }, timeoutMs: 65000 });
+      return print(result.last_operation?.result || result.applications?.[id]);
+    }
     if (["gemini", "antigravity"].includes(path[1])) {
       if (["enable", "disable"].includes(action)) {
         const preview = { action, background_source: "GitHub Copilot (all Antigravity summaries, searches and image generation)", ordinary_Gemini_chat: "Google; no routing change" };
@@ -373,6 +384,17 @@ export async function runManagementCommand(command, options = {}) {
   if (!flags.preview && (flags.edit || ["add", "edit", "enable", "disable", "remove"].includes(action))) requireManagement();
   if (action === "list") return print(graph.providers.map(source => ({ id: source.id, name: source.name, enabled: source.enabled, key_saved: source.builtin ? undefined : source.key_saved })), [["id", "ID"], ["name", "Source"], ["enabled", "Enabled"]]);
   const id = ids.source, source = id ? getSource(graph, id) : null;
+  if (action === "limits") {
+    let value = flags.max;
+    if (flags.edit && value === undefined) value = (await ask("Maximum concurrency (auto, or 1–128; Enter keeps selection): ")).trim() || (source.concurrency?.maximum ?? "auto");
+    if (value === undefined) return print(source.concurrency || { mode: "auto", maximum: null });
+    const maximum = value === "auto" ? null : Number(value);
+    if (maximum !== null && (!Number.isSafeInteger(maximum) || maximum < 1 || maximum > 128)) throw new Error("Choose auto or an integer from 1 to 128.");
+    if (flags.preview) return print({ id, mode: "auto", maximum, saved: false });
+    await confirm("Save this source's adaptive concurrency ceiling?");
+    const next = await save({ operation: "source_limits", id, maximum, impact_revision: graph.source_impacts?.[id]?.revision });
+    return print(getSource(next, id).concurrency);
+  }
   if (action === "status" || action === "models" && !flags.refresh) {
     if (action === "models" && source.builtin) {
       return print(await save({ operation: "source_catalog", id }));

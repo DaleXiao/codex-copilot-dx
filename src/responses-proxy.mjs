@@ -1,4 +1,5 @@
 import { markToolActivity } from "./stream-performance.mjs";
+import { observeSourceStreamFailure } from "./source-admission.mjs";
 import { responses as copilotResponses } from "./copilot.mjs";
 import {
   logRequestFailure,
@@ -163,6 +164,7 @@ function inspectResponseSseEvent(state, eventName, data) {
   }
   if (!RESPONSES_TERMINAL_EVENT_TYPES.has(eventType)) return changed ? event : null;
   if (eventType === "error" || eventType === "response.failed") {
+    observeSourceStreamFailure(state.sourceResponse, event.response?.error ?? event.error ?? event);
     const response = { ...(event.response && typeof event.response === "object" ? event.response : {}), ...state.response };
     const sequenceNumber = Number.isSafeInteger(state.lastSequence) && state.lastSequence > previousSequence
       ? state.lastSequence : Number.isSafeInteger(previousSequence) ? previousSequence + 1 : 0;
@@ -504,6 +506,7 @@ async function proxyStreamingResponses(opened, res, upstream, options) {
     };
     const reader = resp.body.getReader();
     const streamState = {
+      sourceResponse: resp,
       completed: null,
       incomplete: null,
       failure: null,
@@ -621,7 +624,7 @@ async function proxyStreamingResponses(opened, res, upstream, options) {
       if (!res.writableEnded) res.end();
       return { successful: Boolean(streamState.completed), compacted: false };
     } catch (error) {
-      markResponseErrorOrigin(error.origin === "privacy" ? "privacy" : "transport");
+      markResponseErrorOrigin(["privacy", "source_admission"].includes(error.origin) ? error.origin : "transport");
       markStreamFailure();
       logRequestFailure("Responses", error, options.abort);
       writeHeaders();

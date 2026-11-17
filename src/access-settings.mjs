@@ -117,13 +117,15 @@ export function defaultAccessSettings() {
     { enabled: true, allowed: id === "codex" ? ["github", "m365"] : ["m365"], source: null }])) };
 }
 export function checkedAccessSettings(value) {
-  if (!fields(value, ["version", "claude_private_keys", "providers", "apis", "clients"]) || ![1, 2].includes(value.version) || typeof value.claude_private_keys !== "boolean"
+  if (!fields(value, ["version", "claude_private_keys", "providers", "apis", "clients", "source_limits"]) || ![1, 2].includes(value.version) || typeof value.claude_private_keys !== "boolean"
     || !fields(value.providers, ["github", "m365"]) || ["github", "m365"].some(id => typeof value.providers[id] !== "boolean")
     || !Array.isArray(value.apis) || value.apis.length > 16 || !fields(value.clients, CLIENT_IDS)) throw accessError("ccdx_connections_invalid");
   const ids = new Set(["github", "m365"]), names = new Set(["github copilot", "microsoft 365"]);
   for (const api of value.apis) { checkedApi(api);if (ids.has(api.id)) throw accessError("ccdx_connections_invalid");ids.add(api.id);
     const name = api.name.trim().toLowerCase();if (names.has(name)) throw accessError("ccdx_api_name_exists");names.add(name);
   }
+  if (value.source_limits !== undefined && (!fields(value.source_limits, [...ids]) || Object.values(value.source_limits).some(limit => !Number.isSafeInteger(limit) || limit < 1 || limit > 128)))
+    throw accessError("ccdx_connections_invalid");
   for (const id of CLIENT_IDS) {
     const client = value.clients[id];
     if (!fields(client, ["enabled", "allowed", "source", "model", "auto_review_model", "auto_review_effort", "history_isolation", "deployments", "default_model", "auto_sync", "image_model"])

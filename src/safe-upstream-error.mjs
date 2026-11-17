@@ -85,7 +85,7 @@ function readChunk(reader, signal) {
 
 // Failure responses only. A stalled body or a stalled cancellation cannot delay
 // the caller beyond the budget. The original request's cancellation wins.
-export async function readSafeUpstreamReason(response, { signal, timeoutMs = 200, maxBytes = 64 * 1024, missingCallId = false, rootToolSchema = false, diagnosticRedact } = {}) {
+export async function readSafeUpstreamReason(response, { signal, timeoutMs = 200, maxBytes = 64 * 1024, missingCallId = false, rootToolSchema = false, diagnosticRedact, onSourceLimit } = {}) {
   if (signal?.aborted) {
     cancelBody(response?.body);
     signal.throwIfAborted();
@@ -112,6 +112,7 @@ export async function readSafeUpstreamReason(response, { signal, timeoutMs = 200
     }
     const text = Buffer.concat(chunks, bytes).toString("utf8");
     let value;try { value = JSON.parse(text); } catch { value=text; }
+    if (response.status === 429) try { onSourceLimit?.(value); } catch { /* Optional classification never alters the public error. */ }
     const reason = missingCallId && isMissingCallIdError(response.status, text)
       ? { code: "ccdx_missing_call_id", message: "The source requires a tool call ID." }
       : rootToolSchema && isRootToolSchemaError(response.status, text)

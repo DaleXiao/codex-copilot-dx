@@ -202,14 +202,14 @@ test("Windows prediction launch binds native and Chromium storage to the existin
     running = [{ pid: 1, readable: true, route: "http://127.0.0.1:12345/proxy.pac" }];
     queueMicrotask(() => child.emit("spawn"));return child;
   };
-  const env = Object.freeze({ CODEX_HOME: "C:\\existing-codex-home" });
+  const env = Object.freeze({ CODEX_HOME: "C:\\existing-codex-home", CCDX_AUTO_LAUNCH: "1" });
   const options = { env, platform: "win32", predictionApp: executable, predictionProfile: profile, predictionPacUrl: "http://127.0.0.1:12345/proxy.pac",
     resolveWindowsApp: () => ({ app: executable }), windowsAppProcesses: () => running, spawnImpl };
   assert.equal(await openCodex(options), true);
   assert.equal(calls[0].command, executable);assert.deepEqual(calls[0].args, [`--user-data-dir=${profile}`, "--proxy-pac-url=http://127.0.0.1:12345/proxy.pac"]);
   assert.equal(calls[0].options.env.CODEX_ELECTRON_USER_DATA_PATH, profile);
   assert.equal(calls[0].options.env.CODEX_HOME, env.CODEX_HOME);
-  assert.deepEqual(env, { CODEX_HOME: "C:\\existing-codex-home" });
+  assert.deepEqual(env, { CODEX_HOME: "C:\\existing-codex-home", CCDX_AUTO_LAUNCH: "1" });
   assert.equal(calls[0].options.shell, false);assert.equal(calls[0].options.detached, true);
   calls.length = 0;
   assert.equal(await openCodex({ ...options, resolveWindowsApp: () => ({ app: "C:\\other\\Codex.exe" }) }), false);
@@ -219,9 +219,9 @@ test("Windows prediction launch binds native and Chromium storage to the existin
   assert.equal(await openCodex({ ...options, predictionProfile: null }), false);
   assert.equal(await openCodex({ ...options, predictionProfile: "C:\\missing" }), false);
   assert.equal(await openCodex({ ...options, predictionProfile: profile + "\n" }), false);
-  assert.equal(await openCodex({ ...options, env: { CODEX_ELECTRON_USER_DATA_PATH: "C:\\other-profile" } }), false);
+  assert.equal(await openCodex({ ...options, env: { ...env, CODEX_ELECTRON_USER_DATA_PATH: "C:\\other-profile" } }), false);
   assert.equal(calls.length, 0);
-  assert.equal(await openCodex({ ...options, env: { CODEX_ELECTRON_USER_DATA_PATH: profile.toLowerCase() } }), true);
+  assert.equal(await openCodex({ ...options, env: { ...env, CODEX_ELECTRON_USER_DATA_PATH: profile.toLowerCase() } }), true);
   const before = calls.length;
   assert.equal(await openCodex({ ...options, windowsAppProcesses: () => [{ pid: 1, readable: true, route: options.predictionPacUrl }] }), true);
   assert.equal(await openCodex({ ...options, windowsAppProcesses: () => [{ pid: 1, readable: true, route: "http://127.0.0.1:54321/proxy.pac" }] }), false);

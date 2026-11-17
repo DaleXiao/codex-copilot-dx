@@ -218,6 +218,7 @@ export function createResponsesHandler(options) {
       }
     };
     const applyAdaptiveTimeout = (error) => {
+      if (error.sourceQueue) return error;
       if (!["responses_prepare_timeout", "stream_handshake_timeout", "upstream_timeout"].includes(abort.reason)) {
         return error;
       }

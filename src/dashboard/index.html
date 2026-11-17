@@ -38,8 +38,17 @@
         <section class="intro">
           <h1><span id="page-title" data-i18n="overview">Overview</span></h1>
           <p id="page-settings-note" class="hint" role="status"></p>
+          <div id="application-launch" hidden>
+            <button type="button" id="application-open"><span aria-hidden="true">↗</span><span id="application-open-label" data-i18n="application_open">Open app</span></button>
+            <span id="application-state" class="hint" role="status" aria-live="polite"></span>
+          </div>
           <div id="preferences-status" class="preferences-status" role="status" aria-live="polite" hidden></div>
         </section>
+        <div id="application-reopen-confirm" class="section-actions" hidden>
+          <span data-i18n="application_reopen_warning">Reopening may interrupt current tasks.</span>
+          <button type="button" id="application-reopen-cancel" data-i18n="cancel">Cancel</button>
+          <button type="button" id="application-reopen-apply" data-i18n="application_reopen">Reopen</button>
+        </div>
 
 
         <div data-view="overview">
@@ -54,6 +63,7 @@
         <section class="panel dashboard-section"><h2 data-i18n="this_run_usage">THIS RUN</h2><p id="runtime-usage" class="table-note"></p><p class="table-note"><span data-i18n="approx_cache_hit_rate">Approx. cache hit rate</span>: <strong id="runtime-cache-hit" data-i18n-title="runtime_cache_hit_basis" title="Reused / input tokens from records with valid counts for both. ~ Partial coverage. — No valid input basis.">—</strong></p><p class="hint" data-i18n="updated_from_returned_usage_not_a_live_bill_pending_usage_is_not">Counts returned usage only. Pending usage is not included. This is not a live bill.</p></section>
         </div>
         <div data-view="codex" hidden>
+          <div class="setting-row" id="codex-auto-launch-row"><label for="codex-auto-launch" data-i18n="codex_auto_launch">Open Codex when CCDX starts</label><input id="codex-auto-launch" type="checkbox" role="switch"><span id="codex-auto-launch-note" class="hint" data-i18n="next_ccdx_start">Next CCDX start.</span></div>
 <div id="codex-model-management">  <section class="connection-access" id="connection-clients">
     <div id="connection-client-list"></div>
     <details id="connection-disabled-clients" class="connection-disabled" hidden><summary data-i18n="api_disabled_clients">Disabled clients</summary><div id="connection-disabled-client-list"></div></details>
@@ -269,6 +279,12 @@
             <div class="section-actions"><button id="source-access-save" type="submit" data-i18n="api_save" disabled>Save</button><button id="source-access-cancel" type="button" data-i18n="cap_discard_changes" disabled>Discard changes</button></div>
             <p id="source-access-note" class="hint" role="status" aria-live="polite"></p>
           </form>
+          <details class="tool-details" id="source-concurrency"><summary data-i18n="source_concurrency">Concurrency · Auto</summary>
+            <form id="source-limit-form"><div class="connection-fields"><label><span data-i18n="source_concurrency_maximum">Maximum concurrency</span><input id="source-limit-maximum" type="number" min="1" max="128" step="1" inputmode="numeric" placeholder="Auto" data-i18n-placeholder="source_concurrency_auto"></label></div>
+              <p class="hint" data-i18n="source_concurrency_hint">Leave blank for Auto. A value only sets its ceiling.</p>
+              <div class="section-actions"><button id="source-limit-save" type="submit" data-i18n="api_save" disabled>Save</button></div><p id="source-limit-note" class="hint" role="status" aria-live="polite"></p>
+            </form>
+          </details>
         </section>
         <details class="panel dashboard-section model-catalog" id="upstream-models" open>
           <summary class="panel-heading"><h2 data-i18n="model_catalog">MODEL LIST</h2><span id="models-state" role="status" aria-live="polite" data-i18n="checking_live">CHECKING</span></summary>

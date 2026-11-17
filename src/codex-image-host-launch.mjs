@@ -6,7 +6,6 @@ import { fileURLToPath } from "node:url";
 import { userSettingsPath, servicePreferences } from "./user-settings.mjs";
 import { atomicWriteFileIfChangedSync } from "./atomic-file.mjs";
 import { installedPredictionApp } from "./native-prediction-app.mjs";
-import { autoLaunchEnabled } from "./launcher.mjs";
 import { adapterBaseUrl } from "./running-adapter.mjs";
 
 const execute = promisify(execFile);
@@ -20,7 +19,7 @@ export function imageHostLauncherPath(options = {}) {
 export async function prepareImageHostLaunch({ env = process.env, home, platform = process.platform, host = "127.0.0.1", port = 2026,
   discoverApp = installedPredictionApp, exec = execute, node = process.execPath,
   entry = fileURLToPath(new URL("../bin/codex-image-host.mjs", import.meta.url)) } = {}) {
-  if (platform !== "darwin" || !autoLaunchEnabled(env) || !servicePreferences({ env, home }).image_enabled) return null;
+  if (platform !== "darwin" || !servicePreferences({ env, home }).image_enabled) return null;
   const wrapper = imageHostLauncherPath({ env, home });
   if (env.CODEX_CLI_PATH?.trim() && path.resolve(env.CODEX_CLI_PATH) !== wrapper) throw new Error("A custom Codex CLI route is already configured; image host setup was preserved");
   const app = await discoverApp({ env, platform });

@@ -51,6 +51,18 @@ No independent WebKit client or private WebKit SPI is included.
 
 ## Composition and lifecycle
 
+### Application control and shared source admission
+
+`application-process.mjs` discovers verified desktop identities and reads PID/start-time and scoped loopback socket metadata. `application-configuration.mjs` asynchronously reads bounded integration fields and computes semantic in-memory revisions; inspection never writes application files. `application-evidence.mjs` retains bounded accepted protocol metadata and joins it to the current process family. An open socket by itself cannot establish adoption. Evidence expires after five minutes, and process/configuration changes invalidate it. `application-control.mjs` caches a shared process inventory for three seconds, bounds inspection, serializes explicit control actions and uses graceful exits only. The Web UI keeps newer inspection results when ordinary settings snapshots arrive late. Claude Code remains a terminal process outside desktop launch control.
+
+Automatic Codex opening uses the saved `codex_auto_launch` preference, default false, with explicit launch-environment precedence. Manual preparation and opening do not depend on that preference. Existing field-owned sync/restore modules retain configuration ownership; image/suggestion capabilities keep their own evidence boundaries. No App bundle patching, account changes or inference probes are added.
+
+`source-admission.mjs` wraps each provider client once and shares account-scoped leases across Responses, Messages, Chat, Images and relevant search/native-Google calls. Lease ownership ends at upstream-body completion/cancellation, not response headers. Counting/catalog reads bypass generation admission. Request-body memory reservations remain separate and shrink only after a complete upload; compressed decoded-body accounting remains intact. Rejected response bodies release their leases before nested recovery calls.
+
+Explicit concurrency rejections contract once per observed burst. Stable successful waiting demand grows capacity additively. Model quota/rate evidence and explicit account-wide evidence keep separate scopes. Ordinary parameter errors, slow thinking and untyped output text do not train capacity. HTTP 200 stream errors enter feedback only through existing structured protocol parsers. API providers pass a private fixed-field Symbol through safe error projection; original vendor text is never persisted. Queue limits are 16 per account, 8 MiB globally and 30 seconds; the initial 128-slot ceiling preserves the existing small held-stream workload and is not an upstream capacity claim. A manual source ceiling is optional. Stable capacity persistence is asynchronous, bounded and keyed by hashes; invalid or stale metadata is discarded.
+
+The upstream references are deliberately narrow: [Floway's model-scoped quota correction](https://github.com/Menci/Floway/commit/49813611aac1f7d0cccb10cfd343c1df7541790e) and [single Chat output cap](https://github.com/Menci/Floway/commit/63f1100af6bc2823e7f0f478fbd785aa56dc0cd7), [Magpie's quota/compaction boundary](https://github.com/yetone/magpie/issues/2725), and [LiteLLM's disconnect outcome report](https://github.com/BerriAI/litellm/issues/51978). CCDX preserves an already observed terminal result while marking delivery cancellation separately; an unfinished stream is not promoted to success. The existing CC Switch-style separation of configuration, discovery and application activation is retained. No upstream runtime, distributed queue or automatic account rotation is introduced.
+
 ### Manual connection graph
 
 `provider-runtime.mjs` composes built-in lifecycle with `connection-runtime.mjs`,

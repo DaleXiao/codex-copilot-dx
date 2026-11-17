@@ -19,6 +19,9 @@ import { accessSettingsPath, readAccessSettings } from "./access-settings.mjs";
 import { createStreamPerformanceMetrics } from "./stream-performance.mjs";
 import { M365_API_HOST } from "./providers/m365-endpoint.mjs";
 import { m365CatalogDiagnostic, m365CatalogMessage } from "./providers/m365-catalog-diagnostic.mjs";
+import { admittedSource } from "./source-admission.mjs";
+import { createRuntimeSourceAdmission } from "./source-admission-state.mjs";
+import { createApplicationEvidence } from "./application-evidence.mjs";
 
 const unavailable = reason => Object.assign(new Error(`Microsoft 365 is unavailable (${reason}); GitHub routing was not substituted`),
   { code: reason, statusCode: 503 });
@@ -27,6 +30,8 @@ const unavailable = reason => Object.assign(new Error(`Microsoft 365 is unavaila
 // image configuration or each other's credentials.
 export function createProviderRuntime(options = {}) {
   options = { ...options, corePort: options.corePort ?? Number((options.env || process.env).ADAPTER_PORT || 2026) };
+  options.sourceAdmission ||= createRuntimeSourceAdmission(options);
+  options.applicationEvidence ||= createApplicationEvidence();
   const compaction = options.compaction || createContextCompactionService({ enabled() { try { return servicePreferences(options).context_compaction_enabled; } catch { return false; } } });
   let connections;
   const legacy = createBuiltinProviderRuntime({ ...options, compaction, managedClaude: () => connections?.managesClaude() !== false,
@@ -37,10 +42,10 @@ export function createProviderRuntime(options = {}) {
 
 function createBuiltinProviderRuntime({ githubClient, githubRegistry, refreshGithubCatalog, githubCredentialFingerprint = "", githubClientConfigured = true, home, env = process.env, platform = process.platform,
   corePort = Number(env.ADAPTER_PORT || 2026), log = () => {}, createM365, startGateway, configureClients, restoreClients,
-  discoverM365 = requestM365Accounts, managedClaude, onClaudeReady, preserveClientConfiguration, privacy, compaction } = {}) {
-  const options = { home, env, platform }, github = { ...createGithubProvider({ client: githubClient,
+  discoverM365 = requestM365Accounts, managedClaude, onClaudeReady, preserveClientConfiguration, privacy, compaction, sourceAdmission, applicationEvidence } = {}) {
+  const options = { home, env, platform }, github = admittedSource({ ...createGithubProvider({ client: githubClient,
     profileId: () => { const value = typeof githubCredentialFingerprint === "function" ? githubCredentialFingerprint() : githubCredentialFingerprint;
-      return value ? `codex:${value}` : "codex"; } }), registry: githubRegistry };
+      return value ? `codex:${value}` : "codex"; } }), registry: githubRegistry }, sourceAdmission);
   let selection = readProviderSettings(options), m365 = null, gateway = null, pending = null, closed = false, serial = null;
   let reason = null, claudeReason = null, lastClients = {};
   let changingAccount = false;
@@ -76,10 +81,10 @@ function createBuiltinProviderRuntime({ githubClient, githubRegistry, refreshGit
       if (!m365) {
         const factory = createM365 || (await import("./providers/m365.mjs")).createM365Provider;
         if (closed || !enabled) return null;
-        m365 = factory({ home, env, log, onCatalog() {
+        m365 = admittedSource(factory({ home, env, log, onCatalog() {
           // Reconcile after refresh, outside inference serialization and without a watcher.
           setImmediate(() => { if (!pending && gateway && !closed && enabled) void syncClaudeClients(); });
-        } });
+        } }), sourceAdmission);
         sources.set(m365.id, m365);
       }
       await m365.refresh();if (closed || !enabled) return null;
@@ -90,7 +95,7 @@ function createBuiltinProviderRuntime({ githubClient, githubRegistry, refreshGit
         if (!gateway) {
           const start = startGateway || (await import("./claude-gateway.mjs")).createClaudeGateway;
           const opened = await start({ privacy, compaction, provider: m365, apiKey, port: corePort, env, log, performance: claudePerformance,
-            onRequest({ client }) { lastClients[client] = new Date().toISOString(); } });
+            onRequest({ client }, req) { lastClients[client] = new Date().toISOString();applicationEvidence?.accept(req, "claude_app", "inference"); } });
           if (closed || !enabled) { await opened.close();return null; }
           gateway = opened;
         }
@@ -149,15 +154,15 @@ function createBuiltinProviderRuntime({ githubClient, githubRegistry, refreshGit
       if (!chosen) throw Object.assign(new Error("Account list changed. Check again and select an available account."), { code: "m365_account_selection_stale", statusCode: 409 });
       const switched = discovered.binding && m365AccountKey(discovered.binding) !== m365AccountKey(chosen);
       const factory = createM365 || (await import("./providers/m365.mjs")).createM365Provider;
-      candidate = factory({ home, env, log, persist: false,
+      candidate = admittedSource(factory({ home, env, log, persist: false,
         account: { ...chosen, selection_source: "manual", ...(switched || discovered.binding?.history_isolation ? { history_isolation: true } : {}) },
-        onCatalog() { if (candidate === m365 && !closed) setImmediate(() => { if (candidate === m365 && !closed) void syncClaudeClients(); }); } });
+        onCatalog() { if (candidate === m365 && !closed) setImmediate(() => { if (candidate === m365 && !closed) void syncClaudeClients(); }); } }), sourceAdmission);
       await candidate.refresh();
       if (closed) throw unavailable("m365_runtime_closed");
       if (candidate.models("claude").length) {
         const start = startGateway || (await import("./claude-gateway.mjs")).createClaudeGateway;
           opened = await start({ privacy, compaction, provider: candidate, apiKey: ensureM365GatewayKey(options), port: corePort, env, log, performance: claudePerformance,
-          onRequest({ client }) { lastClients[client] = new Date().toISOString(); } });
+          onRequest({ client }, req) { lastClients[client] = new Date().toISOString();applicationEvidence?.accept(req, "claude_app", "inference"); } });
       }
       candidate.commitSelection(discovered.binding);
       const previous = m365, previousGateway = gateway;

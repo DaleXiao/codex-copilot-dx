@@ -9,6 +9,7 @@ import { createApiProvider } from "../src/providers/api.mjs";
 import { createAdapterHandler } from "../src/adapter.mjs";
 import { createServiceControl } from "../src/service-control.mjs";
 import { accessSettingsPath } from "../src/access-settings.mjs";
+import { createApplicationControl } from "../src/application-control.mjs";
 
 const options = new Map();for (let i = 2; i < process.argv.length; i += 2) options.set(process.argv[i], process.argv[i + 1]);
 const module = await import(options.get("--playwright")), { chromium, webkit } = module.default || module;
@@ -21,7 +22,7 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter
       const width = mode === "light" ? 360 : 1280, language = palette === "klein" ? "en" : "zh";
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-connections-browser-")), env = {}, values = new Map();
       fs.mkdirSync(path.join(root, ".codex"));fs.writeFileSync(path.join(root, ".codex/config.toml"), '[features]\nmemories=true\n[memories]\nextract_model="response-replay"\n');
-      let runtime, handler, timeOffset = 0, failDiscovery = palette === "pink" && mode === "light";const githubRegistry = { models: { data: [] } };
+      let runtime, handler, serviceControl, timeOffset = 0, failDiscovery = palette === "pink" && mode === "light";const githubRegistry = { models: { data: [] } };
       const server = http.createServer((req, res) => handler(req, res));
       await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
       const base = `http://127.0.0.1:${server.address().port}`;
@@ -42,7 +43,17 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter
             assert.equal(init.method, "GET");discoveries++;if (failDiscovery) return Response.json({ error: "synthetic unavailable" }, { status: 503 });return Response.json({ data: ["claude-replay", "response-replay", ...Array.from({ length: 6 }, (_, i) => "unselected-" + i)].map(id => ({ id, publisher: "Example Maker", vendor: "example", owned_by: "gateway", ...(id === "claude-replay" ? { type: "model", max_input_tokens: 128000, max_tokens: 16000, capabilities: { thinking: { supported: true }, effort: { supported: true, low: { supported: true }, medium: { supported: true }, high: { supported: true } } } } : {}) })) });
           } }) }) });
         await runtime.refreshClientCapabilities();
-        const serviceControl = createServiceControl({ home: root, env, providerRuntime: runtime });
+        const appStates = { codex: "running", claude_app: "stopped", antigravity: "running" }, appRevisions = { codex: "first", claude_app: "first", antigravity: "first" }, appCalls = [];
+        const appStarts = { codex: "2026-01-01T00:00:00.000Z", claude_app: "2026-01-01T00:00:00.000Z", antigravity: "2026-01-01T00:00:00.000Z" }, appGenerations = { codex: 0, claude_app: 0, antigravity: 0 };
+        const appPaths = { codex: "/Applications/Codex.app", claude_app: "/Applications/Claude.app", antigravity: "/Applications/Gemini.app" };
+        serviceControl = createServiceControl({ home: root, env, providerRuntime: runtime,
+          applicationControlFactory: values => createApplicationControl({ ...values,
+            inspect: async () => ({ apps: Object.fromEntries(Object.keys(appStates).map((id, index) => [id, { status: appStates[id], app: appPaths[id], target: appPaths[id], pid: 100 + index + 10 * appGenerations[id], started: appStarts[id] }])), processes: [] }),
+            configuration: id => ({ state: "configured", revision: appRevisions[id] }), connections: async () => [],
+            control: async (app, action) => { const id = Object.keys(appPaths).find(id => appPaths[id] === app.app);appCalls.push([id, action]);if (action === "quit") appStates[id] = "stopped";return "sent"; },
+            exec: async (command, args) => { const id = Object.keys(appPaths).find(id => args.includes(appPaths[id]));appCalls.push([id, "open"]);if(id){appStates[id]="running";appGenerations[id]++;appStarts[id]=new Date().toISOString()}return {stdout:""}; },
+            openCodexApp: async () => { appCalls.push(["codex", "open"]);appStates.codex = "running";return { status: "opened" }; }, wait: async () => {},
+          }) });
         handler = createAdapterHandler({ env, antigravityOptions:{inspect:async()=>({status:"stopped",version:"synthetic",pids:[],app:"/Applications/Gemini.app"})}, providerRuntime: runtime, dashboardOptions: { home: root, env, serviceControl,
           authStatusFn: () => ({ profiles: { codex: { configured: false, valid: false } } }),
           liveModelsFn: async () => ({ models: publicCopilotModelCatalog(githubRegistry.models), advertised: githubRegistry.models.data.length, upstreamHost: "synthetic" }),
@@ -289,8 +300,39 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter
         await page.locator('#connection-disable-cancel').click();
         if(options.get("--output")){await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:path.join(options.get("--output"),`${engine}-${palette}-${mode}-sources.png`),fullPage:true});}
         await grant.uncheck();await page.locator("#source-access-save").click();await page.waitForFunction(()=>!globalThis.ccdxAntigravity.state.enabled&&document.getElementById("source-access-save").disabled&&!document.getElementById("source-access-save").hasAttribute("aria-busy"));
+        if (palette === "mono" && mode === "dark") {
+          console.log("Application launch and source limits case");
+          await page.locator("#source-concurrency > summary").click();await page.locator("#source-limit-maximum").fill("2");await page.locator("#source-limit-save").click();
+          await page.waitForFunction(() => document.getElementById("source-limit-save").disabled);
+          assert.equal(runtime.connections().providers.find(source => source.id === "github").concurrency.maximum, 2);
+          await page.locator("#source-limit-maximum").fill("");await page.locator("#source-limit-save").click();
+          await page.waitForFunction(() => document.getElementById("source-limit-save").disabled);
+          assert.equal(runtime.connections().providers.find(source => source.id === "github").concurrency.maximum, null);
+          await page.locator('[data-route="codex"]').click();await page.waitForFunction(() => document.getElementById("application-open-label").textContent === "切换到应用");
+          await page.locator("#application-open").click();await page.waitForFunction(() => !document.getElementById("application-open").disabled);
+          assert.deepEqual(appCalls, [["codex", "focus"]]);
+          assert.equal(await page.locator("#codex-auto-launch").isChecked(), false);await page.locator("#codex-auto-launch").check();
+          await page.waitForFunction(() => !document.getElementById("codex-auto-launch").disabled);
+          assert.equal(serviceControl.snapshot().saved.codex_auto_launch, true);assert.equal(appCalls.length, 1, "Saving auto-open never opens an App now");
+          await page.locator("#codex-auto-launch").uncheck();await page.waitForFunction(() => !document.getElementById("codex-auto-launch").disabled);
+          await page.locator('[data-route="claude"]').click();await page.locator('[data-claude-client="claude_app"]').click();
+          await page.waitForFunction(() => document.getElementById("application-open-label").textContent === "打开应用");
+          await page.locator("#application-open").click();await page.waitForFunction(() => document.getElementById("application-state").textContent === "接入待确认");
+          assert.equal(appCalls.filter(([id, action]) => id === "claude_app" && action === "open").length, 1);
+          await page.locator('[data-claude-client="claude_code"]').click();assert.equal(await page.locator("#application-launch").isVisible(), false);
+          const inspected = page.waitForResponse(response => response.url().includes("settings?application=antigravity"));
+          await page.locator('[data-route="gemini"]').click();await inspected;await page.waitForFunction(() => document.getElementById("application-open-label").textContent === "切换到应用");
+          appRevisions.antigravity = "updated";await page.locator("#refresh").click();
+          await page.waitForFunction(() => document.getElementById("application-open-label").textContent === "重新打开");
+          const before = appCalls.length;await page.locator("#application-open").click();await page.locator("#application-reopen-confirm").waitFor();
+          await page.locator("#application-reopen-cancel").click();assert.equal(appCalls.length, before);
+          await page.locator("#application-open").click();await page.locator("#application-reopen-apply").click();
+          await page.waitForFunction(() => document.getElementById("application-state").textContent === "接入待确认");
+          assert.deepEqual(appCalls.slice(before), [["antigravity", "quit"], ["antigravity", "open"]]);
+          await page.setViewportSize({width:320,height:1000});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),true);
+        }
         assert.deepEqual(errors, []);report.push({ engine, palette, mode, language, width, saved: true, assigned: true, disabled: true, restored: true });
-      } catch (error) { console.error("Browser details:", errors, await page.locator("#connection-client-note").textContent());throw error; } finally { await context.close();handler?.dispose?.();server.closeAllConnections();await new Promise(resolve => server.close(resolve));await runtime?.close();fs.rmSync(root, { recursive: true, force: true });clearTimeout(watchdog); }
+      } catch (error) { console.error("Browser details:", errors, await page.locator("#connection-client-note").textContent(), await page.locator("#application-launch").innerText(), serviceControl.snapshot().applications);throw error; } finally { await context.close();handler?.dispose?.();server.closeAllConnections();await new Promise(resolve => server.close(resolve));await runtime?.close();fs.rmSync(root, { recursive: true, force: true });clearTimeout(watchdog); }
     }
   } finally { await browser.close(); }
 }

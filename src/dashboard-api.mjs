@@ -248,7 +248,12 @@ export async function handleDashboardApi(req, res, pathname, {
   if (pathname === "/_ccdx/ui/settings") {
     if (!serviceControl) { sendJson(res, 503, { error: "Settings require the running service; restart the updated CCDX" });return; }
     if (req.method === "GET") {
-      try { sendJson(res, 200, serviceControl.snapshot()); } catch { sendJson(res, 409, { error: "Service settings are unreadable; existing settings were preserved" }); }
+      try {
+        const query = new URL(req.url, "http://localhost").searchParams, app = query.get("application");
+        if (app && !["codex", "claude_app", "antigravity"].includes(app)) { sendJson(res, 400, { error: "Unknown application" });return; }
+        const data = app && serviceControl.inspectApplication ? await serviceControl.inspectApplication(app, query.get("fresh") === "1") : serviceControl.snapshot();
+        sendJson(res, 200, data);
+      } catch { sendJson(res, 409, { error: "Service settings are unreadable; existing settings were preserved" }); }
       return;
     }
     if (req.method !== "POST") { sendJson(res, 405, { error: "Use GET or POST" });return; }

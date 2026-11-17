@@ -4,6 +4,7 @@ import path from "node:path";
 import { installedWindowsPredictionApp, windowsPredictionAppProcesses } from "./native-prediction-windows.mjs";
 import { status } from "./status.mjs";
 import { isPredictionPacUrl } from "./prediction-pac.mjs";
+import { readUserSettings } from "./user-settings.mjs";
 
 export { ensureAuth } from "./auth.mjs";
 
@@ -14,9 +15,9 @@ const APP_PATH_CANDIDATES = [
   "/Applications/ChatGPT.app",
 ];
 
-export function autoLaunchEnabled(env = process.env) {
+export function autoLaunchEnabled(env = process.env, options = {}) {
   const raw = env.CCDX_AUTO_LAUNCH;
-  if (raw === undefined || raw === "") return true;
+  if (raw === undefined || raw === "") return readUserSettings({ ...options, env, strict: true }).codex_auto_launch === true;
   return !/^(0|false|no|off)$/i.test(String(raw).trim());
 }
 
@@ -120,7 +121,7 @@ export async function openCodex({ env = process.env, spawnImpl = spawn, platform
   }
 
   if (!autoLaunchEnabled(env)) {
-    log(status("info", "Auto-open is off. Open Codex App manually.\nCCDX_AUTO_LAUNCH=0"));
+    log(status("info", "Auto-open is off. Open Codex from its Web UI page."));
     return false;
   }
 

@@ -72,7 +72,7 @@ Use `ccdx help` or `ccdx <command> --help` for options. The CLI uses English; th
 
 ## Features and maintenance
 
-Start CCDX to open Codex with native image tools, then use a new chat. If image access is missing, use the Web UI image checks or `ccdx app codex image check`, `repair` and `open`. Running Apps are never forcibly restarted.
+Open Codex from its Web UI page to use native image tools, then use a new chat. Automatic opening when CCDX starts is off by default. If image access is missing, use the Web UI image checks or `ccdx app codex image check`, `repair` and `open`. Running Apps are never forcibly restarted.
 
 Use the Web UI for accounts, APIs, models, client access, input suggestions, native images, local masking, appearance, diagnostics and updates. CLI commands remain available for automation and recovery. See the [control reference](docs/REFERENCE.md#webui-and-cli-controls).
 

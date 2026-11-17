@@ -11,7 +11,19 @@
   const node = (tag, text, className) => { const item = document.createElement(tag);if (text !== undefined) item.textContent = text;if (className) item.className = className;return item; };
   const source = id => data.providers.find(item => item.id === id), client = id => data.clients.find(item => item.id === id);
   const accessDrafts = new Map(), accessResults = new Map();
+  const sourceLimitDrafts = new Map();
   const accessForm = el("source-access-form");
+  el("source-limit-maximum").addEventListener("input", event => {
+    sourceLimitDrafts.set(selectedProvider, event.target.value);
+    el("source-limit-save").disabled = busy || (event.target.value === "" ? null : Number(event.target.value)) === (source(selectedProvider)?.concurrency?.maximum ?? null);
+  });
+  el("source-limit-form").addEventListener("submit", event => {
+    event.preventDefault();const id = selectedProvider, field = el("source-limit-maximum");
+    if (!field.reportValidity()) return;
+    void change({ operation: "source_limits", id, maximum: field.value === "" ? null : Number(field.value), impact_revision: data.source_impacts?.[id]?.revision }, () => {
+      sourceLimitDrafts.delete(id);renderAccess();words(el("source-limit-note"), "api_saved");
+    });
+  });
   const sameAccess = (a,b) => JSON.stringify([...a].sort()) === JSON.stringify([...b].sort());
   function accessChoices(id) {
     const provider=source(id);if(!provider)return [];
@@ -22,6 +34,10 @@
   }
   function renderAccess() {
     const id=selectedProvider,provider=source(id),root=el("source-app-access");root.hidden=!provider;if(!provider)return;
+    const limit = el("source-limit-maximum"), maximum = provider.concurrency?.maximum ?? null;
+    if (document.activeElement !== limit || limit.dataset.source !== id) limit.value = sourceLimitDrafts.has(id) ? sourceLimitDrafts.get(id) : maximum ?? "";
+    limit.dataset.source = id;limit.placeholder = format("source_concurrency_auto");
+    limit.disabled = busy;el("source-limit-save").disabled = busy || (limit.value === "" ? null : Number(limit.value)) === maximum;
     const waiting=id==="github"&&!globalThis.ccdxAntigravity?.state,pending=busy||id==="github"&&Boolean(globalThis.ccdxAntigravity?.pending);
     const saved=savedAccess(id),selected=accessDrafts.get(id)||saved,dirty=!sameAccess(saved,selected),area=el("source-allowed-apps");
     const focus=area.contains(document.activeElement)?document.activeElement.value:null;
@@ -159,7 +175,7 @@
     }
     finally { busy = false;if (trigger?.tagName === "BUTTON") { trigger.removeAttribute("aria-busy");trigger.disabled = false;if (oldKey) words(trigger, oldKey);else trigger.textContent = oldText; }
       if (["client", "preview_client", "image_model"].includes(input.operation)) bindingRows();
-      if (input.operation === "source_access") renderAccess();
+      if (["source_access", "source_limits"].includes(input.operation)) renderAccess();
       if (input.operation === "save_api") words(apiForm.querySelector('button[type="submit"]'), editing ? "api_save" : "api_save_read");
     }
     return true;

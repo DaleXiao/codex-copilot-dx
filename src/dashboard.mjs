@@ -25,6 +25,7 @@ const ASSETS = new Map([
   ["/ui.js", ["./dashboard/ui.js", "text/javascript; charset=utf-8"]],
   ["/preferences.js", ["./dashboard/preferences.js", "text/javascript; charset=utf-8"]],
   ["/features.js", ["./dashboard/features.js", "text/javascript; charset=utf-8"]],
+  ["/applications.js", ["./dashboard/applications.js", "text/javascript; charset=utf-8"]],
   ["/console.js", ["./dashboard/console.js", "text/javascript; charset=utf-8"]],
   ["/tools.js", ["./dashboard/tools.js", "text/javascript; charset=utf-8"]],
   ["/connections.js", ["./dashboard/connections.js", "text/javascript; charset=utf-8"]],

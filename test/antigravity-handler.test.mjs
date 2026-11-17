@@ -133,11 +133,12 @@ test("preparation and compaction retain input admission until their last upstrea
     const f=fixture({acquireRequest:gate,guardSource:async()=>{preparing.resolve();await prepared.promise},resolveCompactionSource:()=>({source:native?"google":"github",model:native?"native-model":alias}),
       compaction:{run:async({body:input,native:open,options})=>{recovering.resolve();await recovered.promise;assert.ok(input.request||input.messages);return open(input,options)}}});
     const value=body(native?"native-model":alias);value.requestType="summarization";value.request.labels={root_cascade_id:"admission-fixture"};
+    const bytes=Buffer.byteLength(JSON.stringify(value));
     const call=invoke(f.handler,value);let other;
     try{
-      await bounded(preparing.promise);assert.equal(gate.diagnostics().activeBytes,4096);
-      other=gate({headers:{"content-length":"2"}});assert.equal(gate.diagnostics().queued,1);
-      prepared.resolve();await bounded(recovering.promise);assert.equal(gate.diagnostics().activeBytes,4096);assert.equal(gate.diagnostics().queued,1);
+      await bounded(preparing.promise);assert.equal(gate.diagnostics().activeBytes,bytes);
+      other=gate({headers:{"content-length":"2"}});await bounded(other);assert.equal(gate.diagnostics().queued,0);
+      prepared.resolve();await bounded(recovering.promise);assert.equal(gate.diagnostics().activeBytes,bytes+2);assert.equal(gate.diagnostics().queued,0);
     }finally{prepared.resolve();recovered.resolve();await bounded(call.done);if(other)(await bounded(other))()}
     assert.equal(gate.diagnostics().activeBytes,0);
   }

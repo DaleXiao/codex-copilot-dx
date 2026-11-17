@@ -23,7 +23,7 @@ const registry = { models: { data: [] } }, runtime = createProviderRuntime({ git
 const savedLog = console.log, savedWarn = console.warn;console.log = console.warn = () => {};
 let server;
 try {
-  server = await startAdapter(0, "127.0.0.1", { codexClient: client, modelRegistry: registry, providerRuntime: runtime, openAIModelEnv: {}, log: () => {} });
+  server = await startAdapter(0, "127.0.0.1", { codexClient: runtime.source("github").client, modelRegistry: registry, providerRuntime: runtime, openAIModelEnv: {}, log: () => {} });
   const base = `http://127.0.0.1:${server.address().port}`, results = [];
   for (const concurrency of [16, 64, 128]) {
     const delay = monitorEventLoopDelay({ resolution: 10 });delay.enable();

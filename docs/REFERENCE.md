@@ -17,6 +17,7 @@ For installation and first use, start with the [README](../README.md). This refe
 | `ccdx source <id> models [--refresh]` | Read cached models, or explicitly refresh the source |
 | `ccdx source <id> check` | Check source access without inference |
 | `ccdx source <id> access --edit` | Choose allowed apps |
+| `ccdx source <id> limits [--max auto\|N] [--edit]` | Read automatic concurrency or set a ceiling |
 | `ccdx source <id> enable` / `disable` | Change source access; disabling reviews affected apps |
 | `ccdx source <id> edit` / `remove` | Edit an API, or remove a disabled, unbound API |
 | `ccdx source github login` / `reauth` / `logout` | Manage the saved GitHub account |
@@ -26,6 +27,8 @@ For installation and first use, start with the [README](../README.md). This refe
 | `ccdx app <id> models --edit` | Choose visible models and a default |
 | `ccdx app <id> sync --preview` | Preview the model/configuration plan |
 | `ccdx app <id> sync` | Write client settings owned by CCDX |
+| `ccdx app <id> check` | Check the current desktop process and owned configuration without inference |
+| `ccdx app <id> open` / `focus` / `restart` | Open or focus the desktop App; reopening requires confirmation |
 | `ccdx app <id> enable` / `disable` | Change access without quitting the app |
 | `ccdx app codex prediction …` | Native suggestion setup and diagnostics |
 | `ccdx app codex image …` | Native image controls and model selection |
@@ -49,6 +52,12 @@ For installation and first use, start with the [README](../README.md). This refe
 | `ccdx version` | Show the installed package version |
 
 Client IDs are `codex`, `claude-app` and `claude-code`. Source IDs are listed by `source list`. Read-only management commands support `--format table|plain|json`. They do not start an app or a gateway. Native image/suggestion status also reads local setup when the gateway is stopped; JSON includes the saved configuration flag and the same public details. Management operations need the running service; use `ccdx web` to start it without launching a client.
+
+The Codex, Claude App and Antigravity pages have a primary **Open app** action. A running App is focused, not launched again. **Reopen** requires confirmation and requests a normal exit; refusal, a changed process or multiple matching Apps stops the operation. Current desktop control covers macOS Codex, Claude App and Gemini/Antigravity, plus registered Codex and Claude installations on Windows. Claude Code remains a terminal client.
+
+**Open Codex when CCDX starts** is off by default. It takes effect on the next service start. `CCDX_AUTO_LAUNCH` explicitly overrides the saved preference; `0` disables and `1` enables it. `ccdx config set codex_auto_launch true --yes` also enables it. Explicit image preparation and opening remain available with automatic opening disabled.
+
+App checks read bounded integration fields, verified bundle/package identity, PID, start time and scoped loopback socket metadata. A live TCP connection alone never confirms adoption. CCDX correlates accepted existing catalog, control or inference traffic with the current process family. No synthetic model request, App restart, environment dump or binary modification is used. **Connection unconfirmed** includes inaccessible metadata or a quiet process; it does not mean a failed request. Confirmation covers only the observed local route, not every feature or model. Evidence expires after five minutes and resets after a process or relevant configuration change. Read-only checks never activate configuration. Explicit opening/sync retains field ownership and the saved automatic-sync choice.
 
 `start` supports `--no-browser`, `--verbose` and `--show-request-id`. The normal TUI has one source summary and one app table. It labels the Web UI address directly. `Unchanged` means existing client settings were kept; `Configured` means the configuration write/check succeeded. Neither is proof that a client process has loaded that configuration. Warnings and sign-in instructions remain visible during startup. The final activity row reflects observed model work. Ctrl+C stops the foreground service.
 
@@ -92,8 +101,8 @@ error rather than successful completion.
 
 This Copilot selection does not restrict Antigravity's original Google model directory. Google wire IDs such as `gemini-3.8-flash-tiered` can therefore appear in usage without being CCDX-added model choices. The recorded provider distinguishes Google and GitHub Copilot; the ID alone does not establish a background task or a fallback. Known conversation compaction retains its observed source and model.
 
-`enable` saves CCDX settings and prepares its local source guard. `open --preview` shows the launch plan.
-`open` starts a closed, signed `/Applications/Gemini.app` with a process-local
+`enable` saves CCDX settings and prepares its local source guard. `open --preview` shows the inspected application state without launching it.
+`open` starts a closed, verified `/Applications/Gemini.app` with a process-local
 Antigravity endpoint. An already running App is kept open and must be quit by
 the user before reopening. Existing gateway environment settings cause a
 conflict instead of being overwritten. The Gemini bundle, Google credentials,
@@ -239,6 +248,16 @@ ccdx requests --app antigravity --active
 `--days` accepts 1–365 or `all` (the default). Explicit inclusive `--from`/`--to` dates use YYYY-MM-DD and cannot be combined with a numeric `--days`. Dates use UTC by default; `--time-zone` chooses another IANA zone. An unqualified model includes matching models across sources; `source / model` narrows it to one source. Current-run totals support only the provider filter; model/date filters use retained history. The service TUI includes returned Google usage in its existing current-run totals without scanning the ledger.
 
 For an identified conversation, hovering a point in the input-history chart shows that request's available cache-reuse ratio. Missing or invalid counts remain unknown; the bounded in-memory history and retained usage do not change.
+
+## Shared source concurrency
+
+All three Apps share admission for the same configured source and account. A slot spans the real upstream response body through completion, cancellation or error. Request-body memory is tracked separately; unknown-length uploads retain their full reservation until fully read, then shrink to their actual held bytes. Recovery and internal summaries acquire fresh slots after the rejected response releases its slot.
+
+Automatic control distinguishes explicit concurrency rejection, request-rate feedback and quota exhaustion. Clear concurrency feedback lowers capacity without interrupting active streams; stable successful traffic with real waiting demand slowly increases it. Explicit account-wide rate/quota evidence pauses that account; model-scoped feedback leaves sibling models available after a short spacing interval. Unknown 429s use bounded backoff. Parameters, permissions and long thinking time do not train concurrency. There are no quota probes or automatic source/account/model switches. A first upstream limit rejection can still occur before its capacity is known.
+
+The initial internal ceiling is 128 concurrent requests per source/account. This is a local resource bound, not an upstream allowance. Each account queues at most 16 calls; all source queues together retain at most 8 MiB and wait at most 30 seconds. Runnable client queues rotate while preserving each client's order among runnable calls. Longer reported recovery times return a local 429 with Retry-After; a full or expired queue returns an explicit busy/wait error. Existing active streams are never cancelled to enforce a lower ceiling. Ordinary generation retry behavior remains unchanged.
+
+**Model sources → Concurrency** normally stays **Auto**. Leave the optional maximum blank, or set 1–128 as a ceiling. CLI/TUI use `source <id> limits`, `--edit`, or `--max auto|N`. This does not disable automatic adjustment. Stable account capacity is saved as disposable hashed metadata beside service settings, with no request text, keys or raw account IDs; stale or invalid metadata is ignored.
 
 ## Settings and appearance
 
@@ -613,7 +632,7 @@ rolls back newly added trust; certificate replacement keeps old trust until the
 new preference is committed. If the bridge stops, new connections can fall back
 to the original route; already-interrupted requests are not replayed. An App
 already using the saved address need not be relaunched just because CCDX restarts.
-If its route is missing or differs, fully quit Codex and run `ccdx` to attach it.
+If its route is missing or differs, fully quit Codex and open it from its CCDX page.
 `CCDX_AUTO_LAUNCH=0` keeps automatic launch disabled and never hot-attaches a
 running App. An already-persisted direct-environment preference can still be read
 when the App is manually opened.
@@ -683,7 +702,7 @@ to gain this endpoint; the new CLI cannot hot-upgrade an old Node process.
 Repair reports bridge readiness separately from the inspected App launch route.
 If a running App has no verified route, fix returns a partial result (exit 1), preserves
 its process and asks for a normal full quit followed by `ccdx`. A closed App is not
-launched by fix; run `ccdx` to open it. Neither HTTP 200 nor a verified route proves
+launched by fix; use the Codex page to open it. Neither HTTP 200 nor a verified route proves
 that gray text appeared. Normal replies, image setup and account state are not changed.
 Unavailable/ambiguous process inspection reports `route_unverified` (exit 1), not
 a definite missing route or an instruction to restart an otherwise healthy App.
@@ -808,7 +827,7 @@ The old external image provider, Qwen-specific generation/editing, `/mcp/image`,
 | `CCDX_IMG_MAX_INPUT_PIXELS` | `40000000` | Sharp's per-image decode limit; an optimization failure retains the original image, subject to the overall forwarded-body limit |
 | `CCDX_IMG_CACHE_MAX_BYTES` | `67108864` | Process-local byte ceiling for cached image transforms; set to `0` to disable the cache |
 | `CCDX_DISABLE_IMG_OPT` | unset | Set to `1` to disable image optimization |
-| `CCDX_AUTO_LAUNCH` | enabled | Set to `0`, `false`, `no`, or `off` to start without opening Codex App |
+| `CCDX_AUTO_LAUNCH` | saved preference, off | Explicitly override automatic Codex opening; `1` enables, `0`, `false`, `no`, or `off` disables |
 | `CCDX_GITHUB_TOKEN` | unset | Explicit GitHub Copilot OAuth token to validate and import before Device Flow |
 | `CCDX_GITHUB_TOKEN_PATH` | unset | Explicit file containing a GitHub Copilot OAuth token |
 | `CCDX_GITHUB_TOKEN_PATHS` | unset | Multiple token files separated by the platform path delimiter (`:` on macOS, `;` on Windows) |
@@ -941,7 +960,7 @@ MIT
 | --- | --- |
 | `ADAPTER_HOST` | Listener host; default loopback |
 | `ADAPTER_PORT` | Main listener port; default 2026 |
-| `CCDX_AUTO_LAUNCH` | Set to 0 to skip opening Codex |
+| `CCDX_AUTO_LAUNCH` | Override saved automatic Codex opening; default off |
 | `CCDX_M365` | Set to 0 to disable the company source for this run |
 | `CCDX_USAGE_PATH` | Recorded usage file path |
 | `CCDX_LOG_LEVEL` | Optional diagnostic logging level |

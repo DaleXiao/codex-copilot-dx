@@ -7,6 +7,7 @@ import path from "node:path";
 import os from "node:os";
 import { pathToFileURL } from "node:url";
 import { createServiceControl } from "../src/service-control.mjs";
+import { createApplicationControl } from "../src/application-control.mjs";
 import { createAdapterHandler } from "../src/adapter.mjs";
 import { summarizeUsage } from "../src/usage-store.mjs";
 import { statusSummary } from "../src/status-summary.mjs";
@@ -73,7 +74,19 @@ const clientVersions = { snapshot: () => ({ antigravity:[{name:"Gemini.app",vers
   refresh: async () => {} };
 let m365Preference = { model: "gpt-source", auto_review_model: "gpt-source", auto_review_effort: "low" };
 let manualUpdates = 0;const imageActions = [], codexActions = [];let imageApp = { status: "stopped" }, codexPending = false;
+let geminiAppState="stopped";
 const serviceControl = createServiceControl({ home, env: {}, clientVersions,
+  applicationControlFactory: values => createApplicationControl({ ...values, platform: "darwin",
+    inspect: async () => ({ apps: {
+      codex: { ...imageApp, app: "/Applications/Codex.app" },
+      claude_app: { status: "stopped", app: "/Applications/Claude.app" },
+      antigravity: { status: geminiAppState, version: "synthetic", app: "/Applications/Gemini.app" },
+    }, processes: [] }),
+    configuration: () => ({ state: "configured", revision: "synthetic" }), connections: async () => [],
+    control: async () => { throw Error("Native application control is forbidden"); },
+    exec: async () => { throw Error("Native application launch is forbidden"); },
+    inspectGemini: async () => { throw Error("Native application inspection is forbidden"); },
+  }),
   imageHostControl: async (operation, options) => {
     imageActions.push(operation);
     if (operation === "check") return { status: "checked", app: { ...imageApp }, connection: { state: "verified", scope: "node_loopback", app_path: "unconfirmed" } };
@@ -121,7 +134,6 @@ const providerState = () => [
       { id: "claude_code", name: "Claude Code", state: "preserved", gateway: "running" }], requests: { completed: 3, incomplete: 1, failed: 2 } },
   { id: "third", name: "Third source", enabled: false, state: "disabled", clients: [] },
 ];
-let geminiAppState="stopped";
 const geminiBase=()=>({data:["gemini-4-carbon","gemini-4-argon"].map((id,index)=>({id,supported_endpoints:["/chat/completions"],capabilities:{supports:{reasoning_effort:["low","medium","high"]},limits:{max_context_window_tokens:index?1050000:1000000}}}))});
 const geminiRegistry={models:geminiBase()};let geminiExpand=false,geminiRefreshFailure=false,geminiRefreshes=0;
 const handler = createAdapterHandler({ env:{},

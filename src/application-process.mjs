@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { installedWindowsPredictionApp } from "./native-prediction-windows.mjs";
+import { installedWindowsPredictionAppAsync } from "./native-prediction-windows.mjs";
 
 const execute = promisify(execFile);
 const definitions = {
@@ -31,7 +31,7 @@ export function processFamily(processes, root) {
 }
 
 export async function inspectApplicationProcesses({ platform = process.platform, home = os.homedir(), env = process.env,
-  exec = execute, discoverWindows = installedWindowsPredictionApp, applicationsRoot = "/Applications" } = {}) {
+  exec = execute, discoverWindows = installedWindowsPredictionAppAsync, applicationsRoot = "/Applications" } = {}) {
   if (!["darwin", "win32"].includes(platform)) return { apps: Object.fromEntries(Object.keys(definitions).map(id => [id, { status: "unsupported" }])), processes: [] };
   const apps = {}, processes = [];
   if (platform === "darwin") {
@@ -57,7 +57,7 @@ export async function inspectApplicationProcesses({ platform = process.platform,
     const result = await exec("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", windowsInventory], { ...runOptions, env: metadataEnvironment(env) });
     const inventory = JSON.parse(result.stdout);
     for (const row of inventory.processes || []) if (Number.isSafeInteger(row.pid) && row.pid > 0 && Number.isFinite(Date.parse(row.started))) processes.push(row);
-    let codex;try { codex = discoverWindows({ env }); } catch {}
+    let codex;try { codex = await discoverWindows({ env }); } catch {}
     apps.codex = codex ? { app: codex.app, target: codex.app, executable: codex.app } : { status: "not_installed" };
     const claude = inventory.claude;
     apps.claude_app = claude && path.win32.isAbsolute(claude.app) && path.win32.basename(claude.app).toLowerCase() === "claude.exe"

@@ -24,9 +24,10 @@ test("Mac inventory uses verified bundle paths, C-locale dates and no process ar
 });
 test("Windows inventory accepts a registered Appx target and treats Electron descendants as one app", async () => {
   const executable = "C:\\Apps\\Claude.exe", target = "shell:AppsFolder\\Anthropic.Claude_x64!Claude", started = "2026-11-17T00:00:00Z";
-  const result = await inspectApplicationProcesses({ platform: "win32", env: {}, discoverWindows: () => null, exec: async (_command, args) => {
+  const result = await inspectApplicationProcesses({ platform: "win32", env: {}, discoverWindows: async () => ({ app: "C:\\Apps\\Codex.exe" }), exec: async (_command, args) => {
     assert.ok(args.at(-1).includes("'shell:AppsFolder\\'"));
-    return { stdout: JSON.stringify({ claude: { app: executable, target }, processes: [{ pid: 10, parent: 1, started, command: executable }, { pid: 11, parent: 10, started, command: executable.toLowerCase() }] }) };
+    return { stdout: JSON.stringify({ claude: { app: executable, target }, processes: [{ pid: 10, parent: 1, started, command: executable }, { pid: 11, parent: 10, started, command: executable.toLowerCase() }, { pid: 20, parent: 1, started, command: "C:\\Apps\\Codex.exe" }] }) };
   } });
   assert.equal(result.apps.claude_app.status, "running");assert.equal(result.apps.claude_app.pid, 10);assert.equal(result.apps.claude_app.target, target);
+  assert.equal(result.apps.codex.status, "running");assert.equal(result.apps.codex.pid, 20);
 });

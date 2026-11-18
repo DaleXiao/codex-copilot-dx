@@ -351,6 +351,8 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter
           appRevisions.antigravity = "updated";await page.locator("#refresh").click();
           await page.waitForFunction(() => document.getElementById("application-open-label").textContent === "重新打开");
           const before = appCalls.length;await page.locator("#application-open").click();await page.locator("#application-reopen-confirm").waitFor();
+          const heading = await page.locator(".intro").boundingBox(), confirmation = await page.locator("#application-reopen-confirm").boundingBox();
+          assert.ok(confirmation.y >= heading.y + heading.height - 1, "Reopen confirmation stays below the application header");
           await page.locator("#application-reopen-cancel").click();assert.equal(appCalls.length, before);
           await page.locator("#application-open").click();await page.locator("#application-reopen-apply").click();
           await page.waitForFunction(() => document.getElementById("application-state").textContent === "接入待确认");

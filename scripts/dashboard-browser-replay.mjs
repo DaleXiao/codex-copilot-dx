@@ -475,7 +475,13 @@ try {
         assert.equal(await page.locator("#source-review").inputValue(), "gpt-source");
         assert.equal(await page.locator("#legacy-source-controls").isHidden(), true, "Source selection moved to application model bindings");
         for (const selector of ["#source-review", "#source-review-effort", "#save-review"]) assert.equal((await page.locator(selector).boundingBox()).height, 32);
-        const childIndent = await page.locator('[data-route="codex"]').evaluate(node => parseFloat(getComputedStyle(node).paddingLeft));assert.ok(childIndent > 12);
+        if (width <= 640) {
+          const navPadding = await page.locator('.sidebar nav a').evaluateAll(links => links.map(link => getComputedStyle(link).paddingLeft));
+          assert.equal(new Set(navPadding).size, 1, "Narrow app links use the same inset as other navigation");
+        } else {
+          const childIndent = await page.locator('[data-route="codex"]').evaluate(node => parseFloat(getComputedStyle(node).paddingLeft));
+          assert.ok(childIndent > 12, "Desktop navigation retains the app group indent");
+        }
         await page.locator("#source-review").selectOption("gpt-second");
         await page.evaluate(() => dashboardRefresh.refresh("auth", { force: true }));await page.locator("#refresh").click();
         await page.waitForFunction(() => !document.getElementById("refresh").disabled && !document.getElementById("save-review").disabled);
@@ -1065,6 +1071,14 @@ try {
         assert.equal(await page.locator('[data-route="gemini"] span').innerText(),"Antigravity");
         await page.locator('[data-route="gemini"]').click();
         await page.waitForFunction(()=>!document.getElementById("gemini-enabled").disabled);
+        await page.locator('#application-launch').waitFor({ state: 'visible' });
+        const appHeader = await page.locator('.intro').evaluate(header => {
+          const box = header.getBoundingClientRect(), title = header.querySelector('h1').getBoundingClientRect(), launch = header.querySelector('#application-launch').getBoundingClientRect();
+          return { mode: getComputedStyle(header).display, wrap: getComputedStyle(header).flexWrap,
+            aligned: title.right <= launch.left && launch.top < title.bottom, within: launch.left >= box.left - 1 && launch.right <= box.right + 1, right: Math.abs(launch.right - box.right) <= 1 };
+        });
+        assert.equal(appHeader.mode, "flex");assert.equal(appHeader.wrap, "wrap");assert.equal(appHeader.within, true);assert.equal(appHeader.right, true);
+        if (width >= 1024) assert.equal(appHeader.aligned, true, "Title and launch controls share the desktop header row");
         if(!await page.locator("#gemini-enabled").isChecked())await page.locator("#gemini-enabled").check();
         await page.waitForFunction(()=>document.querySelectorAll('#gemini-models tr').length===2&&document.querySelectorAll('#gemini-models input').length===2&&!document.getElementById("gemini-enabled").disabled);
         const modelBoxes=page.locator("#gemini-models td:first-child input");

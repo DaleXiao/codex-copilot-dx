@@ -178,9 +178,10 @@
           <section class="panel dashboard-section">
             <div class="panel-heading"><h2 data-i18n="cap_visible_model">Available models</h2><span id="gemini-draft-state" role="status">—</span></div>
             <form id="gemini-model-form">
-              <div class="table-wrap"><table class="binding-table"><thead><tr><th data-i18n="model">Model</th><th data-i18n="source">Source</th><th data-i18n="cap_context">Context</th><th data-i18n="cap_reasoning">Reasoning</th></tr></thead><tbody id="gemini-models"></tbody></table></div>
-              <div class="section-actions"><button id="gemini-save" type="submit" data-i18n="api_save" disabled>Save</button><button id="gemini-cancel" type="button" data-i18n="cap_discard_changes" disabled>Discard changes</button></div>
+              <div class="table-wrap"><table class="binding-table"><thead><tr><th data-i18n="model">Model</th><th data-i18n="source">Source</th><th data-i18n="cap_context">Context</th><th data-i18n="cap_reasoning">Reasoning</th><th data-i18n="cap_default">Default</th></tr></thead><tbody id="gemini-models"></tbody></table></div>
+              <div class="section-actions"><button id="gemini-save" type="submit" data-i18n="api_save" disabled>Save</button><button id="gemini-cancel" type="button" data-i18n="cap_discard_changes" disabled>Discard changes</button><button id="gemini-use-app-default" type="button" data-i18n="gemini_use_app_default" hidden>Use app default</button></div>
             </form>
+            <p id="gemini-default-note" class="hint" role="status" hidden></p>
             <p id="gemini-note" class="hint" role="status" aria-live="polite"></p>
           </section>
           <details class="panel dashboard-section" open>

@@ -4,7 +4,7 @@ import {createRequestAbort,abortErrorStatusCode,readJsonBody,readBoundedResponse
 import {safeUpstreamResponseHeaders} from "./upstream-headers.mjs";
 import {isLoopbackAddress,isLoopbackHostHeader} from "./security.mjs";
 import {antigravityToChat,chatToAntigravity,chatStreamToAntigravity,parseAntigravityJSON} from "./antigravity-chat-bridge.mjs";
-import {ANTIGRAVITY_MODEL_PREFIX,antigravityCopilotModels,mergeAntigravityModels} from "./antigravity-models.mjs";
+import {ANTIGRAVITY_MODEL_PREFIX,antigravityCopilotModels,hasAntigravityAgentDefault,mergeAntigravityModels} from "./antigravity-models.mjs";
 import {createPrivacyTextFragments} from "./privacy-stream.mjs";
 import {createGoogleResponseObserver,googleUsageEvent} from "./antigravity-usage.mjs";
 import {currentRequestContext,observeRequestedModel} from "./request-context.mjs";
@@ -37,10 +37,10 @@ function groundedSearch(result,query){
     groundingMetadata:{webSearchQueries:[query],groundingChunks:sources.map(item=>({web:{uri:item.url,title:item.title||item.url}}))}}]};
 }
 
-export function createAntigravityHandler({client,models=()=>[],selectedModels=()=>null,enabled=()=>false,privacy,searchFn,imageFn,guardSource,acquireRequest=async()=>()=>{},sourceAdmission,applicationEvidence,
+export function createAntigravityHandler({client,models=()=>[],selectedModels=()=>null,defaultModel=()=>null,enabled=()=>false,privacy,searchFn,imageFn,guardSource,acquireRequest=async()=>()=>{},sourceAdmission,applicationEvidence,
   compaction,compactionProfile=()=>"github",rememberConversationSource=()=>{},resolveCompactionSource=()=>null,recordUsageFn=recordUsage,fetchGoogle=fetch,googleOrigin=GOOGLE_ORIGIN,requestBodyTimeoutMs=120000,upstreamTimeoutMs=180000,streamIdleTimeoutMs=60000}={}) {
   if(![GOOGLE_ORIGIN,"https://cloudcode-pa.googleapis.com"].includes(googleOrigin))throw new Error("Unrecognized Google control origin");
-  let active=0,observed=false,catalogModels=null;const nativeWindows=new Map();
+  let active=0,observed=false,catalogModels=null,catalogDefaultSupported=null,catalogDefaultModel=null;const nativeWindows=new Map();
   const counts={total:0,google:0,copilot:0,search:0,images:0,failed:0};
   const handler=async(req,res)=>{
     const abort=createRequestAbort(req,res);let release=()=>{},session,body,request,converted,phase="validation",usageEvent=null,usageModel=null,outcome=null,usageMode,usageProvider;
@@ -123,7 +123,9 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
         if(method==="fetchAvailableModels"&&upstream.ok){
           const value=JSON.parse(await readBoundedResponseText(upstream,{maxBytes:8*1024*1024,signal:abort.signal,label:"Google model catalog"}));
           nativeWindows.clear();for(const[id,entry]of Object.entries(value.models||{}).slice(0,256))if(Number.isSafeInteger(entry?.maxTokens)&&entry.maxTokens>0){nativeWindows.set(id,entry.maxTokens);if(typeof entry.model==="string")nativeWindows.set(entry.model,entry.maxTokens)}
-          const merged=mergeAntigravityModels(value,models(),selectedModels());
+          const merged=mergeAntigravityModels(value,models(),selectedModels(),defaultModel());
+          catalogDefaultSupported=hasAntigravityAgentDefault(value);
+          catalogDefaultModel=catalogDefaultSupported&&merged.defaultAgentModelId.startsWith(ANTIGRAVITY_MODEL_PREFIX)?merged.defaultAgentModelId:null;
           catalogModels=Object.keys(merged.models).filter(id=>id.startsWith(ANTIGRAVITY_MODEL_PREFIX));
           res.writeHead(200,{"Content-Type":"application/json","Cache-Control":"no-store"});res.end(JSON.stringify(merged));return;
         }
@@ -259,6 +261,6 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
       }
     }
   };
-  handler.snapshot=()=>({enabled:enabled(),observed,catalog_models:catalogModels,active,...counts});
+  handler.snapshot=()=>({enabled:enabled(),observed,catalog_models:catalogModels,catalog_default_supported:catalogDefaultSupported,catalog_default_model:catalogDefaultModel,active,...counts});
   return handler;
 }

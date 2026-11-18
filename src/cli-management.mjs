@@ -237,9 +237,9 @@ export async function runManagementCommand(command, options = {}) {
       }
       if(action==="models"&&flags.edit){
         const state=await request({path:"gemini",...(flags.refresh?{body:{action:"refresh"},timeoutMs:20000}:{})});
-        let ids;
+        let ids, preferred;
         if(flags.file){
-          const listed=readFile().models;if(!Array.isArray(listed))throw new Error("Model files require a models array.");
+          const file=readFile(),listed=file.models;preferred=file.default_model;if(!Array.isArray(listed))throw new Error("Model files require a models array.");
           ids=listed.flatMap(id=>state.model_groups?.find(model=>model.id===id)?.efforts.map(item=>item.id)||[id]);
         }
         else if(Array.isArray(state.model_groups)){
@@ -252,13 +252,26 @@ export async function runManagementCommand(command, options = {}) {
           }
         }else ids=(await choose(state.models.map(model=>model.name),state.models.flatMap((model,index)=>model.selected!==false?[index]:[]))).map(index=>state.models[index].id);
         if(!Array.isArray(ids)||new Set(ids).size!==ids.length||ids.some(id=>!state.models.some(model=>model.id===id)))throw new Error("Choose listed Antigravity model IDs.");
-        if(flags.preview)return print({models:ids,saved:false});
-        await confirm("Save Antigravity model selection? Reopen Gemini afterward to reload it.");
-        return print(await request({path:"gemini",body:{action:"models",models:ids}}));
+        const available=state.models.filter(model=>ids.includes(model.id));
+        if(!flags.file&&available.length&&Object.hasOwn(state,"default_model")){
+          available.forEach((model,index)=>output.write(`${index+1}. ${terminalCell(model.name)}${model.id===state.default_model?" (default)":""}\n`));
+          const answer=(await ask("Default model number (Enter keeps it; none uses the app default): ")).trim();
+          if(answer==="none")preferred=null;
+          else if(answer){if(!/^\d+$/.test(answer)||!available[Number(answer)-1])throw new Error("Choose a listed default model number.");preferred=available[Number(answer)-1].id;}
+        }
+        if(preferred!==undefined&&preferred!==null&&!ids.includes(preferred)){
+          const choices=available.filter(item=>item.model===preferred);
+          preferred=(choices.find(item=>item.effort==="medium")||choices[0])?.id;
+          if(!preferred)throw new Error("Choose a selected Antigravity model as the default.");
+        }
+        const body={models:ids,...(preferred!==undefined?{default_model:preferred}:{})};
+        if(flags.preview)return print({...body,saved:false});
+        await confirm("Save Antigravity model settings? Reopen Gemini afterward to reload them.");
+        return print(await request({path:"gemini",body:{action:"models",...body}}));
       }
       const state = await request({ path: "gemini", ...(action==="models"&&flags.refresh?{body:{action:"refresh"},timeoutMs:20000}:["status", "models"].includes(action) ? {} : { body: { action: flags.preview ? "preview" : action, ...(action === "enable" ? { accept_background_copilot: true } : {}) }, timeoutMs: 20000 }) });
-      if(action==="models"&&flags.format!=="json"&&state.model_groups)return print(state.model_groups.map(model=>({model:model.name,id:model.id,source:"GitHub Copilot",context:model.context_window,
-        efforts:model.efforts.map(item=>(item.effort||"default")+(item.selected?" ✓":"")).join(" / ")})),[["model","Model"],["id","ID"],["source","Source"],["context","Context"],["efforts","Reasoning (selected ✓)"]]);
+      if(action==="models"&&flags.format!=="json"&&state.model_groups)return print(state.model_groups.map(model=>({model:model.name,id:model.id,source:"GitHub Copilot",context:model.context_window,default:model.default===true,
+        efforts:model.efforts.map(item=>(item.effort||"default")+(item.selected?" ✓":"")).join(" / ")})),[["model","Model"],["id","ID"],["source","Source"],["context","Context"],["efforts","Reasoning (selected ✓)"],["default","Default"]]);
       return print(action === "models" ? state.models : state);
     }
     const graph = await connection(), snapshot = (await readStatus()).data, view = projectTerminalState(snapshot);

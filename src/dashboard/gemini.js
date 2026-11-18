@@ -1,12 +1,14 @@
 (() => {
   const el=id=>document.getElementById(id),language=globalThis.ccdxLanguage;
-  let busy=false,state=null,draft=null,notice=null,pendingAction=null;
+  let busy=false,state=null,draft=null,defaultDraft,notice=null,pendingAction=null;
   let sharedApplication=null,sharedPending=false;
   const words=(id,key)=>language.set(el(id),key);
   const clear=id=>{el(id).removeAttribute('data-i18n');el(id).removeAttribute('data-i18n-args');el(id).textContent='';el(id).title=''};
-  const controls=['gemini-enabled','gemini-open','gemini-refresh','gemini-save','gemini-cancel'];
+  const controls=['gemini-enabled','gemini-open','gemini-refresh','gemini-save','gemini-cancel','gemini-use-app-default'];
   const selected=()=>state?.models.filter(model=>model.selected!==false).map(model=>model.id)||[];
-  const dirty=()=>draft!==null&&JSON.stringify([...draft].sort())!==JSON.stringify(selected().sort());
+  const savedDefault=()=>state?.default_model??null;
+  const currentDefault=()=>defaultDraft===undefined?savedDefault():defaultDraft;
+  const dirty=()=>currentDefault()!==savedDefault()||draft!==null&&JSON.stringify([...draft].sort())!==JSON.stringify(selected().sort());
   const count=value=>!value?'—':value>=1000000?`${Number((value/1000000).toFixed(2))}M`:value>=1000?`${Number((value/1000).toFixed(1))}K`:String(value);
   const groupedModels=()=>{
     if(Array.isArray(state.model_groups))return state.model_groups;
@@ -26,6 +28,9 @@
     el('gemini-save').disabled=busy||sharedPending||!dirty();el('gemini-cancel').disabled=busy||sharedPending||!dirty();
     words('gemini-save',busy&&pendingAction==='models'?'api_saving':'api_save');if(busy&&pendingAction==='models')el('gemini-save').setAttribute('aria-busy','true');else el('gemini-save').removeAttribute('aria-busy');
     words('gemini-draft-state',dirty()?'cap_unsaved':'cap_saved');
+    el('gemini-use-app-default').hidden=currentDefault()===null;
+    el('gemini-default-note').hidden=!state.default_model_unavailable||currentDefault()!==savedDefault();
+    if(!el('gemini-default-note').hidden)words('gemini-default-note','gemini_default_unavailable');
     words('gemini-route-state',!state.enabled?'gemini_disabled':state.source_enabled===false?'gemini_source_disabled':state.app.status==='starting'?'gemini_route_waiting':state.models_reload_required===null?'gemini_catalog_unknown':state.models_reload_required?'gemini_models_pending':state.route_observed?'gemini_route_observed':'gemini_route_waiting');
     el('gemini-version').textContent=state.app.version||'—';
     words('gemini-app-state',state.app.status==='running'?'gemini_running':state.app.status==='stopped'?'gemini_stopped':state.app.status==='starting'?'gemini_starting':'gemini_unavailable');
@@ -33,21 +38,35 @@
     const hint=!state.enabled&&state.app.status==='running'?'gemini_pause_reopen':needsReload?(state.app.status==='running'?(state.models_reload_required===null?'gemini_maybe_reopen':'gemini_reopen'):state.app.status==='stopped'?'gemini_open_to_load':null):null;
     el('gemini-reopen').hidden=!hint;if(hint)words('gemini-reopen',hint);
     el('gemini-open').disabled=busy||sharedPending||state.app.status!=='stopped';
-    const list=el('gemini-models'),focus=list.contains(document.activeElement)?document.activeElement.value:null;list.replaceChildren();
+    const list=el('gemini-models'),focused=list.contains(document.activeElement)?document.activeElement:null;
+    const focus={value:focused?.value,kind:focused?.tagName};list.replaceChildren();
     for(const model of groupedModels()){
       const chosen=new Set(draft||selected()),ids=model.efforts.map(item=>item.id);
       const row=document.createElement('tr'),name=document.createElement('td'),label=document.createElement('label'),input=document.createElement('input');
-      input.type='checkbox';input.value=model.id;input.checked=ids.some(id=>chosen.has(id));input.disabled=busy;input.setAttribute('aria-label',model.name);
-      const update=(values,checked)=>{const next=new Set(draft||selected());for(const id of values)if(checked)next.add(id);else next.delete(id);draft=[...next];notice=null;clear('gemini-note');render()};
+      input.type='checkbox';input.value=model.id;input.checked=ids.some(id=>chosen.has(id));input.disabled=busy||sharedPending;input.setAttribute('aria-label',model.name);
+      const update=(values,checked)=>{const next=new Set(draft||selected());for(const id of values)if(checked)next.add(id);else next.delete(id);draft=[...next];if(!checked&&values.includes(currentDefault()))defaultDraft=null;notice=null;clear('gemini-note');render()};
       input.addEventListener('change',()=>{const saved=ids.filter(id=>selected().includes(id));update(input.checked&&saved.length?saved:ids,input.checked)});
       label.append(input,document.createTextNode(model.name));name.append(label);row.append(name);
       for(const [key,value]of [['source','GitHub Copilot'],['cap_context',count(model.context_window)]]){const cell=document.createElement('td');cell.textContent=value;cell.dataset.label=language.format(key);row.append(cell)}
       const efforts=document.createElement('td');efforts.dataset.label=language.format('cap_reasoning');
       efforts.textContent=model.efforts.map(item=>item.effort||'—').join(' / ');
-      row.append(efforts);list.append(row);
+      const preferred=document.createElement('td'),button=document.createElement('button');preferred.dataset.label=language.format('cap_default');
+      const isDefault=ids.includes(currentDefault())&&chosen.has(currentDefault());
+      button.type='button';button.value=model.id;button.disabled=busy||sharedPending;
+      const title=isDefault?'cap_default':'cap_set_default';language.set(button,title);
+      button.setAttribute('aria-pressed',String(isDefault));button.setAttribute('aria-label',model.name+' · '+language.format(title));
+      button.addEventListener('click',()=>{
+        if(isDefault)return;
+        const saved=ids.filter(id=>selected().includes(id)),visible=model.efforts.filter(item=>chosen.has(item.id));
+        const available=visible.length?visible:saved.length?model.efforts.filter(item=>saved.includes(item.id)):model.efforts;
+        if(!visible.length){for(const item of available)chosen.add(item.id);draft=[...chosen];}
+        defaultDraft=(available.find(item=>item.effort==='medium')||available[0])?.id??null;
+        notice=null;clear('gemini-note');render();
+      });
+      preferred.append(button);row.append(efforts,preferred);list.append(row);
     }
-    if(!state.models.length){const row=document.createElement('tr'),cell=document.createElement('td');cell.colSpan=4;language.set(cell,'gemini_no_models');row.append(cell);list.append(row)}
-    if(focus)[...list.querySelectorAll('input')].find(input=>input.value===focus)?.focus();
+    if(!state.models.length){const row=document.createElement('tr'),cell=document.createElement('td');cell.colSpan=5;language.set(cell,'gemini_no_models');row.append(cell);list.append(row)}
+    if(focus.kind)[...list.querySelectorAll(focus.kind.toLowerCase())].find(control=>control.value===focus.value)?.focus();
     for(const id of ['active','failed','copilot','total'])el('gemini-'+id).textContent=state.activity?.[id]??'—';
     if(notice)words('gemini-note',notice);
   }
@@ -57,7 +76,7 @@
     try{
       const write=action&&action!=='summary',response=await fetch('/_ccdx/ui/gemini'+(action==='summary'?'?scope=summary':''),{method:write?'POST':'GET',headers:{'X-CCDX-Dashboard':'1',...(write?{'Content-Type':'application/json'}:{})},cache:'no-store',signal:AbortSignal.timeout(20000),...(write?{body:JSON.stringify({action,...(action==='enable'?{accept_background_copilot:true}:{}),...extra})}:{})});
       const value=await response.json();if(!response.ok)throw Error(value.error||'Antigravity setup failed');
-      state=value;if(action==='models')draft=null;
+      state=value;if(action==='models'){draft=null;defaultDraft=undefined;}
       globalThis.ccdxGeminiStatus=state;
       if(action&&action!=='summary'){
         const status=state.last_operation?.status;notice=action==='models'?null:status==='needs_app_relaunch'?'gemini_reopen':status==='opened'?'gemini_opened':status==='route_conflict'?'gemini_conflict':null;
@@ -69,8 +88,9 @@
   }
   globalThis.ccdxAntigravity={get state(){return state},get pending(){return busy},setEnabled:enabled=>load(enabled?'enable':'disable',{},false)};
   el('gemini-enabled').addEventListener('change',event=>void load(event.target.checked?'enable':'disable'));
-  el('gemini-model-form').addEventListener('submit',event=>{event.preventDefault();if(dirty())void load('models',{models:draft})});
-  el('gemini-cancel').addEventListener('click',()=>{draft=null;notice=null;clear('gemini-note');render()});
+  el('gemini-model-form').addEventListener('submit',event=>{event.preventDefault();if(dirty())void load('models',{models:draft||selected(),...(defaultDraft!==undefined?{default_model:defaultDraft}:{})})});
+  el('gemini-cancel').addEventListener('click',()=>{draft=null;defaultDraft=undefined;notice=null;clear('gemini-note');render()});
+  el('gemini-use-app-default').addEventListener('click',()=>{defaultDraft=null;render();el('gemini-save').focus();});
   el('gemini-open').addEventListener('click',()=>{if(globalThis.ccdxApplicationControls)globalThis.ccdxApplicationControls.open('antigravity');else void load('open')});
   window.addEventListener('ccdx:application-state',event=>{if(event.detail?.id==='antigravity'){sharedApplication=event.detail.application;sharedPending=event.detail.pending;render()}});
   el('gemini-refresh').addEventListener('click',()=>void load('refresh'));

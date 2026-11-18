@@ -22,7 +22,14 @@ export function antigravityCopilotModels(catalog) {
     });
 }
 
-export function mergeAntigravityModels(googleCatalog,copilotCatalog,selection=null) {
+// Use the upstream's existing agent-default field only when it names a model
+// in the same catalog. Do not invent a default contract for an unknown catalog.
+export function hasAntigravityAgentDefault(catalog) {
+  const id=catalog?.defaultAgentModelId;
+  return typeof id==="string"&&!!catalog.models&&Object.hasOwn(catalog.models,id);
+}
+
+export function mergeAntigravityModels(googleCatalog,copilotCatalog,selection=null,defaultModel=null) {
   if(!googleCatalog?.models||typeof googleCatalog.models!=="object"||Array.isArray(googleCatalog.models))throw new Error("Unrecognized Google model catalog");
   const entries=antigravityCopilotModels(copilotCatalog).filter(model=>selection===null||selection.includes(model.id)),models={...googleCatalog.models};
   if(!entries.length)return googleCatalog;
@@ -39,5 +46,6 @@ export function mergeAntigravityModels(googleCatalog,copilotCatalog,selection=nu
   const sort=sorts.find(item=>item.displayName?.toLowerCase()==="recommended")||sorts[0];
   sort.groups??=[];sort.groups[0]??={modelIds:[]};
   sort.groups[0].modelIds=[...(sort.groups[0].modelIds||[]),...entries.map(entry=>entry.id)];
-  return {...googleCatalog,models,agentModelSorts:sorts};
+  return {...googleCatalog,models,agentModelSorts:sorts,
+    ...(hasAntigravityAgentDefault(googleCatalog)&&entries.some(entry=>entry.id===defaultModel)?{defaultAgentModelId:defaultModel}:{})};
 }

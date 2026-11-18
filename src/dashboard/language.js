@@ -406,6 +406,8 @@
     "ccdx_client_effort_unavailable": ["The saved reasoning level is unavailable. Choose a declared level or follow the app.", "已保存的推理档位不可用，请选择支持的档位或跟随应用。"],
     "cap_search": ["Search", "联网搜索"],
     "cap_default": ["Default", "默认"],
+    "gemini_use_app_default": ["Use app default", "恢复应用默认"],
+    "gemini_default_unavailable": ["Saved default cannot be used with the current catalog.", "当前目录无法使用已保存的默认模型。"],
     "cap_set_default": ["Set default", "设为默认"],
     "cap_details": ["Details", "能力详情"],
     "cap_app_access": ["App access", "应用接入"],

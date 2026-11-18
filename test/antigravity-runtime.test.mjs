@@ -37,6 +37,21 @@ test("pause retains a safe configured bridge and removes Copilot model access",a
   const blocked=await invokeAdapter({env:{},dashboardOptions:{home:f.home},codexModelRegistry:{models:catalog}},{url:"/antigravity/v1internal:streamGenerateContent",headers:{host:"127.0.0.1:2026"},body:{requestType:"agent",model:state.models[0].id,request:{contents:[{role:"user",parts:[{text:"fixture"}]}]}}});
   assert.equal(blocked.status,503);
 });
+test("Antigravity saves a selected default atomically, supports clearing, and never starts the app",async t=>{
+  const f=fixture(t),ids=f.runtime.snapshot().models.map(row=>row.id),preferred=ids[1];
+  const before=fs.readFileSync(f.file,"utf8");
+  for(const candidate of [ids[2],"native",false])await assert.rejects(f.runtime.action({action:"models",models:[preferred],default_model:candidate}),{statusCode:400});
+  assert.equal(fs.readFileSync(f.file,"utf8"),before);
+  let state=await f.runtime.action({action:"models",models:ids,default_model:preferred});
+  assert.equal(state.default_model,preferred);assert.equal(state.models.find(row=>row.id===preferred).default,true);
+  assert.equal(state.model_groups[0].default,true);assert.equal(JSON.parse(fs.readFileSync(f.file)).future,"keep");
+  state=await f.runtime.action({action:"models",models:ids});assert.equal(state.default_model,preferred);
+  state=await f.runtime.action({action:"models",models:[ids[0]]});assert.equal(state.default_model,null);
+  state=await f.runtime.action({action:"models",models:ids,default_model:preferred});assert.equal(state.default_model,preferred);
+  state=await f.runtime.action({action:"models",models:ids,default_model:null});assert.equal(state.default_model,null);
+  assert.ok(!Object.hasOwn(JSON.parse(fs.readFileSync(f.file)),"gemini_antigravity_default_model"));assert.equal(f.calls.length,0);
+});
+
 test("Gemini management accepts only local same-origin changes",async t=>{
   const f=fixture(t),options={env:{},dashboardOptions:{home:f.home},codexModelRegistry:{models:catalog},antigravityOptions:{inspect:f.options.inspect,exec:f.options.exec}};
   const headers={host:"127.0.0.1:2026","x-ccdx-dashboard":"1",origin:"http://127.0.0.1:2026"};

@@ -32,6 +32,9 @@ test("Antigravity lists models once while model files retain base-ID and effort-
   fs.writeFileSync(file,JSON.stringify({models:[variants[2].id]}));
   const subset=await f.run(["app","antigravity","models","--edit","--file",file,"--preview"]);
   assert.ok(subset.includes(variants[2].id));assert.ok(!subset.includes(variants[0].id));assert.ok(f.calls.every(call=>!call.body));
+  fs.writeFileSync(file,JSON.stringify({models:["gemini-4-carbon"],default_model:"gemini-4-carbon"}));
+  await f.run(["app","antigravity","models","--edit","--file",file,"--yes"]);
+  assert.deepEqual(f.calls.at(-1),{path:"gemini",body:{action:"models",models:variants.map(v=>v.id),default_model:variants[1].id}});
 });
 
 const graph = () => ({ source: "connections", management_version: 1,

@@ -139,7 +139,7 @@ const geminiRegistry={models:geminiBase()};let geminiExpand=false,geminiRefreshF
 const handler = createAdapterHandler({ env:{},
   codexModelRegistry:geminiRegistry,
   antigravityOptions:{refreshModels:async()=>{geminiRefreshes++;if(geminiRefreshFailure)throw Error("Synthetic catalog unavailable");if(geminiExpand)geminiRegistry.models={data:[...geminiBase().data,{id:"gemini-4-hydrogen",name:"Gemini 4 Hydrogen",supported_endpoints:["/chat/completions"],capabilities:{supports:{reasoning_effort:["low","medium","high","xhigh"]},limits:{max_context_window_tokens:1048576}}}]};},
-    googleFetch:async()=>Response.json({models:{native:{model:"NATIVE"}}}),inspect:async()=>({status:geminiAppState,version:"synthetic",pids:[],app:"/Applications/Gemini.app"})},
+    googleFetch:async()=>Response.json({models:{native:{model:"NATIVE"}},defaultAgentModelId:"native"}),inspect:async()=>({status:geminiAppState,version:"synthetic",pids:[],app:"/Applications/Gemini.app"})},
   dashboardOptions: { home, env: {}, serviceControl, accountTools, localTools,
   updateStatusFn: async () => { updateReads++;return { source: "release_status", status: updateState,
     current: { version: "1.2.3", published_at: "2026-10-19T02:36:27Z" }, latest: { version: latestVersion, published_at: "2026-10-19T10:00:00Z" },
@@ -1068,8 +1068,8 @@ try {
         if(!await page.locator("#gemini-enabled").isChecked())await page.locator("#gemini-enabled").check();
         await page.waitForFunction(()=>document.querySelectorAll('#gemini-models tr').length===2&&document.querySelectorAll('#gemini-models input').length===2&&!document.getElementById("gemini-enabled").disabled);
         const modelBoxes=page.locator("#gemini-models td:first-child input");
-        assert.equal(await page.locator("#gemini-models td:last-child input").count(),0,"Reasoning is capability text, as on Codex and Claude");
-        for(const text of await page.locator("#gemini-models td:last-child").allTextContents())assert.equal(text,"low / medium / high");
+        assert.equal(await page.locator("#gemini-models td:nth-child(4) input").count(),0,"Reasoning is capability text, as on Codex and Claude");
+        for(const text of await page.locator("#gemini-models td:nth-child(4)").allTextContents())assert.equal(text,"low / medium / high");
         assert.equal(await page.locator("#gemini-models tr").count(),2,"Two models share their reasoning choices within two rows");
         const initialCatalog=await page.request.post(`http://127.0.0.1:${server.address().port}/antigravity/v1internal:fetchAvailableModels`,{data:{}});
         assert.equal(initialCatalog.status(),200);
@@ -1111,7 +1111,7 @@ try {
           await modelBoxes.first().uncheck();
           await page.locator("#gemini-refresh").click();await page.waitForFunction(()=>document.querySelectorAll('#gemini-models input').length===3&&!document.getElementById('gemini-refresh').disabled);
           assert.equal(geminiRefreshes,before+1);assert.equal(await modelBoxes.first().isChecked(),false,"A real upstream refresh keeps the unsaved model draft");
-          const hydrogen=page.locator('#gemini-models tr').filter({hasText:'Gemini 4 Hydrogen'});assert.equal(await hydrogen.locator('td').last().textContent(),'low / medium / high / xhigh');
+          const hydrogen=page.locator('#gemini-models tr').filter({hasText:'Gemini 4 Hydrogen'});assert.equal(await hydrogen.locator('td').nth(3).textContent(),'low / medium / high / xhigh');
           geminiRefreshFailure=true;await page.locator('#gemini-refresh').click();await page.waitForFunction(()=>!document.getElementById('gemini-refresh').disabled);
           assert.equal(await hydrogen.count(),1);assert.equal(await modelBoxes.first().isChecked(),false,"A failed upstream refresh retains the list and draft");
           geminiRefreshFailure=false;await page.locator('#gemini-cancel').click();await hydrogen.locator('input').check();await page.locator('#gemini-save').click();await page.waitForFunction(()=>document.getElementById('gemini-save').disabled&&!document.getElementById('gemini-refresh').disabled);
@@ -1121,6 +1121,21 @@ try {
           geminiExpand=false;geminiRegistry.models=geminiBase();
           const reset=await page.request.post(`http://127.0.0.1:${server.address().port}/_ccdx/ui/gemini`,{headers:{'X-CCDX-Dashboard':'1',Origin:`http://127.0.0.1:${server.address().port}`},data:{action:'models',models:['carbon','argon'].flatMap(name=>['low','medium','high'].map(level=>'ccdx-copilot-gemini-4-'+name+'-'+level))}});assert.equal(reset.status(),200);
         }
+        if(language==="zh"&&theme==="dark"&&width===1280){
+          await page.locator('#gemini-refresh').click();
+          await page.waitForFunction(()=>document.querySelectorAll('#gemini-models tr').length===2&&!document.getElementById('gemini-refresh').disabled);
+        }
+        const argonDefault=page.locator('#gemini-models tr').filter({hasText:'Gemini 4 Argon'}).locator('td:last-child button');
+        await argonDefault.click();assert.equal(await argonDefault.getAttribute('aria-pressed'),'true');
+        await page.locator('#gemini-cancel').click();assert.equal(await argonDefault.getAttribute('aria-pressed'),'false');
+        await argonDefault.click();await page.locator('#gemini-save').click();
+        await page.waitForFunction(()=>document.getElementById('gemini-save').disabled&&!document.getElementById('gemini-refresh').disabled);
+        assert.equal(await page.locator('#gemini-reopen').isVisible(),true,"A default-only change reloads the catalog");
+        const nativeCatalog=()=>page.request.post(`http://127.0.0.1:${server.address().port}/antigravity/v1internal:fetchAvailableModels`,{data:{}});
+        assert.equal((await (await nativeCatalog()).json()).defaultAgentModelId,'ccdx-copilot-gemini-4-argon-medium');
+        await page.locator('#gemini-use-app-default').click();await page.locator('#gemini-save').click();
+        await page.waitForFunction(()=>document.getElementById('gemini-save').disabled&&!document.getElementById('gemini-refresh').disabled);
+        assert.equal((await (await nativeCatalog()).json()).defaultAgentModelId,'native');
         await page.locator('[data-route="models"]').click();
         await page.locator("#model-provider-github").click();
         await page.locator('[data-route="overview"]').click();

@@ -236,6 +236,18 @@ test("catalog merging preserves native models, defaults, and quotas without enum
   assert.equal(result.agentModelSorts[0].groups[0].modelIds.length,7,"Native and Copilot models must share the first group for Gemini App");
   assert.equal(mergeAntigravityModels(native,[]),native);
 });
+test("an Antigravity default changes only a compatible agent catalog, not explicit requests",async()=>{
+  const preferred="ccdx-copilot-gemini-4-argon-medium";
+  const native={models:{native:{model:"NATIVE",maxTokens:123}},defaultModelId:"native",defaultAgentModelId:"native"};
+  const f=fixture({defaultModel:()=>preferred,fetchGoogle:async()=>Response.json(native)});
+  const result=await invoke(f.handler,{}, {url:"/antigravity/v1internal:fetchAvailableModels"}).done,merged=JSON.parse(result.text);
+  assert.equal(merged.defaultAgentModelId,preferred);assert.equal(merged.defaultModelId,"native");assert.deepEqual(merged.models.native,native.models.native);
+  assert.equal(f.handler.snapshot().catalog_default_model,preferred);
+  assert.equal((await invoke(f.handler,body()).done).status,200);assert.equal(f.copilot[0].value.model,"gemini-4-carbon");assert.equal(f.copilot[0].value.reasoning_effort,"high");
+  assert.equal(mergeAntigravityModels(native,catalog,[alias],preferred).defaultAgentModelId,"native");
+  assert.equal(Object.hasOwn(mergeAntigravityModels({models:native.models},catalog,null,preferred),"defaultAgentModelId"),false);
+  assert.equal(mergeAntigravityModels({...native,defaultAgentModelId:23},catalog,null,preferred).defaultAgentModelId,23);
+});
 test("Copilot main requests use the advertised model and level without forwarding Google authorization",async()=>{
   const f=fixture(),result=await invoke(f.handler,body()).done;
   assert.equal(result.status,200);assert.equal(f.google.length,0);assert.equal(f.copilot.length,1);

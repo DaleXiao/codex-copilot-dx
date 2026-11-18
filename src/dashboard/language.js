@@ -1022,6 +1022,8 @@
     "body_queue_wait": ["Local queue history", "本机排队记录"],
     "source_queue_wait": ["Source queue", "来源排队"],
     "upstream_request_sent": ["Send request", "请求发送耗时"],
+    "upstream_body_written": ["Written to connection", "已交给连接"],
+    "upstream_transport_error": ["Transport error", "传输错误"],
     "upstream_wait_headers": ["Wait for response", "响应等待"],
     "upstream_no_headers": ["Timed out before response headers", "等待响应头超时"],
     "body_queue_detail": ["Waited {ms} ms · {result}. At entry: {reason}. Reservation {reserved}; in use {occupied}/{limit}.", "等待 {ms} ms · {result}。入队原因：{reason}。预留 {reserved}；入队时占用 {occupied}/{limit}。"],

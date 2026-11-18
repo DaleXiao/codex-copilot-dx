@@ -414,6 +414,8 @@
             reserved: mib(queue.requested_bytes), occupied: mib(queue.active_bytes), limit: mib(queue.limit_bytes),
           })]] : []),
           ...(Number.isSafeInteger(context.source_queue_ms) ? [["source_queue_wait", `${number(context.source_queue_ms)} ms`]] : []),
+          ...(Number.isSafeInteger(attempt?.body_written_bytes) && !Number.isFinite(attempt.body_sent_ms) ? [["upstream_body_written", `${number(attempt.body_written_bytes)} / ${number(context.payload_bytes)} B`]] : []),
+          ...(attempt?.transport_error ? [["upstream_transport_error", attempt.transport_error]] : []),
           ...(Number.isFinite(attempt?.body_sent_ms) ? [["upstream_request_sent", `${number(attempt.body_sent_ms - attempt.started_ms)} ms`]] : []),
           ...(Number.isFinite(attempt?.body_sent_ms) && Number.isFinite(attempt.headers_ms) ? [["upstream_wait_headers", `${number(Math.max(0, attempt.headers_ms - attempt.body_sent_ms))} ms`]]
             : Number.isFinite(attempt?.body_sent_ms) && request.origin === "transport" && request.http_status === 504 ? [["upstream_wait_headers", phrase("upstream_no_headers")]] : []),

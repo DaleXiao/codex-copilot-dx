@@ -476,8 +476,12 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
       if (routeName === "antigravity") tracker.observeUpstreamBodyWrite = () => {
         const attempt = attemptTimings.at(-1);
         if (!attempt || finished) return;
-        return () => {
-          if (!finished && attempt.body_sent_ms === undefined) attempt.body_sent_ms = elapsed(now());
+        return (kind, value) => {
+          if (finished) return;
+          if (kind === "start") attempt.body_written_bytes ??= 0;
+          if (kind === "chunk") attempt.body_written_bytes = (attempt.body_written_bytes || 0) + value;
+          if (kind === "sent") attempt.body_sent_ms ??= elapsed(now());
+          if (kind === "error") attempt.transport_error ??= value;
         };
       };
       return tracker;

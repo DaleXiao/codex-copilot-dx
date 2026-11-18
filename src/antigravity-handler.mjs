@@ -73,7 +73,13 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
       const method=match[1];
       if(controlMethods.has(method))applicationEvidence?.notice(req,res,"antigravity","control");
       if(req.method==="POST"&&!/^application\/json(?:;|$)/i.test(req.headers["content-type"]||""))throw httpError("Antigravity requires JSON",415);
-      phase="admission";release=await measureRequestStageAsync("admission",()=>acquireRequest(req,{signal:abort.signal}));
+      const length=req.headers["content-length"];
+      const bodylessControl=req.method==="GET"&&controlMethods.has(method)&&req.headers["transfer-encoding"]===undefined
+        &&(length===undefined||typeof length==="string"&&/^0+$/.test(length));
+      phase="admission";
+      // A framed request still needs the existing reservation. A known control
+      // GET with no body does not occupy space in the upload queue.
+      if(!bodylessControl)release=await measureRequestStageAsync("admission",()=>acquireRequest(req,{signal:abort.signal,streamingBody:req.method==="POST"}));
       phase="body";abort.setTimeout(requestBodyTimeoutMs,"request_body_timeout");
       body=req.method==="POST"?await measureRequestStageAsync("body",()=>readJsonBody(req,{admission:release,signal:abort.signal,parse:parseBody})):null;
       phase="preparation";

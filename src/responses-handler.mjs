@@ -259,7 +259,7 @@ export function createResponsesHandler(options) {
       releaseRequest();
     };
     try {
-      releaseRequest = await measureRequestStageAsync("admission", () => acquireRequest(req, { signal: abort.signal }));
+      releaseRequest = await measureRequestStageAsync("admission", () => acquireRequest(req, { signal: abort.signal, streamingBody: true }));
       abort.setTimeout(requestBodyTimeoutMs, "request_body_timeout");
       parsed = await measureRequestStageAsync("body", () => readJsonBody(req, { admission: releaseRequest, signal: abort.signal }));
       observeRequestedModel(parsed);
@@ -597,7 +597,7 @@ export function createResponsesCompactHandler(options) {
       releaseRequest();
     };
     try {
-      releaseRequest = await measureRequestStageAsync("admission", () => acquireRequest(req, { signal: abort.signal }));
+      releaseRequest = await measureRequestStageAsync("admission", () => acquireRequest(req, { signal: abort.signal, streamingBody: true }));
       abort.setTimeout(requestBodyTimeoutMs, "request_body_timeout");
       const parsed = await measureRequestStageAsync("body", () => readJsonBody(req, { admission: releaseRequest, signal: abort.signal }));
       const context = currentRequestContext();if (context) { context.purpose = requestPurpose(req.headers["x-ccdx-purpose"], "compaction");context.streamPerformance?.setPurpose(context.purpose); }

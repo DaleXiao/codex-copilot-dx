@@ -8,7 +8,7 @@ export function createCarbonSearchHandler({ acquireRequest, privacy, resolveProv
     const abort = createRequestAbort(req, res);
     let release = () => {};
     try {
-      release = await acquireRequest(req, { signal: abort.signal });
+      release = await acquireRequest(req, { signal: abort.signal, streamingBody: true });
       abort.setTimeout(requestBodyTimeoutMs, "request_body_timeout");
       let upstream;
       {

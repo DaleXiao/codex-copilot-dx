@@ -1,6 +1,6 @@
 import { imageModelCatalog } from "./image-models.mjs";
 import http from "node:http";
-import { readUserSettings } from "./user-settings.mjs";
+import { inflightBodyLimitPreference, readUserSettings } from "./user-settings.mjs";
 import { createNativeImagesHandler } from "./native-images.mjs";
 import { defaultCopilotClient } from "./copilot.mjs";
 import { buildCodexModelResponse } from "./codex-model-catalog.mjs";
@@ -177,7 +177,10 @@ export function createAdapterHandler(options = {}) {
   const streamHandshakeTimeoutMs = parsePositiveInteger(options.streamHandshakeTimeoutMs, ADAPTER_RUNTIME_CONFIG.streamHandshakeTimeoutMs);
   const streamIdleTimeoutMs = parsePositiveInteger(options.streamIdleTimeoutMs, ADAPTER_RUNTIME_CONFIG.streamIdleTimeoutMs);
   const requestBodyTimeoutMs = parsePositiveInteger(options.requestBodyTimeoutMs, ADAPTER_RUNTIME_CONFIG.requestBodyTimeoutMs);
-  const acquireRequest = options.acquireRequest || createRequestAdmission();
+  const acquireRequest = options.acquireRequest || createRequestAdmission({
+    maxBytes: inflightBodyLimitPreference({ env: options.env, home: options.dashboardOptions?.home }).bytes,
+    maxSupplementalBytes: options.env ? loadRuntimeConfig(options.env).maxInflightBodyBytes : ADAPTER_RUNTIME_CONFIG.maxInflightBodyBytes,
+  });
   const requestMetrics = options.requestMetrics || createRequestMetrics();
   const streamPerformanceMetrics = options.streamPerformanceMetrics || createStreamPerformanceMetrics({ routeNames: ["responses", "responses_compact", "antigravity"] });
   const imagePressure = options.imagePressure || createResponsesImagePressureController();

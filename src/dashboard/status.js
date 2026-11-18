@@ -400,11 +400,17 @@
         details.className = "request-details";fields.className = "failure-detail";
         if (Number.isSafeInteger(context.privacy_count)) globalThis.ccdxLanguage.set(summary, "privacy_result", { count: context.privacy_count, ms: context.privacy_ms || 0 });
         else localize(summary, "request_metadata");details.append(summary, fields);
+        const queue = context.body_queue;
+        const queueResult = queue?.outcome === "admitted" ? "body_queue_admitted" : queue?.outcome === "timed_out" ? "body_queue_timed_out"
+          : queue?.outcome === "aborted" ? "body_queue_aborted" : "body_queue_result_unknown";
+        const queueReason = queue?.reason === "upload_in_progress" ? "body_queue_upload_in_progress" : queue?.reason === "upload_growth" ? "body_queue_upload_growth"
+          : queue?.reason === "exclusive_waiter" ? "body_queue_exclusive"
+            : queue?.length_known === false && queue.requested_bytes === queue.limit_bytes ? "body_queue_unknown_length" : "body_queue_budget";
         for (const [key, value] of [["request_id", request.request_id || "—"], ["http_status", number(request.http_status)], ["attempts", number(request.upstream_attempts)], ["model_outcome", globalThis.ccdxLanguage?.format(outcome.toLowerCase()) || outcome],
           ["time", Number.isFinite(at) ? time(at, { date: true }) : "—"],
-          ...(Number.isSafeInteger(context.body_queue?.wait_ms) ? [["body_queue_wait", phrase("body_queue_detail", {
-            ms: number(context.body_queue.wait_ms), reason: phrase(context.body_queue.reason === "exclusive_waiter" ? "body_queue_exclusive" : "body_queue_budget"),
-            reserved: mib(context.body_queue.requested_bytes), occupied: mib(context.body_queue.active_bytes), limit: mib(context.body_queue.limit_bytes),
+          ...(Number.isSafeInteger(queue?.wait_ms) ? [["body_queue_wait", phrase("body_queue_detail", {
+            ms: number(queue.wait_ms), result: phrase(queueResult), reason: phrase(queueReason),
+            reserved: mib(queue.requested_bytes), occupied: mib(queue.active_bytes), limit: mib(queue.limit_bytes),
           })]] : []),
           ...(Number.isSafeInteger(context.source_queue_ms) ? [["source_queue_wait", `${number(context.source_queue_ms)} ms`]] : []),
           ["wire_mib", finite(context.payload_bytes) ? `${(Number(context.payload_bytes) / 1048576).toFixed(2)} MiB` : "—"],

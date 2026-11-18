@@ -1,7 +1,17 @@
-# CCDX 1.4.6
+# CCDX 1.4.7
 
-- 请求详情分开显示本机排队和来源排队。`ccdx status` 可查看本机最久一次等待的原因。
-- 普通请求直接取得可用内存额度。Carbon 搜索收到响应头后即释放请求体额度，无需等响应读完。
-- Antigravity 原生 Google 流可识别未封装的尾部错误，已返回的用量保留为部分用量。
+## English
 
-未验证：真实来源限流、Claude 原生回复及压缩、Gemini 多轮缓存收益。
+- Uploads of unknown length reserve request-body memory as data arrives. Small uploads can proceed alongside existing requests; reads pause if more space is needed.
+- Bodyless Antigravity control requests skip the body queue. Request details show why a request waited and whether it was admitted.
+- Configure the shared body budget under **Settings → Advanced: request limits**. Changes apply at the next start.
+
+Not verified: live provider timeouts, native app adoption, or sustained production load.
+
+## 简体中文
+
+- 长度未知的上传按收到的字节逐步预留请求体内存。短上传无需等整池清空；额度不够时暂停读入。
+- 无正文的 Antigravity 控制请求不再进入正文队列。请求详情显示入队原因和排队结果。
+- 在「设置 → 高级：请求限制」调整共享请求体内存额度，下次启动生效。
+
+未验证：真实来源超时、原生应用接入和长时间线上负载。

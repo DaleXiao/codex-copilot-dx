@@ -31,6 +31,27 @@ test("settings apply live flags while preserving configuration and report effect
   assert.doesNotMatch(JSON.stringify(image), /NEVER_EXPOSE/);
   await f.control.action({ action: "animation", theme: "twin" });assert.equal(f.themes.at(-1).theme, "twin");
 });
+test("shared request-body setting is bounded, applies on next startup and honors the environment", async t => {
+  const f = fixture(t), MIB = 1048576;
+  const active = createAdapterHandler({ env: f.env, dashboardOptions: { home: f.home, serviceControl: f.control } });t.after(() => active.cleanup());
+  const before = f.control.snapshot();
+  assert.deepEqual(before.inflight_body, { bytes: 32 * MIB, mib: 32, source: "default" });
+  assert.equal(active.snapshot().admission.maxBytes, 32 * MIB);
+  for (const mib of [undefined, "64", 31, 129, 64.5]) await assert.rejects(f.control.action({ action: "inflight_body_limit", mib }), { code: "ccdx_inflight_limit_invalid" });
+  assert.deepEqual(readUserSettings(f), {});
+  writeServicePreference("open_webui", false, f);
+  const result = await f.control.action({ action: "inflight_body_limit", mib: 64 });
+  assert.equal(result.inflight_body.bytes, 64 * MIB);assert.deepEqual(result.decoded_body,before.decoded_body);
+  assert.equal(active.snapshot().admission.maxBytes, 32 * MIB, "settings never resize the running gate");
+  const next = createAdapterHandler({ env:f.env, dashboardOptions:{ home:f.home } });t.after(() => next.cleanup());
+  assert.equal(next.snapshot().admission.maxBytes, 64 * MIB);
+  assert.equal(readUserSettings(f).open_webui,false);
+  const override = createServiceControl({ home: f.home, env:{ CCDX_MAX_INFLIGHT_BODY_BYTES:String(96*MIB) } });
+  assert.deepEqual(override.snapshot().inflight_body,{ bytes:96*MIB, source:"environment" });
+  await assert.rejects(override.action({ action:"inflight_body_limit",mib:64 }),{ code:"ccdx_inflight_limit_environment" });
+  assert.equal((await f.control.action({ action:"inflight_body_limit",mib:null })).inflight_body.bytes,32*MIB);
+});
+
 test("invalid controls and environment overrides do not silently mutate runtime", async t => {
   const f = fixture(t, { CCDX_TERMINAL_ANIMATION: "0", CCDX_M365: "0", CCDX_RESPONSE_HISTORY_MAX_BYTES: "67108864" });
   assert.equal(f.control.snapshot().effective.terminal_animation_enabled.locked, true);

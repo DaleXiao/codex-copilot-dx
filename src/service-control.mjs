@@ -3,7 +3,7 @@ import { controlImage } from "./image-control.mjs";
 import { controlCodexLaunch } from "./codex-launch-control.mjs";
 import { serviceSettingsSnapshot, servicePreferences, writeServicePreference,
   writeTerminalAnimationTheme, writeTerminalColorTheme, responseHistoryLimitPreference, writeResponseHistoryLimitMib,
-  nightlyUpdatePreference, writeNightlyUpdatePreference, decodedBodyLimitPreference, writeDecodedBodyLimitMib } from "./user-settings.mjs";
+  nightlyUpdatePreference, writeNightlyUpdatePreference, decodedBodyLimitPreference, writeDecodedBodyLimitMib, inflightBodyLimitPreference, writeInflightBodyLimitMib, INFLIGHT_BODY_LIMIT_MIN_MIB, INFLIGHT_BODY_LIMIT_MAX_MIB } from "./user-settings.mjs";
 import { readPredictionSettings } from "./native-prediction-profile.mjs";
 import { cacheRuntimeSnapshot, cleanRuntimeCaches, setHistoryCacheLimit } from "./cache-control.mjs";
 import { isTerminalAnimationTheme } from "./terminal-animation.mjs";
@@ -46,7 +46,7 @@ export function createServiceControl({ env = process.env, home, platform = proce
     return { source: "service_settings", saved, theme, color_theme, preferences: settingsPreferencesSnapshot(options), local_privacy: localPrivacy,
       applications: applicationControl.snapshot(),
       features: { prediction: { ...featureSnapshot(predictionControlSnapshot), bridge: prediction?.bridge || "stopped", active: prediction?.active === true }, image: { ...image, runtime: imageHostState.snapshot() } },
-      decoded_body: decodedBodyLimitPreference(options), manual_update: { available: typeof manualUpdate === "function" }, last_operation: lastOperation,
+      decoded_body: decodedBodyLimitPreference(options), inflight_body: inflightBodyLimitPreference(options), manual_update: { available: typeof manualUpdate === "function" }, last_operation: lastOperation,
       ...(providerRuntime?.errorCaptureSnapshot ? { error_capture: providerRuntime.errorCaptureSnapshot() } : {}),
       ...(providerRuntime?.compaction ? { compaction: providerRuntime.compaction.snapshot() } : {}),
       nightly_update: { enabled, ...nightly, effect: enabled && !nightly ? "next_start" : "immediate" },
@@ -70,7 +70,7 @@ export function createServiceControl({ env = process.env, home, platform = proce
       prediction: ["action", "operation"], image: ["action", "operation", "model", "evidence", "confirmed"],
       codex_app: ["action", "operation", "intent", "confirmed"],
       application: ["action", "id", "operation", "confirmed", "fresh", "expected_pid", "expected_started"],
-      update: ["action", "confirmed"], decoded_limit: ["action", "mib"],
+      update: ["action", "confirmed"], decoded_limit: ["action", "mib"], inflight_body_limit: ["action", "mib"],
       error_capture: ["action", "operation", "source", "model"],
       preferences: ["action", "values", "revision"], reset_preferences: ["action", "revision", "backup_id", "scope"], restore_preferences: ["action", "revision", "backup_id", "scope"],
       provider: ["action", "operation", "provider", "model", "auto_review_model", "auto_review_effort", "account_id"] }[input.action];
@@ -99,6 +99,12 @@ export function createServiceControl({ env = process.env, home, platform = proce
     } else if (input.action === "decoded_limit") {
       if (decodedBodyLimitPreference(options).source === "environment") throw new Error("Request limit is controlled by the launch environment");
       writeDecodedBodyLimitMib(input.mib, options);
+    } else if (input.action === "inflight_body_limit") {
+      if (inflightBodyLimitPreference(options).source === "environment") throw Object.assign(new Error("Request limit is controlled by the launch environment"), { code: "ccdx_inflight_limit_environment", statusCode: 409 });
+      if (input.mib !== null && (!Number.isSafeInteger(input.mib) || input.mib < INFLIGHT_BODY_LIMIT_MIN_MIB || input.mib > INFLIGHT_BODY_LIMIT_MAX_MIB)) {
+        throw Object.assign(new Error(`Shared request-body limit must be an integer from ${INFLIGHT_BODY_LIMIT_MIN_MIB} to ${INFLIGHT_BODY_LIMIT_MAX_MIB} MiB`), { code: "ccdx_inflight_limit_invalid", statusCode: 400 });
+      }
+      writeInflightBodyLimitMib(input.mib, options);
     } else if (["preferences", "reset_preferences", "restore_preferences"].includes(input.action)) {
       if (input.action === "preferences" && Object.hasOwn(input.values || {}, "privacy_enabled")
         && input.values.privacy_enabled !== settingsPreferencesSnapshot(options).values.privacy_enabled) {

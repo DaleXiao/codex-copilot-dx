@@ -88,8 +88,8 @@ function fixture(options={}){
     client:{chatCompletions:async(value,options)=>{copilot.push({value,options});return sse()}},...options});
   return {handler,google,copilot,records};
 }
-function invoke(handler,value,{url="/antigravity/v1internal:streamGenerateContent?alt=sse",raw,headers={},onWrite,input}={}){
-  const req=input||Readable.from([Buffer.from(raw??JSON.stringify(value))]);req.method="POST";req.url=url;req.headers={host:"127.0.0.1:2026","content-type":"application/json",authorization:"Bearer GOOGLE_FIXTURE",...headers};req.socket={remoteAddress:"127.0.0.1"};
+function invoke(handler,value,{url="/antigravity/v1internal:streamGenerateContent?alt=sse",raw,headers={},onWrite,input,method="POST"}={}){
+  const req=input||Readable.from([Buffer.from(raw??JSON.stringify(value))]);req.method=method;req.url=url;req.headers={host:"127.0.0.1:2026","content-type":"application/json",authorization:"Bearer GOOGLE_FIXTURE",...headers};req.socket={remoteAddress:"127.0.0.1"};
   const res=new EventEmitter(),chunks=[];Object.assign(res,{destroyed:false,writableEnded:false,headersSent:false,statusCode:200,headers:{},
     writeHead(status,headers){this.statusCode=status;this.headers=headers;this.headersSent=true;return this},
     write(value){chunks.push(Buffer.from(value));onWrite?.(value);return true},end(value){if(value)this.write(value);this.writableEnded=true;this.emit("finish")}});
@@ -142,6 +142,31 @@ test("preparation and compaction retain input admission until their last upstrea
     }finally{prepared.resolve();recovered.resolve();await bounded(call.done);if(other)(await bounded(other))()}
     assert.equal(gate.diagnostics().activeBytes,0);
   }
+});
+
+test("Antigravity can send a short chunked generation while another app still holds a small reservation", async () => {
+  const gate=createRequestAdmission({maxBytes:4096,waitTimeoutMs:40}),held=await gate({headers:{"content-length":"256"}});
+  const f=fixture({acquireRequest:gate}),value=body();
+  try {
+    const result=await bounded(invoke(f.handler,value,{headers:{"transfer-encoding":"chunked"}}).done);
+    assert.equal(result.status,200);assert.equal(f.copilot.length,1);
+    assert.equal(gate.diagnostics().queuedTotal,0);assert.equal(gate.stats().activeBytes,256);
+  } finally { held(); }
+  assert.equal(gate.stats().activeBytes,0);
+});
+
+test("only clearly bodyless control GETs skip the shared request-body queue",async()=>{
+  const gate=createRequestAdmission({maxBytes:4096,waitTimeoutMs:40}),held=await gate({headers:{}});
+  const f=fixture({acquireRequest:gate}),url="/antigravity/v1internal:loadCodeAssist";
+  try{
+    const result=await bounded(invoke(f.handler,null,{url,method:"GET"}).done);
+    assert.equal(result.status,200);assert.equal(f.google[0].request.method,"GET");assert.equal(f.google[0].request.body,undefined);
+    assert.equal(gate.diagnostics().queuedTotal,0);assert.equal(gate.diagnostics().total,1);
+    for(const input of [{method:"GET",headers:{"transfer-encoding":"chunked"}},{method:"GET",headers:{"content-length":"1"}},{}]){
+      const attempt=await bounded(invoke(f.handler,{}, {url,...input}).done);assert.equal(attempt.status,503);
+    }
+    assert.equal(f.google.length,1);assert.equal(gate.diagnostics().timedOut,3);
+  }finally{held()}
 });
 
 test("admission timeout stays local 503 and does not consume the request-body deadline",async()=>{

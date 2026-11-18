@@ -37,7 +37,7 @@ function payloadTooLarge(kind, maxBytes) {
 
 function consumeRequestChunks(req, { signal, onChunk }) {
   return new Promise((resolve, reject) => {
-    let settled = false;
+    let settled = false, waiting = false, ended = false;
     const cleanup = () => {
       req.off("data", handleData);
       req.off("end", handleEnd);
@@ -58,12 +58,21 @@ function consumeRequestChunks(req, { signal, onChunk }) {
     };
     const handleData = (chunk) => {
       try {
-        onChunk(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        const pending = onChunk(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        if (pending) {
+          waiting = true;
+          req.pause();
+          pending.then(() => {
+            waiting = false;
+            if (settled) return;
+            if (ended) finish();else req.resume();
+          }, stopReading);
+        }
       } catch (error) {
         stopReading(error);
       }
     };
-    const handleEnd = () => finish();
+    const handleEnd = () => { ended = true;if (!waiting) finish(); };
     const handleError = (error) => finish(error);
     const handleAborted = () => finish(admissionAbortError(signal));
     const handleSignalAbort = () => stopReading(admissionAbortError(signal));
@@ -80,7 +89,7 @@ function consumeRequestChunks(req, { signal, onChunk }) {
   });
 }
 
-async function readRequestBuffer(req, maxBytes, signal) {
+async function readRequestBuffer(req, maxBytes, signal, growUpload) {
   const contentLength = requestContentLength(req);
   if (Number.isFinite(contentLength) && contentLength > maxBytes) {
     throw payloadTooLarge("Raw", maxBytes);
@@ -93,13 +102,15 @@ async function readRequestBuffer(req, maxBytes, signal) {
     onChunk(buffer) {
       total += buffer.length;
       if (total > maxBytes) throw payloadTooLarge("Raw", maxBytes);
+      const pending = growUpload?.(total, signal);
+      if (pending) return pending.then(() => { if (!signal?.aborted) chunks.push(buffer); });
       chunks.push(buffer);
     },
   });
   return Buffer.concat(chunks);
 }
 
-async function readIdentityText(req, maxBodyBytes, maxDecodedBodyBytes, signal, onBytes) {
+async function readIdentityText(req, maxBodyBytes, maxDecodedBodyBytes, signal, admission) {
   const contentLength = requestContentLength(req);
   if (Number.isFinite(contentLength) && contentLength > maxBodyBytes) {
     throw payloadTooLarge("Raw", maxBodyBytes);
@@ -125,6 +136,8 @@ async function readIdentityText(req, maxBodyBytes, maxDecodedBodyBytes, signal, 
       total += buffer.length;
       if (total > maxBodyBytes) throw payloadTooLarge("Raw", maxBodyBytes);
       if (total > maxDecodedBodyBytes) throw payloadTooLarge("Decoded", maxDecodedBodyBytes);
+      const pending = admission?.growUpload?.(total, signal);
+      if (pending) return pending.then(() => { if (!signal?.aborted) text += decoder.decode(buffer, { stream: true }); });
       if (preallocatedLength) {
         allocated ||= Buffer.allocUnsafe(preallocatedLength);
         if (!overflow && total <= allocated.length) {
@@ -138,7 +151,7 @@ async function readIdentityText(req, maxBodyBytes, maxDecodedBodyBytes, signal, 
       }
     },
   });
-  onBytes?.(total);
+  admission?.resize?.(total);
   if (preallocatedLength) {
     if (!allocated) return "";
     return new TextDecoder().decode(overflow ? Buffer.concat(overflow, total) : allocated.subarray(0, total));
@@ -199,9 +212,9 @@ export async function readJsonBody(req, {
   if (signal?.aborted) throw admissionAbortError(signal);
   const encoding = req.headers?.["content-encoding"];
   if (!encoding || encoding === "identity" || contentEncodings(encoding).every(value => value === "identity")) {
-    return parse(await readIdentityText(req, maxBodyBytes, maxDecodedBodyBytes, signal, bytes => admission?.resize?.(bytes)));
+    return parse(await readIdentityText(req, maxBodyBytes, maxDecodedBodyBytes, signal, admission));
   }
-  const buffer = await readRequestBuffer(req, maxBodyBytes, signal);
+  const buffer = await readRequestBuffer(req, maxBodyBytes, signal, admission?.growUpload);
   admission?.resize?.(buffer.length);
   let releaseDecompression = () => {};
   let decodedReservation;

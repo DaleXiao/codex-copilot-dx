@@ -169,7 +169,7 @@ function dashboardSnapshot() {
       requests: { total: 1, active: 0 }, model_activity: { active: modelActivity }, models: { models: 1, source: "synthetic" },
       image_generation: { succeeded: 0, active: 0, failed: 0, delivery_failures: 0 },
       stream_performance: { active_requests: flowRequests, active_total: flowRequests.length, recent_requests: [...extraRequests, { at: "2026-10-21T05:51:08Z", request_id: "synthetic-recent", provider: "github", model: "gpt-test", outcome: "completed",
-        context: { payload_bytes: 1048576, images: 0, input_tokens: 150, context_window_tokens: 1000, source_queue_ms: 20, body_queue: { wait_ms: 942, reason: "exclusive_waiter", requested_bytes: 1048576, active_bytes: 4194304, limit_bytes: 33554432 } } },
+        context: { payload_bytes: 1048576, images: 0, input_tokens: 150, context_window_tokens: 1000, source_queue_ms: 20, body_queue: { wait_ms: 108247, outcome: "admitted", reason: "body_budget", length_known: false, requested_bytes: 33554432, active_bytes: 211918, limit_bytes: 33554432 } } },
         { request_id: "synthetic-unknown", model: "<script>not-html</script>", outcome: "completed", context: {} }], by_route: { responses: {
         ttft_ms: { avg: 1250, samples: 3, p50: 1400, p95: 2000, percentiles_estimated: true }, output_tokens_per_second: { avg: 123.4, samples: 2, unit: "token/s" },
       } } },
@@ -751,7 +751,7 @@ try {
         assert.deepEqual(await page.locator("#context-body").evaluate(body => [...body.closest("table").tHead.rows[0].cells].map(cell => ({ x: cell.getBoundingClientRect().x, width: cell.getBoundingClientRect().width }))), requestColumnsBefore, "Opening request metadata must not redistribute table columns");
         assert.match(await metadata.innerText(), /1\.00 MiB.*0.*1,000.*15\.0%/s);
         const queueDetail = await metadata.innerText();
-        assert.match(queueDetail, language === "zh" ? /本机排队.*942 ms.*前方请求需独占.*来源排队.*20 ms/s : /Local queue.*942 ms.*Exclusive request ahead.*Source queue.*20 ms/s);
+        assert.match(queueDetail, language === "zh" ? /本机排队记录.*108,247 ms.*已放行.*请求长度未知.*入队时占用.*来源排队.*20 ms/s : /Local queue history.*108,247 ms.*Admitted.*Unknown body length.*in use.*Source queue.*20 ms/s);
         await refreshStatus();
         assert.equal(await metadata.getAttribute("open"), "", "Unchanged reads keep request details open");
         extraRequests = [{ at: "2026-10-21T06:51:08Z", request_id: "synthetic-new", provider: "github", model: "gpt-new", outcome: "completed", context: {} }];
@@ -1048,6 +1048,17 @@ try {
           await page.locator("#decoded-limit").fill("256");await page.locator("#decoded-limit-save").click();
           await page.waitForFunction(() => !document.getElementById("decoded-limit-save").hasAttribute("aria-busy"));
           assert.equal(serviceControl.snapshot().decoded_body.bytes, 256 * 1048576);
+          await page.locator("#inflight-body-limit").fill("129");await page.locator("#inflight-body-limit-save").click();
+          assert.equal(serviceControl.snapshot().inflight_body.bytes, 32 * 1048576);
+          await page.locator("#inflight-body-limit").fill("64");await page.locator("#inflight-body-limit").blur();
+          await page.locator("#refresh").click();await page.waitForFunction(() => !document.getElementById("refresh").disabled);
+          assert.equal(await page.locator("#inflight-body-limit").inputValue(), "64", "Shared limit draft survives refresh");
+          await page.locator("#inflight-body-limit").press("Enter");
+          await page.waitForFunction(() => !document.getElementById("inflight-body-limit-save").hasAttribute("aria-busy"));
+          assert.equal(serviceControl.snapshot().inflight_body.bytes, 64 * 1048576);
+          await page.locator("#inflight-body-limit-default").click();
+          await page.waitForFunction(() => !document.getElementById("inflight-body-limit-default").hasAttribute("aria-busy"));
+          assert.equal(serviceControl.snapshot().inflight_body.bytes, 32 * 1048576);
           const beforeUpdate = manualUpdates;page.once("dialog", dialog => dialog.accept());await page.locator("#install-update").click();
           await page.waitForFunction(() => !document.getElementById("install-update").hasAttribute("aria-busy"));assert.equal(manualUpdates, beforeUpdate + 1);
         }

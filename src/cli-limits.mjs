@@ -2,7 +2,7 @@ import os from "node:os";
 import { MIB } from "./cache-limits.mjs";
 import { readAdapterStatus } from "./cli-status.mjs";
 import { loadRuntimeConfig } from "./runtime-config.mjs";
-import { decodedBodyLimitPreference, writeDecodedBodyLimitMib } from "./user-settings.mjs";
+import { decodedBodyLimitPreference, writeDecodedBodyLimitMib, inflightBodyLimitPreference } from "./user-settings.mjs";
 
 function mib(bytes) {
   const value = Number(bytes);
@@ -37,6 +37,8 @@ export async function runLimitsCommand({
   } catch {
     runtime = null;
   }
+  const inflight = inflightBodyLimitPreference({ env, home });
+  const activeInflight = runtime?.data?.admission?.maxBytes;
   const activeDecoded = Number(runtime?.data?.limits?.max_decoded_body_bytes);
   const activeRaw = Number(runtime?.data?.limits?.max_body_bytes);
   const lines = [
@@ -45,10 +47,13 @@ export async function runLimitsCommand({
     runtime && Number.isFinite(activeDecoded) && activeDecoded > 0
       ? `Running decoded request body: ${mib(activeDecoded)}`
       : "Running decoded request body: unavailable",
+    `Configured shared request-body budget: ${mib(inflight.bytes)} (${inflight.source})`,
+    Number.isFinite(activeInflight) && activeInflight > 0 ? `Running shared request-body budget: ${mib(activeInflight)}` : "Running shared request-body budget: unavailable",
     `Raw request body: ${mib(runtime && Number.isFinite(activeRaw) && activeRaw > 0 ? activeRaw : loadRuntimeConfig(env).maxBodyBytes)}${runtime ? " (running)" : " (configured)"}`,
   ];
   if (!runtime) lines.push("Running adapter status unavailable; restart ccdx to apply and verify this limit.");
   else if (activeDecoded !== preference.bytes) lines.push("Restart ccdx to apply the configured decoded-body limit.");
+  if (Number.isFinite(activeInflight) && activeInflight !== inflight.bytes) lines.push("Restart ccdx to apply the configured shared request-body budget.");
   if (action === "set") lines.push("Existing conversations and caches were not modified.");
   output.write(`${lines.join("\n")}\n`);
   return { preference, runtime };

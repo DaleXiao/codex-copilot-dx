@@ -21,8 +21,7 @@ export function requestContentLength(req) {
   return Number.parseInt(req.headers?.["content-length"] || "", 10);
 }
 
-function requestAdmissionWeight(req, maxBytes) {
-  const contentLength = requestContentLength(req);
+function requestAdmissionWeight(req, maxBytes, contentLength) {
   if (!Number.isFinite(contentLength) || contentLength < 0) return maxBytes;
   const encoding = req.headers?.["content-encoding"];
   const compressed = encoding && encoding !== "identity" && contentEncodings(encoding).some(value => value !== "identity");
@@ -154,10 +153,12 @@ function createSupplementalAdmission({ maxWeight, maxQueued, waitTimeoutMs, labe
 
 export function createRequestAdmission({
   maxBytes = MAX_INFLIGHT_BODY_BYTES,
+  maxSupplementalBytes = maxBytes,
   maxQueued = MAX_QUEUED_REQUESTS,
   waitTimeoutMs = REQUEST_QUEUE_TIMEOUT_MS,
 } = {}) {
   const byteLimit = parsePositiveInteger(maxBytes, MAX_INFLIGHT_BODY_BYTES);
+  const supplementalByteLimit = parsePositiveInteger(maxSupplementalBytes, byteLimit);
   const queueLimit = parsePositiveInteger(maxQueued, MAX_QUEUED_REQUESTS);
   const timeoutMs = parsePositiveInteger(waitTimeoutMs, REQUEST_QUEUE_TIMEOUT_MS);
   const acquireDecompression = createSupplementalAdmission({
@@ -167,14 +168,14 @@ export function createRequestAdmission({
     label: "Request decompression",
   });
   const acquireDecodedBody = createSupplementalAdmission({
-    maxWeight: byteLimit,
+    maxWeight: supplementalByteLimit,
     maxQueued: queueLimit,
     waitTimeoutMs: timeoutMs,
     label: "Decoded request body",
     blockBehindExclusive: true,
   });
   const acquireResponseHistory = createSupplementalAdmission({
-    maxWeight: byteLimit,
+    maxWeight: supplementalByteLimit,
     maxQueued: queueLimit,
     waitTimeoutMs: timeoutMs,
     label: "Response history",
@@ -182,6 +183,10 @@ export function createRequestAdmission({
   const queue = [];
   let activeBytes = 0;
   let activeRequests = 0;
+  // Only one upload per pool can retain partial data and later ask for more.
+  // A blocked growth request goes before new admissions so it can make progress.
+  let progressiveReader = false;
+  let growth = null;
   const recentWaits = [];
   let longestWait = null;
   function recordWait(entry, outcome, waitMs) {
@@ -207,8 +212,10 @@ export function createRequestAdmission({
     if (index >= 0) queue.splice(index, 1);
   };
 
-  const activate = (weight) => {
+  const activate = (weight, progressive) => {
     activeBytes += weight;
+    if (progressive) progressiveReader = true;
+    let reading = progressive;
     activeRequests += 1;
     counters.activated += 1;
     let released = false;
@@ -216,6 +223,10 @@ export function createRequestAdmission({
     const release = () => {
       if (released) return;
       released = true;
+      if (reading) {
+        growth?.cancel();
+        reading = progressiveReader = false;
+      }
       if (supplementalReleases) {
         for (const releaseSupplemental of supplementalReleases) releaseSupplemental();
         supplementalReleases.clear();
@@ -227,8 +238,24 @@ export function createRequestAdmission({
     release.resize = bytes => {
       if (released || !Number.isSafeInteger(bytes) || bytes < 0) return;
       const next = Math.max(1, Math.min(weight, bytes));
-      if (next === weight) return;
+      if (!reading && next === weight) return;
+      if (reading) reading = progressiveReader = false;
       activeBytes -= weight - next;weight = next;drain();
+    };
+    if (progressive) release.growUpload = (bytes, signal) => {
+      if (!reading || signal?.aborted) throw admissionAbortError(signal);
+      // Preserve the existing exclusive handling for bodies larger than the pool.
+      // The independent per-request raw and decoded limits still apply.
+      const next = Math.min(byteLimit, bytes), extra = next - weight;
+      if (extra <= 0) return;
+      if (activeBytes + extra <= byteLimit) { weight = next;activeBytes += extra;return; }
+      return new Promise((resolve, reject) => {
+        const clear = () => { growth = null;signal?.removeEventListener("abort", cancel); };
+        const cancel = () => { clear();reject(admissionAbortError(signal)); };
+        growth = { extra, cancel, grant() { clear();weight = next;activeBytes += extra;resolve(); } };
+        signal?.addEventListener("abort", cancel, { once: true });
+        if (signal?.aborted) cancel();
+      });
     };
     const reserve = async (gate, weight, options) => {
       const releaseSupplemental = await gate(weight, options);
@@ -265,16 +292,19 @@ export function createRequestAdmission({
   };
 
   const drain = () => {
+    if (growth) {
+      if (activeBytes + growth.extra > byteLimit) return;
+      growth.grant();
+    }
     for (let index = 0; index < queue.length;) {
       const entry = queue[index];
       if (entry.cancelled) {
         queue.splice(index, 1);
         continue;
       }
-      if (activeBytes + entry.weight > byteLimit) {
-        // Unknown-length requests reserve the whole budget. Once one is waiting,
-        // do not let later arrivals keep extending its wait indefinitely.
-        if (entry.weight === byteLimit) break;
+      if (activeBytes + entry.weight > byteLimit || entry.progressive && progressiveReader) {
+        // Preserve queue ordering for requests that need exclusive access.
+        if (!entry.progressive && entry.weight === byteLimit) break;
         index += 1;
         continue;
       }
@@ -284,20 +314,23 @@ export function createRequestAdmission({
       counters.waitMsTotal += waitMs;
       counters.waitMsMax = Math.max(counters.waitMsMax, waitMs);
       recordWait(entry, "admitted", waitMs);
-      entry.resolve(activate(entry.weight));
+      entry.resolve(activate(entry.weight, entry.progressive));
     }
   };
 
-  const acquire = (req, { signal } = {}) => {
+  const acquire = (req, { signal, streamingBody = false } = {}) => {
     counters.total += 1;
     if (signal?.aborted) {
       counters.aborted += 1;
       return Promise.reject(admissionAbortError(signal));
     }
-    const weight = requestAdmissionWeight(req, byteLimit);
-    if (queue.length === 0 && activeBytes + weight <= byteLimit) return Promise.resolve(activate(weight));
-    const blockedByExclusive = queue.some((entry) => !entry.cancelled && entry.weight === byteLimit);
-    if (!blockedByExclusive && activeBytes + weight <= byteLimit) return Promise.resolve(activate(weight));
+    const length = requestContentLength(req), lengthKnown = Number.isFinite(length) && length >= 0;
+    const progressive = streamingBody && !lengthKnown;
+    const weight = progressive ? 1 : requestAdmissionWeight(req, byteLimit, length);
+    const available = !growth && activeBytes + weight <= byteLimit && (!progressive || !progressiveReader);
+    if (queue.length === 0 && available) return Promise.resolve(activate(weight, progressive));
+    const blockedByExclusive = queue.some(entry => !entry.cancelled && !entry.progressive && entry.weight === byteLimit);
+    if (!blockedByExclusive && available) return Promise.resolve(activate(weight, progressive));
     if (queue.length >= queueLimit) {
       counters.rejected += 1;
       return Promise.reject(httpError(`Request queue is full (${queueLimit} waiting)`, 503));
@@ -305,14 +338,13 @@ export function createRequestAdmission({
     counters.queued += 1;
     const start = Date.now(), context = currentRequestContext();
     const id = context?.requestId;
-    const length = requestContentLength(req);
     const evidence = {
       ...(typeof id === "string" && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(id) ? { request_id: id } : {}),
       route: ADMISSION_ROUTES.has(context?.route) ? context.route : "other",
       queued_at: new Date(start).toISOString(),
-      reason: blockedByExclusive ? "exclusive_waiter" : "body_budget",
+      reason: growth ? "upload_growth" : blockedByExclusive ? "exclusive_waiter" : progressive && progressiveReader ? "upload_in_progress" : "body_budget",
       requested_bytes: weight, active_bytes: activeBytes, limit_bytes: byteLimit,
-      length_known: Number.isFinite(length) && length >= 0,
+      length_known: lengthKnown,
     };
     return new Promise((resolve, reject) => {
       let timer;
@@ -322,6 +354,7 @@ export function createRequestAdmission({
         evidence,
         tracker: context?.streamPerformance,
         weight,
+        progressive,
         resolve,
         cleanup: () => {
           if (timer) clearTimeout(timer);
@@ -369,6 +402,7 @@ export function createRequestAdmission({
       ? Number((counters.waitMsTotal / counters.activated).toFixed(1))
       : 0,
     waitMsMax: counters.waitMsMax,
+    uploadWaitingForMemory: Boolean(growth),
     longestWait: longestWait ? { ...longestWait } : null,
     recentWaits: recentWaits.map(row => ({ ...row })),
     decompressionsActive: acquireDecompression.stats().activeRequests,

@@ -74,7 +74,7 @@ export function createNativeImagesHandler({ client, acquireRequest, privacy, env
       if (processing >= 2) { metrics.busy++;throw httpError("Two image requests are already active", 503); }
       active++;processing++;admitted = true;processingSlot = true;
       abort.setTimeout(requestBodyTimeoutMs, "request_body_timeout");
-      release = await acquireRequest(req, { signal: abort.signal });
+      release = await acquireRequest(req, { signal: abort.signal, streamingBody: true });
       const parsed = await readJsonBody(req, { admission: release, signal: abort.signal, maxBodyBytes: BODY_MAX_BYTES, maxDecodedBodyBytes: BODY_MAX_BYTES });
       const available = models();
       const image = parsed?.model === "gpt-image-2" ? imageModelSelection(available, selection()).selected_model : parsed?.model;

@@ -23,6 +23,9 @@ const AUTO_REVIEW_REASONING_KEY = "auto_review_reasoning";
 const TERMINAL_ANIMATION_KEY = "terminal_animation";
 const RESPONSE_HISTORY_MAX_MIB_KEY = "response_history_max_mib";
 const DECODED_BODY_LIMIT_MIB_KEY = "decoded_body_limit_mib";
+const INFLIGHT_BODY_LIMIT_MIB_KEY = "inflight_body_limit_mib";
+export const INFLIGHT_BODY_LIMIT_MIN_MIB = RUNTIME_DEFAULTS.maxInflightBodyBytes / MIB;
+export const INFLIGHT_BODY_LIMIT_MAX_MIB = 128;
 const SERVICE_FLAGS = ["terminal_animation_enabled", "open_webui", "image_enabled", "prediction_enabled", "context_compaction_enabled", "codex_auto_launch"];
 export const DECODED_BODY_LIMIT_MIN_MIB = RUNTIME_DEFAULTS.maxDecodedBodyBytes / MIB;
 export const DECODED_BODY_LIMIT_MAX_MIB = 512;
@@ -106,6 +109,10 @@ export function readUserSettings({ env = process.env, home = os.homedir(), stric
         }
         delete parsed[DECODED_BODY_LIMIT_MIB_KEY];
       }
+    }
+    if (Object.hasOwn(parsed, INFLIGHT_BODY_LIMIT_MIB_KEY) && !validInflightBodyLimit(parsed[INFLIGHT_BODY_LIMIT_MIB_KEY])) {
+      if (strict) throw invalidSettings(filePath, `${INFLIGHT_BODY_LIMIT_MIB_KEY} must be an integer from ${INFLIGHT_BODY_LIMIT_MIN_MIB} to ${INFLIGHT_BODY_LIMIT_MAX_MIB}`);
+      delete parsed[INFLIGHT_BODY_LIMIT_MIB_KEY];
     }
     return parsed;
   } catch (error) {
@@ -213,6 +220,33 @@ function historyLimitPreference(settings, env) {
   const mib = settings[RESPONSE_HISTORY_MAX_MIB_KEY];
   if (Number.isSafeInteger(mib)) return { bytes: mib * MIB, mib, source: "settings" };
   return { bytes: RESPONSE_HISTORY_DEFAULT_MIB * MIB, mib: RESPONSE_HISTORY_DEFAULT_MIB, source: "default" };
+}
+
+const validInflightBodyLimit = mib => Number.isSafeInteger(mib)
+  && mib >= INFLIGHT_BODY_LIMIT_MIN_MIB && mib <= INFLIGHT_BODY_LIMIT_MAX_MIB;
+
+export function inflightBodyLimitPreference({ env = process.env, home = os.homedir() } = {}) {
+  if (String(env.CCDX_MAX_INFLIGHT_BODY_BYTES || "").trim()) {
+    return { bytes: loadRuntimeConfig(env).maxInflightBodyBytes, source: "environment" };
+  }
+  const mib = readUserSettings({ env, home })[INFLIGHT_BODY_LIMIT_MIB_KEY];
+  if (mib !== undefined) return { bytes: mib * MIB, mib, source: "settings" };
+  return { bytes: RUNTIME_DEFAULTS.maxInflightBodyBytes, mib: INFLIGHT_BODY_LIMIT_MIN_MIB, source: "default" };
+}
+
+export function writeInflightBodyLimitMib(mib, options = {}) {
+  if (mib !== null && !validInflightBodyLimit(mib)) {
+    throw new Error(`Shared request-body limit must be an integer from ${INFLIGHT_BODY_LIMIT_MIN_MIB} to ${INFLIGHT_BODY_LIMIT_MAX_MIB} MiB`);
+  }
+  const filePath = userSettingsPath(options);
+  return withFileLockSync(`${filePath}.lock`, () => {
+    const next = readUserSettings({ ...options, strict: true });
+    if (mib === null) {
+      if (!Object.hasOwn(next, INFLIGHT_BODY_LIMIT_MIB_KEY)) return false;
+      delete next[INFLIGHT_BODY_LIMIT_MIB_KEY];
+    } else next[INFLIGHT_BODY_LIMIT_MIB_KEY] = mib;
+    return atomicWriteFileIfChangedSync(filePath, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
+  });
 }
 
 export function decodedBodyLimitPreference({ env = process.env, home = os.homedir() } = {}) {

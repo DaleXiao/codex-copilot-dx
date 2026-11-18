@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { promisify } from "node:util";
-import { Readable } from "node:stream";
+import { PassThrough, Readable } from "node:stream";
 import { EventEmitter } from "node:events";
 import * as zlib from "node:zlib";
 import {
@@ -215,6 +215,16 @@ test("readJsonBody reserves actual decoded bytes until the request admission is 
   assert.equal(acquire.diagnostics().decodedBodyBytes, 0);
 });
 
+test("a larger shared upload budget leaves the supplemental pools unchanged", async () => {
+  const gate = createRequestAdmission({ maxBytes: 64, maxSupplementalBytes: 32 });
+  const slot = await gate({ headers: { "content-length": "55" } });
+  const decoded = await slot.reserveDecodedBody(55), history = await slot.reserveResponseHistory(55);
+  assert.equal(gate.diagnostics().activeBytes, 55);
+  assert.equal(decoded.maxWeight, 32);assert.equal(decoded.weight, 32);
+  assert.equal(history.maxWeight, 32);assert.equal(history.weight, 32);
+  slot();assert.equal(gate.diagnostics().activeBytes, 0);assert.equal(gate.diagnostics().decodedBodyAdmissionBytes, 0);assert.equal(gate.diagnostics().responseHistoryBytes, 0);
+});
+
 test("request admission accounts for response history separately from the small inbound body", async () => {
   const acquire = createRequestAdmission({ maxBytes: 4096, maxQueued: 2, waitTimeoutMs: 1000 });
   const admission = await acquire({ headers: { "content-length": "64" } });
@@ -359,4 +369,91 @@ test("body queue retains the request and its reason when an exclusive waiter del
   assert.equal(queued.reason, "exclusive_waiter");assert.equal(queued.requested_bytes, 2);assert.equal(queued.active_bytes, 4);
   assert.equal(queued.outcome, "admitted");assert.deepEqual(contextEvidence, queued);
   assert.equal(longestWait.wait_ms, waitMsMax);assert.doesNotMatch(JSON.stringify(recentWaits), /private fixture/);
+});
+
+test("a chunked upload can start and finish while a small previous request still holds memory", async () => {
+  const gate = createRequestAdmission({ maxBytes: 32 });
+  const hold = await gate({ headers: { "content-length": "4" } });
+  const req = jsonRequest(Buffer.from('{"ok":true}'), undefined, { "transfer-encoding": "chunked" });
+  const pending = gate(req, { streamingBody: true });
+  try {
+    assert.equal(gate.stats().queued, 0, "unknown length must not wait for an empty pool");
+    const lease = await pending;
+    try {
+      assert.equal(gate.stats().activeBytes, 5);
+      assert.deepEqual(await readJsonBody(req, { admission: lease }), { ok: true });
+      assert.equal(gate.stats().activeBytes, 15, "keep only the actual body reservation after upload");
+    } finally { lease(); }
+  } finally { hold();(await pending)(); }
+  assert.equal(gate.stats().activeBytes, 0);
+});
+
+test("an incomplete upload grows first when memory returns and the next unknown upload waits to start", async () => {
+  const gate = createRequestAdmission({ maxBytes: 16 });
+  const previous = await gate({ headers: { "content-length": "12" } });
+  const req = new PassThrough();req.headers = { "transfer-encoding": "chunked" };
+  const lease = await gate(req, { streamingBody: true });
+  const read = readJsonBody(req, { admission: lease });
+  const next = gate({ headers: {} }, { streamingBody: true });
+  req.write('{"a"');
+  await new Promise(setImmediate);
+  assert.equal(gate.stats().activeBytes, 16, "charge bytes already read rather than the whole request cap");
+  req.end(':true}');
+  await new Promise(setImmediate);
+  assert.equal(gate.diagnostics().uploadWaitingForMemory, true);
+  assert.equal(req.isPaused(), true);
+  const small = gate({ headers: { "content-length": "7" } });
+  assert.equal(gate.stats().queued, 2);
+  previous();
+  assert.deepEqual(await read, { a: true });
+  const nextLease = await next;
+  assert.equal(gate.stats().activeBytes, 11);
+  assert.equal(gate.stats().queued, 1, "the large admission cannot take a growing upload's next allocation");
+  nextLease();lease();
+  const smallLease = await small;
+  smallLease();
+  assert.equal(gate.stats().activeBytes, 0);
+  assert.equal(gate.diagnostics().uploadWaitingForMemory, false);
+});
+
+test("cancelling an upload blocked on growth releases the partial reservation and admits the next request", async () => {
+  const gate = createRequestAdmission({ maxBytes: 16 });
+  const previous = await gate({ headers: { "content-length": "8" } });
+  const req = new PassThrough();req.headers = { "transfer-encoding": "chunked" };
+  const controller = new AbortController();
+  const lease = await gate(req, { streamingBody: true, signal: controller.signal });
+  const reading = readJsonBody(req, { admission: lease, signal: controller.signal }).finally(() => lease());
+  req.write('{"a":"');req.write('longer text');
+  await new Promise(setImmediate);
+  assert.equal(gate.diagnostics().uploadWaitingForMemory, true);
+  const next = gate({ headers: {} }, { streamingBody: true });
+  controller.abort(new Error("cancel upload"));
+  await assert.rejects(reading, /cancel upload/);
+  const nextLease = await next;
+  assert.equal(gate.stats().activeBytes, 9);assert.equal(gate.diagnostics().uploadWaitingForMemory, false);
+  nextLease();previous();req.destroy();assert.equal(gate.stats().activeBytes, 0);
+});
+
+test("unknown-length JSON and gzip keep the per-request caps and the independent decoded pool", async () => {
+  const gate = createRequestAdmission({ maxBytes: 32, maxSupplementalBytes: 16 });
+  const raw = Buffer.from(JSON.stringify({ value: "x".repeat(130) }));
+  const gzip = zlib.gzipSync(raw);
+  for (const [body, encoding, maxBodyBytes, maxDecodedBodyBytes, message] of [
+    [raw, undefined, 64, 256, /Raw request body/],
+    [gzip, "gzip", 128, 64, /Decoded request body/],
+  ]) {
+    const req = jsonRequest(body, encoding, { "transfer-encoding": "chunked" });
+    const lease = await gate(req, { streamingBody: true });
+    try { await assert.rejects(readJsonBody(req, { admission: lease, maxBodyBytes, maxDecodedBodyBytes }), { statusCode: 413, message }); }
+    finally { lease(); }
+    assert.equal(gate.stats().activeBytes, 0);assert.equal(gate.diagnostics().decodedBodiesActive, 0);
+  }
+  const req = jsonRequest(gzip, "gzip", { "transfer-encoding": "chunked" });
+  const lease = await gate(req, { streamingBody: true });
+  try {
+    assert.deepEqual(await readJsonBody(req, { admission: lease, maxBodyBytes: 128, maxDecodedBodyBytes: 256 }), JSON.parse(raw));
+    const diag = gate.diagnostics();assert.equal(diag.activeBytes, Math.min(gzip.length, 32));assert.equal(diag.decodedBodyAdmissionBytes, 16);
+    assert.equal(diag.decodedBodyBytes, raw.length);
+  } finally { lease(); }
+  assert.equal(gate.stats().activeBytes, 0);assert.equal(gate.diagnostics().decodedBodiesActive, 0);
 });

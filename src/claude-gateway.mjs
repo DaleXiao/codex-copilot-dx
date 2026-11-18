@@ -247,7 +247,7 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
     context.streamPerformance = tracker;context.route = countTokens ? "messages_count_tokens" : "messages";
     await runWithRequestContext(context, async () => {
       try {
-        release = await acquireRequest(req, { signal: abort.signal });
+        release = await acquireRequest(req, { signal: abort.signal, streamingBody: true });
         abort.setTimeout(config.requestBodyTimeoutMs, "request_body_timeout");
         let body = await readJsonBody(req, { admission: release, signal: abort.signal, maxBodyBytes: config.maxBodyBytes, maxDecodedBodyBytes: decodedLimit });
         abort.setTimeout(config.upstreamTimeoutMs, "messages_prepare_timeout");

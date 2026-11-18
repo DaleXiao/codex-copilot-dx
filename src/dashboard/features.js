@@ -1,6 +1,6 @@
 (() => {
   function create({ element: el, change, localize }) {
-    let saved = null, limitDirty = false, imageSignature = "", imageApp = { status: "unknown" }, appInspectionStarted = false;
+    let saved = null, limitDirty = false, inflightDirty = false, imageSignature = "", imageApp = { status: "unknown" }, appInspectionStarted = false;
     function renderImageApp() {
       const connected = imageApp.status === "running" && imageApp.host === "connected";
       const restart = imageApp.status === "running" && (imageApp.needs_restart === true || saved?.features?.prediction?.display_pending === true);
@@ -67,6 +67,22 @@
     };
     el("decoded-limit-save").addEventListener("click", () => void saveLimit(Number(el("decoded-limit").value)));
     el("decoded-limit-default").addEventListener("click", () => void saveLimit(null));
+    const inflightField = el("inflight-body-limit");
+    inflightField.addEventListener("input", () => { inflightDirty = true; });
+    const saveInflight = async useDefault => {
+      if (inflightField.disabled) return;
+      if (!useDefault && !inflightField.checkValidity()) {
+        localize(el("inflight-body-limit-note"), "ccdx_inflight_limit_invalid");
+        return;
+      }
+      const data = await change({ action: "inflight_body_limit", mib: useDefault ? null : inflightField.valueAsNumber }, el(useDefault ? "inflight-body-limit-default" : "inflight-body-limit-save"));
+      if (data?.inflight_body) { inflightDirty = false;inflightField.value = data.inflight_body.bytes / 1048576;render(data); }
+    };
+    el("inflight-body-limit-save").addEventListener("click", () => void saveInflight(false));
+    el("inflight-body-limit-default").addEventListener("click", () => void saveInflight(true));
+    inflightField.addEventListener("keydown", event => {
+      if (event.key === "Enter") { event.preventDefault();void saveInflight(false); }
+    });
     el("install-update").addEventListener("click", () => {
       if (window.confirm(globalThis.ccdxLanguage.format("update_install_confirm"))) void change({ action: "update", confirmed: true }, el("install-update"));
     });
@@ -111,6 +127,10 @@
       if (!limitDirty && document.activeElement !== el("decoded-limit")) el("decoded-limit").value = limit?.bytes / 1048576 || 128;
       el("decoded-limit").disabled = el("decoded-limit-save").disabled = el("decoded-limit-default").disabled = !limit || limit.source === "environment";
       localize(el("decoded-limit-note"), limit?.source === "environment" ? "controlled_by_environment" : "next_ccdx_start");
+      const inflight = data.inflight_body;
+      if (inflight && (!inflightDirty && document.activeElement !== inflightField || inflight.source === "environment")) inflightField.value = inflight.bytes / 1048576;
+      inflightField.disabled = el("inflight-body-limit-save").disabled = el("inflight-body-limit-default").disabled = !inflight || inflight.source === "environment";
+      localize(el("inflight-body-limit-note"), !inflight ? "feature_unavailable" : inflight.source === "environment" ? "controlled_by_environment" : "inflight_body_limit_next_start");
       el("install-update").disabled = !data.manual_update?.available;
       const update = data.nightly_update;
       if (notes) localize(el("manual-update-note"), !data.manual_update?.available ? "update_external_launch" : update?.manual ? `manual_update_${update.phase}` : "update_idle_switch");

@@ -287,7 +287,7 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
         changes.changed();
       };
 
-      return {
+      const tracker = {
         beginStage(stage) {
           const histogram = route.preparation[stage];
           if (!histogram || finished) return null;
@@ -313,13 +313,6 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
           phase = "upstream_connection";
           changes.changed();
           if (streaming && upstreamStartedAt === null) upstreamStartedAt = time;
-        },
-        observeUpstreamBodyWrite() {
-          const attempt = attemptTimings.at(-1);
-          if (!attempt || finished) return;
-          return () => {
-            if (!finished && attempt.body_sent_ms === undefined) attempt.body_sent_ms = elapsed(now());
-          };
         },
         upstreamHeaders(statusCode) {
           if (finished) return;
@@ -480,6 +473,14 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
           else route.success_with_output += 1;
         },
       };
+      if (routeName === "antigravity") tracker.observeUpstreamBodyWrite = () => {
+        const attempt = attemptTimings.at(-1);
+        if (!attempt || finished) return;
+        return () => {
+          if (!finished && attempt.body_sent_ms === undefined) attempt.body_sent_ms = elapsed(now());
+        };
+      };
+      return tracker;
     },
     contextSnapshot: () => contexts.snapshot(),
     activitySnapshot() {

@@ -56,7 +56,7 @@ test("request-context rows are lazy, bounded, text-only and distinguish missing 
   const document = { getElementById(id) { if (!nodes.has(id)) nodes.set(id, createNode()); return nodes.get(id); }, createElement: createNode };
   const renderContext = runInNewContext(`${renderScript}\nrenderContext;`, { document, ccdxLanguage: dashboardLanguage });
   renderContext({ recent_requests: [
-    { model: "gpt-6.1-sol", outcome: "completed", context: { payload_bytes: 1048576, images: 0, input_tokens: 150, context_window_tokens: 1000, client_tool_errors_received: 2 } },
+    { model: "gpt-6.1-sol", outcome: "completed", context: { payload_bytes: 1048576, images: 0, input_tokens: 150, context_window_tokens: 1000, client_tool_errors_received: 2, source_queue_ms: 20, body_queue: { wait_ms: 942, reason: "exclusive_waiter", requested_bytes: 1048576, active_bytes: 4194304, limit_bytes: 33554432 } } },
     { model: "<script>not-html</script>", outcome: "failed", context: { payload_bytes: null, images: null, input_tokens: null, context_window_tokens: 1000 } },
   ], by_route: { responses_compact: { terminal_outcomes: { totals: { completed: 2, incomplete: 0, failed: 1 } } } } });
   assert.equal(nodes.get("context-body").children.length, 0);
@@ -74,6 +74,9 @@ test("request-context rows are lazy, bounded, text-only and distinguish missing 
   assert.equal(rows[1].children[3].textContent, "Completed");
   assert.equal(rows[0].children[0].textContent, "—", "Missing timestamp is not guessed");
   assert.equal(detail(rows[1], "wire_mib"), "1.00 MiB", "Payload bytes remain available");
+  assert.equal(detail(rows[0], "body_queue_wait"), undefined);
+  assert.match(detail(rows[1], "body_queue_wait"), /942 ms · Exclusive request ahead/);
+  assert.equal(detail(rows[1], "source_queue_wait"), "20 ms");
   assert.equal(detail(rows[1], "client_tool_errors_received"), "2", "Explicit tool errors remain separate from model completion");
   assert.match(nodes.get("context-note").textContent, /2 completed · 0 incomplete · 1 failed/);
   renderContext({ recent_requests: Array.from({ length: 25 }, () => ({ context: {} })) });

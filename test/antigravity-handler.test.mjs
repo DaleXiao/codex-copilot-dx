@@ -352,6 +352,10 @@ test("Google metadata observation stays bounded and cannot fabricate usage from 
   observer.push(Buffer.from('data: '+JSON.stringify({text:'"usageMetadata": {"promptTokenCount":999}',padding:"x".repeat(200)})+'\r\n\r\n'));
   observer.push(Buffer.from('data: {"response":{\r\ndata: "usageMetadata":{"promptTokenCount":0}}}\r\n\r\n'));
   assert.equal(observer.finish().unavailable,true);assert.equal(seen.length,1);assert.equal(seen[0].response.usageMetadata.promptTokenCount,0);
+  const trailing=[],raw=createGoogleResponseObserver({streaming:true,maxBytes:70,onEvent:event=>trailing.push(event)});
+  raw.push(Buffer.from('data: {"candidates":[{"finishReason":"STOP"}]}\n\n'));
+  for(const line of ['{\n','"error":{\n','"message":"'+'a'.repeat(50)+'",\n','"code":503\n','}\n','}\n'])raw.push(Buffer.from(line));
+  assert.equal(raw.finish().unavailable,true);assert.equal(trailing.length,1);
   const json=createGoogleResponseObserver({streaming:false,maxBytes:10,onEvent:()=>assert.fail("oversized metadata must be skipped")});json.push(Buffer.from('{"text":"a very large response"}'));assert.equal(json.finish().unavailable,true);
 });
 
@@ -383,4 +387,16 @@ test("a native Google stream failure after a finish frame remains failed with re
   await runWithRequestContext({requestId:"cut",streamPerformance:tracker},()=>invoke(f.handler,body("gemini-native")).done);tracker.finish({statusCode:200});
   assert.equal(f.records.length,1);assert.equal(f.records[0].outcome,"failed");assert.equal(f.records[0].partial,true);
   assert.equal(metrics.snapshot().recent_requests[0].outcome,"failed");
+});
+
+
+test("a bare Google JSON error after a finish frame preserves bytes but fails the request", async () => {
+  const metrics=createStreamPerformanceMetrics({routeNames:["antigravity"]}),tracker=metrics.begin("antigravity",{requestId:"bare-tail",application:"gemini_app"});
+  const frames=['data: {"response":{"usageMetadata":{"promptTokenCount":4,"candidatesTokenCount":1},"candidates":[{"finishReason":"STOP"}]}}\n\n',
+    '{\r\n  "er', 'ror": {"code": 503, "message": "fixture refusal"}\r\n}'];
+  const f=fixture({fetchGoogle:async()=>new Response(new ReadableStream({start(controller){for(const chunk of frames)controller.enqueue(Buffer.from(chunk));controller.close()}}),{headers:{"content-type":"text/event-stream"}})});
+  const result=await runWithRequestContext({requestId:"bare-tail",streamPerformance:tracker},()=>invoke(f.handler,body("gemini-native")).done);tracker.finish({statusCode:result.status});
+  assert.equal(result.status,200);assert.equal(result.text,frames.join(""));assert.equal(f.records.length,1);
+  assert.equal(f.records[0].outcome,"failed");assert.equal(f.records[0].partial,true);
+  const row=metrics.snapshot().recent_requests[0];assert.equal(row.outcome,"failed");assert.equal(row.origin,"upstream_event");
 });

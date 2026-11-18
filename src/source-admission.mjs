@@ -142,14 +142,18 @@ export function createSourceAdmission({ now = Date.now, initialLimit = MAX_LIMIT
     streamFailure(error, headers) { const value = sourceLimitFeedback(429, headers, { error }, now());if (value?.kind !== "unknown") this.limit(value); }
     observe(status, headers, body) {
       const group = this.group, entry = this;
-      this.responseAt ??= now();
-      const declared = headers?.get?.("x-ratelimit-concurrency-limit");
-      if (!this.headersObserved && /^\d{1,3}$/.test(declared || "") && validLimit(Number(declared))) {
-        group.advertised = Number(declared);group.advertisedUntil = now() + stableMs;group.limit = Math.min(group.limit, group.advertised);
+      if (!this.headersObserved) {
+        this.headersObserved = true;
+        const declared = headers?.get?.("x-ratelimit-concurrency-limit");
+        if (declared && /^\d{1,3}$/.test(declared) && validLimit(Number(declared))) {
+          group.advertised = Number(declared);group.advertisedUntil = now() + stableMs;group.limit = Math.min(group.limit, group.advertised);
+        }
       }
-      this.headersObserved = true;this.observed ||= status === 429;
+      if (status !== 429) return;
+      this.responseAt ??= now();
+      this.observed = true;
       const value = sourceLimitFeedback(status, headers, body, this.responseAt);
-      if (value) value.delay = Math.max(0, this.responseAt + value.delay - now());
+      value.delay = Math.max(0, this.responseAt + value.delay - now());
       feedback(group, entry, value);
     }
     release(success = false) {

@@ -197,8 +197,8 @@ export async function readJsonBody(req, {
   parse = parseRequestJson,
 } = {}) {
   if (signal?.aborted) throw admissionAbortError(signal);
-  const encodings = contentEncodings(req.headers?.["content-encoding"]);
-  if (encodings.every((encoding) => encoding === "identity")) {
+  const encoding = req.headers?.["content-encoding"];
+  if (!encoding || encoding === "identity" || contentEncodings(encoding).every(value => value === "identity")) {
     return parse(await readIdentityText(req, maxBodyBytes, maxDecodedBodyBytes, signal, bytes => admission?.resize?.(bytes)));
   }
   const buffer = await readRequestBuffer(req, maxBodyBytes, signal);

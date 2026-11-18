@@ -25,6 +25,7 @@ export function googleUsageEvent(value) {
 export function createGoogleResponseObserver({ streaming, onEvent, maxBytes = MAX_BYTES }) {
   const decoder = new TextDecoder("utf-8", { fatal: true });
   let parts = [], bytes = 0, data = [], frameBytes = 0, skipLF = false, skipFrame = false, unavailable = false;
+  let rawTail = null, rawBytes = 0;
   const parse = text => {
     if (!text || text === "[DONE]") return;
     try { const value = JSON.parse(text);for (const item of Array.isArray(value) ? value : [value]) onEvent(item); }
@@ -32,7 +33,12 @@ export function createGoogleResponseObserver({ streaming, onEvent, maxBytes = MA
   };
   const line = () => {
     const text = parts.join("");parts = [];bytes = 0;
-    if (!text) {
+    if (rawTail !== null || !skipFrame && data.length === 0 && text.trimStart().startsWith("{")) {
+      rawTail ??= "";
+      rawBytes += Buffer.byteLength(text) + 1;
+      if (rawBytes > maxBytes) { rawTail = "";unavailable = true; }
+      else rawTail += text + "\n";
+    } else if (!text) {
       if (!skipFrame) parse(data.join("\n"));
       data = [];frameBytes = 0;skipFrame = false;
     } else if (!skipFrame && text.startsWith("data:")) {
@@ -76,10 +82,16 @@ export function createGoogleResponseObserver({ streaming, onEvent, maxBytes = MA
     finish() {
       try {
         consume(decoder.decode());
-        if (streaming) { if (parts.length) line();if (!skipFrame && data.length) parse(data.join("\n")); }
-        else if (!unavailable) parse(parts.join(""));
+        if (streaming) {
+          if (parts.length) line();
+          if (!skipFrame && data.length) parse(data.join("\n"));
+          if (!skipFrame && rawTail && rawBytes <= maxBytes) {
+            const value = JSON.parse(rawTail);
+            if (value?.error && typeof value.error === "object" && !Array.isArray(value.error)) onEvent(value);
+          }
+        } else if (!unavailable) parse(parts.join(""));
       } catch { unavailable = true; }
-      parts = [];data = [];
+      parts = [];data = [];rawTail = null;
       return { unavailable };
     },
   };

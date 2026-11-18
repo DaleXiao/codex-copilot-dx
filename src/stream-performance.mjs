@@ -357,6 +357,7 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
         attemptTimings() { return attemptTimings.map(attempt => ({ ...attempt })); },
         observeContext(values) {
           if (finished || !values || typeof values !== "object") return;
+          if (values.body_queue) context.body_queue = values.body_queue;
           if (Number.isSafeInteger(values.source_queue_ms) && values.source_queue_ms >= 0) context.source_queue_ms = values.source_queue_ms;
           if (values.delivery_cancelled === 1) context.delivery_cancelled = 1;
           if (Number.isSafeInteger(values.cached_input_tokens) && values.cached_input_tokens >= 0) cachedInput = values.cached_input_tokens;

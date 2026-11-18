@@ -162,6 +162,11 @@ export function formatAdapterStatus({ baseUrl, data }, { commandName = "ccdx", c
     status("info", `Conversation buffer: ${mebibytes(history.bytes)} / ${mebibytes(limits.response_history_max_bytes)}, ${count(history.entries)} entries, ${count(history.evicted)} evicted ID markers`),
     status("info", `Image cache: ${count(images.cache_entries)} entries, ${cacheHitRate(images)} hits, ${mebibytes(images.cache_bytes)} / ${mebibytes(images.cache_max_bytes)}`),
   ];
+  const longest = admission.longestWait;
+  if (longest) {
+    const reason = longest.reason === "exclusive_waiter" ? "exclusive request ahead" : "request-body memory budget";
+    lines.push(status("info", `Longest local queue: ${latency(longest.wait_ms)} · ${longest.route} · ${reason} · needs ${mebibytes(longest.requested_bytes)}, used ${mebibytes(longest.active_bytes)}/${mebibytes(longest.limit_bytes)}${longest.request_id ? ` · ${longest.request_id}` : ""}`));
+  }
   const sourceRoutes = { ...data.stream_performance?.by_route, ...(data.providers?.claude || data.providers?.m365?.claude)?.requests?.performance?.by_route };
   for (const [route, metrics] of Object.entries(sourceRoutes)) for (const [source, stats] of Object.entries(metrics.by_provider || {})) {
     const totals = stats.terminal_outcomes.totals;

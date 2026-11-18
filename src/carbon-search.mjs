@@ -10,17 +10,21 @@ export function createCarbonSearchHandler({ acquireRequest, privacy, resolveProv
     try {
       release = await acquireRequest(req, { signal: abort.signal });
       abort.setTimeout(requestBodyTimeoutMs, "request_body_timeout");
-      const body = await readJsonBody(req, { admission: release, signal: abort.signal });
-      if (!body || typeof body !== "object" || Array.isArray(body)) throw httpError("Invalid search request", 400);
-      const provider = resolveProvider?.(body, req);
-      if (body.model !== "gemini-4-carbon" || provider && provider.id !== "github") {
-        throw httpError("This search route is only available to GitHub Carbon", 400);
+      let upstream;
+      {
+        const body = await readJsonBody(req, { admission: release, signal: abort.signal });
+        if (!body || typeof body !== "object" || Array.isArray(body)) throw httpError("Invalid search request", 400);
+        const provider = resolveProvider?.(body, req);
+        if (body.model !== "gemini-4-carbon" || provider && provider.id !== "github") {
+          throw httpError("This search route is only available to GitHub Carbon", 400);
+        }
+        if (!searchFn) throw httpError("Carbon search is unavailable", 503);
+        const search = privacy?.wrap(searchFn, { res, protocol: "search", client: "codex" }) || searchFn;
+        abort.setTimeout(upstreamTimeoutMs, "upstream_timeout");
+        const { input, ...searchBody } = body;
+        upstream = await search(searchBody, { signal: abort.signal, providerProfile: provider?.profileId?.() });
       }
-      if (!searchFn) throw httpError("Carbon search is unavailable", 503);
-      const search = privacy?.wrap(searchFn, { res, protocol: "search", client: "codex" }) || searchFn;
-      abort.setTimeout(upstreamTimeoutMs, "upstream_timeout");
-      const { input, ...searchBody } = body;
-      const upstream = await search(searchBody, { signal: abort.signal, providerProfile: provider?.profileId?.() });
+      release();release = () => {};
       const text = await readBoundedResponseText(upstream, { maxBytes: upstream.ok ? MAX_UPSTREAM_CHAT_SUCCESS_BODY_BYTES : MAX_UPSTREAM_ERROR_BODY_BYTES,
         signal: abort.signal, label: "Carbon search" });
       if (!upstream.ok) { sendUpstreamError(res, upstream, text);return; }

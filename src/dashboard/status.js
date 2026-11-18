@@ -402,13 +402,20 @@
         else localize(summary, "request_metadata");details.append(summary, fields);
         for (const [key, value] of [["request_id", request.request_id || "—"], ["http_status", number(request.http_status)], ["attempts", number(request.upstream_attempts)], ["model_outcome", globalThis.ccdxLanguage?.format(outcome.toLowerCase()) || outcome],
           ["time", Number.isFinite(at) ? time(at, { date: true }) : "—"],
+          ...(Number.isSafeInteger(context.body_queue?.wait_ms) ? [["body_queue_wait", phrase("body_queue_detail", {
+            ms: number(context.body_queue.wait_ms), reason: phrase(context.body_queue.reason === "exclusive_waiter" ? "body_queue_exclusive" : "body_queue_budget"),
+            reserved: mib(context.body_queue.requested_bytes), occupied: mib(context.body_queue.active_bytes), limit: mib(context.body_queue.limit_bytes),
+          })]] : []),
+          ...(Number.isSafeInteger(context.source_queue_ms) ? [["source_queue_wait", `${number(context.source_queue_ms)} ms`]] : []),
           ["wire_mib", finite(context.payload_bytes) ? `${(Number(context.payload_bytes) / 1048576).toFixed(2)} MiB` : "—"],
           ["images", number(context.images)], ["model_window", number(context.context_window_tokens)], ["input_window", ratio],
           ["output_requested", number(context.max_output_tokens_requested)], ["output_sent", number(context.max_output_tokens_sent)], ["output_used", number(context.output_tokens)], ["stop_reason", request.stop_reason || "—"],
           ...(context.requested_model && context.requested_model !== request.model ? [["requested_model", context.requested_model]] : []),
           ...(["reported", "partial", "missing", "unavailable"].includes(context.usage_state) ? [["request_usage_state", globalThis.ccdxLanguage?.format("request_usage_" + context.usage_state) || context.usage_state]] : []),
           ...(context.client_tool_errors_received > 0 ? [["client_tool_errors_received", number(context.client_tool_errors_received)]] : [])]) {
-          const term = document.createElement("dt"), detail = document.createElement("dd");localize(term, key);detail.textContent = value;fields.append(term, detail);
+          const term = document.createElement("dt"), detail = document.createElement("dd");localize(term, key);
+          if (value?.key) localize(detail, value.key, value.values);else detail.textContent = value;
+          fields.append(term, detail);
         }
         row.children[5].append(details);body.append(row);
       }

@@ -128,22 +128,27 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
           const response=value?.response||value,event=googleUsageEvent(value);if(event)captureUsage(event);
           const candidates=response?.candidates||[];
           if(candidates.some(candidate=>candidate.content?.parts?.some(part=>part.functionCall||!part.thought&&typeof part.text==="string"&&part.text)))markFirstOutput("delta");
-          if(response?.error){outcome="failed";sourceResponseFailed(upstream)}
+          if(response?.error){outcome="failed";markResponseErrorOrigin("upstream_event");sourceResponseFailed(upstream)}
           else if(outcome!=="failed"&&candidates.some(candidate=>candidate.finishReason)){
             sourceResponseAccepted(upstream);
             outcome=candidates.every(candidate=>candidate.finishReason==="STOP")?"completed":"incomplete";
           }
         }}):null;
         res.writeHead(upstream.status,safeUpstreamResponseHeaders(upstream.headers));
+        let observedEof=false;
+        const finishObservation=()=>{if(observer?.finish().unavailable&&!usageEvent)markRequestObservation({usage_state:"unavailable"})};
         try{
           if(upstream.body){const reader=sourceResponseReader(upstream);try{while(true){
-            let next;try{next=await reader.read()}catch(error){failSourceRead(reader);throw error}observeSourceRead(reader,next);if(next.done)break;
+            let next;try{next=await reader.read()}catch(error){failSourceRead(reader);throw error}
+            if(next.done){observedEof=true;finishObservation();observeSourceRead(reader,next);break}
+            observeSourceRead(reader,next);
             abort.setTimeout(streamIdleTimeoutMs,"stream_idle_timeout");observer?.push(next.value);
             if(!await writeOrDrain(res,next.value,{signal:abort.signal}))throw httpError("Antigravity client disconnected",499);
           }}finally{await cancelSourceReader(reader).catch(()=>{});releaseSourceReader(reader)}}
-        }finally{if(observer?.finish().unavailable&&!usageEvent)markRequestObservation({usage_state:"unavailable"})}
+        }finally{if(!observedEof)finishObservation()}
         if(generation&&!upstream.ok)outcome="failed";
-        if(outcome)markResponseTerminal(outcome,upstream.ok?undefined:{origin:"upstream_http"});
+        if(outcome==="failed")counts.failed++;
+        if(outcome)markResponseTerminal(outcome,outcome==="failed"?{origin:upstream.ok?"upstream_event":"upstream_http"}:undefined);
         res.end();
       };
       if(!generation){

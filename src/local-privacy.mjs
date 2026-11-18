@@ -17,9 +17,19 @@ export function createLocalPrivacy(options = {}) {
   const detection = createPrivacyDetection(model, options);
   let generation = 0, pending = null, disposed = false, lastResponse = null;
   let keyLoaded = false, actionError = null, lastCheck = null;
+  const settingsOptions = { ...options, strict: true }, absentPolicy = { enabled: false, personal: false };
+  let cachedPolicy;
   const settings = () => {
-    const saved = readUserSettings({ ...options, strict: true });
-    return { enabled: saved.privacy_enabled === true, personal: saved.privacy_personal === true };
+    const file = userSettingsPath(settingsOptions), stat = fs.statSync(file, { bigint: true, throwIfNoEntry: false });
+    if (!stat) { cachedPolicy = undefined;return absentPolicy; }
+    const previous = cachedPolicy?.stat;
+    // Check on every decision. No TTL: in-place edits, replacements and
+    // permission changes invalidate the last strictly validated policy.
+    if (previous && cachedPolicy.file === file && stat.ino !== 0n && previous.ino === stat.ino && previous.dev === stat.dev
+      && previous.mtimeNs === stat.mtimeNs && previous.ctimeNs === stat.ctimeNs && previous.size === stat.size && previous.mode === stat.mode) return cachedPolicy.policy;
+    const saved = readUserSettings(settingsOptions);
+    const policy = { enabled: saved.privacy_enabled === true, personal: saved.privacy_personal === true };
+    cachedPolicy = { file, stat, policy };return policy;
   };
   const revision = saved => createHash("sha256").update(JSON.stringify(saved)).digest("hex");
   const snapshot = () => { const saved = settings(), detector = model.snapshot();return { ...detector, ...saved,

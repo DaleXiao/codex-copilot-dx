@@ -12,6 +12,7 @@ import {
   readJsonBody,
   writeOrDrain,
 } from "../src/http-transport.mjs";
+import { runWithRequestContext } from "../src/request-context.mjs";
 import { createRequestAdmission } from "../src/request-admission.mjs";
 
 const gzipAsync = promisify(zlib.gzip);
@@ -337,4 +338,25 @@ test("writeOrDrain: waits for drain when response backpressure is active", async
 
   assert.equal(await waiting, true);
   assert.equal(writes, 1);
+});
+
+
+test("body queue retains the request and its reason when an exclusive waiter delays a small upload", async () => {
+  const acquire = createRequestAdmission({ maxBytes: 16 });
+  const request = bytes => ({ headers: bytes === undefined ? { authorization: "private fixture" } : { "content-length": String(bytes) } });
+  const active = await acquire(request(4));
+  const exclusive = acquire(request());
+  const requestId = "50000000-0000-4000-8000-000000000022";
+  let contextEvidence;
+  const next = runWithRequestContext({ requestId, route: "antigravity", streamPerformance: { observeContext(value) { contextEvidence = value.body_queue; } } }, () => acquire(request(2)));
+  assert.equal(acquire.diagnostics().recentWaits.length, 0, "immediate admissions leave no queued sample");
+  active();const releaseExclusive = await exclusive;
+  assert.equal(acquire.stats().queued, 1, "the older exclusive request keeps its turn");
+  releaseExclusive();const releaseNext = await next;releaseNext();
+  const { recentWaits, longestWait, waitMsMax } = acquire.diagnostics();
+  assert.equal(recentWaits[0].reason, "body_budget");assert.equal(recentWaits[0].length_known, false);
+  const queued = recentWaits[1];assert.equal(queued.request_id, requestId);assert.equal(queued.route, "antigravity");
+  assert.equal(queued.reason, "exclusive_waiter");assert.equal(queued.requested_bytes, 2);assert.equal(queued.active_bytes, 4);
+  assert.equal(queued.outcome, "admitted");assert.deepEqual(contextEvidence, queued);
+  assert.equal(longestWait.wait_ms, waitMsMax);assert.doesNotMatch(JSON.stringify(recentWaits), /private fixture/);
 });

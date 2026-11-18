@@ -1,11 +1,14 @@
 import { loadRuntimeConfig, parsePositiveInteger } from "./runtime-config.mjs";
 import { httpError } from "./http-errors.mjs";
+import { currentRequestContext } from "./request-context.mjs";
 
 const HTTP_RUNTIME_CONFIG = loadRuntimeConfig();
 const MAX_INFLIGHT_BODY_BYTES = HTTP_RUNTIME_CONFIG.maxInflightBodyBytes;
 const MAX_QUEUED_REQUESTS = HTTP_RUNTIME_CONFIG.maxQueuedRequests;
 const REQUEST_QUEUE_TIMEOUT_MS = HTTP_RUNTIME_CONFIG.requestQueueTimeoutMs;
 const COMPRESSED_BODY_WEIGHT_MULTIPLIER = 4;
+const ADMISSION_ROUTES = new Set(["responses", "responses_compact", "messages", "messages_count_tokens", "search", "images", "antigravity", "antigravity_control"]);
+const RECENT_WAITS = 16;
 
 export function contentEncodings(contentEncoding) {
   return String(contentEncoding || "identity")
@@ -19,10 +22,10 @@ export function requestContentLength(req) {
 }
 
 function requestAdmissionWeight(req, maxBytes) {
-  const encodings = contentEncodings(req.headers?.["content-encoding"]);
   const contentLength = requestContentLength(req);
   if (!Number.isFinite(contentLength) || contentLength < 0) return maxBytes;
-  const compressed = encodings.some((encoding) => encoding !== "identity");
+  const encoding = req.headers?.["content-encoding"];
+  const compressed = encoding && encoding !== "identity" && contentEncodings(encoding).some(value => value !== "identity");
   const weightedLength = compressed ? contentLength * COMPRESSED_BODY_WEIGHT_MULTIPLIER : contentLength;
   return Math.max(1, Math.min(weightedLength, maxBytes));
 }
@@ -179,6 +182,15 @@ export function createRequestAdmission({
   const queue = [];
   let activeBytes = 0;
   let activeRequests = 0;
+  const recentWaits = [];
+  let longestWait = null;
+  function recordWait(entry, outcome, waitMs) {
+    const record = Object.freeze({ ...entry.evidence, outcome, wait_ms: waitMs });
+    if (outcome === "admitted" && (!longestWait || waitMs > longestWait.wait_ms)) longestWait = record;
+    if (recentWaits.length === RECENT_WAITS) recentWaits.shift();
+    recentWaits.push(record);
+    entry.tracker?.observeContext?.({ body_queue: record });
+  }
   const counters = {
     total: 0,
     activated: 0,
@@ -195,30 +207,28 @@ export function createRequestAdmission({
     if (index >= 0) queue.splice(index, 1);
   };
 
-  const activate = (entry) => {
-    entry.cleanup();
-    activeBytes += entry.weight;
+  const activate = (weight) => {
+    activeBytes += weight;
     activeRequests += 1;
     counters.activated += 1;
-    const waitMs = Math.max(0, Date.now() - entry.startedAt);
-    counters.waitMsTotal += waitMs;
-    counters.waitMsMax = Math.max(counters.waitMsMax, waitMs);
     let released = false;
-    const supplementalReleases = new Set();
+    let supplementalReleases;
     const release = () => {
       if (released) return;
       released = true;
-      for (const releaseSupplemental of supplementalReleases) releaseSupplemental();
-      supplementalReleases.clear();
-      activeBytes = Math.max(0, activeBytes - entry.weight);
+      if (supplementalReleases) {
+        for (const releaseSupplemental of supplementalReleases) releaseSupplemental();
+        supplementalReleases.clear();
+      }
+      activeBytes = Math.max(0, activeBytes - weight);
       activeRequests = Math.max(0, activeRequests - 1);
       drain();
     };
     release.resize = bytes => {
       if (released || !Number.isSafeInteger(bytes) || bytes < 0) return;
-      const next = Math.max(1, Math.min(entry.weight, bytes));
-      if (next === entry.weight) return;
-      activeBytes -= entry.weight - next;entry.weight = next;drain();
+      const next = Math.max(1, Math.min(weight, bytes));
+      if (next === weight) return;
+      activeBytes -= weight - next;weight = next;drain();
     };
     const reserve = async (gate, weight, options) => {
       const releaseSupplemental = await gate(weight, options);
@@ -244,14 +254,14 @@ export function createRequestAdmission({
         },
         maxWeight: { value: releaseSupplemental.maxWeight },
       });
-      supplementalReleases.add(releaseReservation);
+      (supplementalReleases ||= new Set()).add(releaseReservation);
       return releaseReservation;
     };
     release.acquireDecompression = (options) => acquireDecompression(1, options);
     release.reserveDecodedBody = (bytes, options) => reserve(acquireDecodedBody, bytes, options);
     release.reserveDecodedBody.supportsResize = true;
     release.reserveResponseHistory = (bytes, options) => reserve(acquireResponseHistory, bytes, options);
-    entry.resolve(release);
+    return release;
   };
 
   const drain = () => {
@@ -269,7 +279,12 @@ export function createRequestAdmission({
         continue;
       }
       queue.splice(index, 1);
-      activate(entry);
+      entry.cleanup();
+      const waitMs = Math.max(0, Date.now() - entry.startedAt);
+      counters.waitMsTotal += waitMs;
+      counters.waitMsMax = Math.max(counters.waitMsMax, waitMs);
+      recordWait(entry, "admitted", waitMs);
+      entry.resolve(activate(entry.weight));
     }
   };
 
@@ -280,19 +295,32 @@ export function createRequestAdmission({
       return Promise.reject(admissionAbortError(signal));
     }
     const weight = requestAdmissionWeight(req, byteLimit);
+    if (queue.length === 0 && activeBytes + weight <= byteLimit) return Promise.resolve(activate(weight));
     const blockedByExclusive = queue.some((entry) => !entry.cancelled && entry.weight === byteLimit);
-    const mustWait = blockedByExclusive || activeBytes + weight > byteLimit;
-    if (queue.length >= queueLimit && mustWait) {
+    if (!blockedByExclusive && activeBytes + weight <= byteLimit) return Promise.resolve(activate(weight));
+    if (queue.length >= queueLimit) {
       counters.rejected += 1;
       return Promise.reject(httpError(`Request queue is full (${queueLimit} waiting)`, 503));
     }
-    if (mustWait) counters.queued += 1;
-
+    counters.queued += 1;
+    const start = Date.now(), context = currentRequestContext();
+    const id = context?.requestId;
+    const length = requestContentLength(req);
+    const evidence = {
+      ...(typeof id === "string" && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(id) ? { request_id: id } : {}),
+      route: ADMISSION_ROUTES.has(context?.route) ? context.route : "other",
+      queued_at: new Date(start).toISOString(),
+      reason: blockedByExclusive ? "exclusive_waiter" : "body_budget",
+      requested_bytes: weight, active_bytes: activeBytes, limit_bytes: byteLimit,
+      length_known: Number.isFinite(length) && length >= 0,
+    };
     return new Promise((resolve, reject) => {
       let timer;
       const entry = {
         cancelled: false,
-        startedAt: Date.now(),
+        startedAt: start,
+        evidence,
+        tracker: context?.streamPerformance,
         weight,
         resolve,
         cleanup: () => {
@@ -307,6 +335,7 @@ export function createRequestAdmission({
         if (reason === "timed_out") counters.timedOut += 1;
         entry.cleanup();
         remove(entry);
+        recordWait(entry, reason, Math.max(0, Date.now() - entry.startedAt));
         reject(error);
         drain();
       };
@@ -340,6 +369,8 @@ export function createRequestAdmission({
       ? Number((counters.waitMsTotal / counters.activated).toFixed(1))
       : 0,
     waitMsMax: counters.waitMsMax,
+    longestWait: longestWait ? { ...longestWait } : null,
+    recentWaits: recentWaits.map(row => ({ ...row })),
     decompressionsActive: acquireDecompression.stats().activeRequests,
     decompressionsQueued: acquireDecompression.stats().queued,
     decodedBodyBytes: acquireDecodedBody.stats().activeRequestedWeight,

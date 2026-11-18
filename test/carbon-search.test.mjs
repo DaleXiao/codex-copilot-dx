@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createRequestAdmission } from "../src/request-admission.mjs";
 import { startAdapter } from "../src/adapter.mjs";
 import { maskPrivacyRequest, protectPrivacyResponse } from "../src/privacy-transform.mjs";
 import { invokeAdapter } from "../test-support/adapter.mjs";
@@ -99,4 +100,18 @@ test("Carbon search timeout cancels its single upstream request", async () => {
     }, { once: true }));
   } }, { url: "/v1/alpha/search", body: request, headers });
   assert.equal(response.status, 504);assert.equal(calls, 1);assert.equal(aborted, true);
+});
+
+
+test("Carbon search releases request-body admission before reading response bytes", async () => {
+  const acquireRequest = createRequestAdmission({ maxBytes: 1024 });
+  const releaseOnRead = [];
+  const result = await invokeAdapter({ acquireRequest, carbonSearchFn: async () => {
+    assert.equal(acquireRequest.stats().activeBytes, 1024, "search input remains charged while the upstream opens");
+    return new Response(new ReadableStream({ pull(controller) {
+      releaseOnRead.push(acquireRequest.stats().activeBytes);
+      controller.enqueue(new TextEncoder().encode('{"output":"ok"}'));controller.close();
+    } }, { highWaterMark: 0 }));
+  } }, { url: "/v1/alpha/search", body: { ...request, settings: { ...request.settings, fixture: "a".repeat(1024) } }, headers });
+  assert.equal(result.status, 200);assert.deepEqual(releaseOnRead, [0]);
 });

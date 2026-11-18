@@ -567,6 +567,7 @@ export function createAdapterHandler(options = {}) {
         requestId,
         purpose,
         pathname,
+        route: routeName,
         showRequestId: options.showRequestId === true,
         includeHttpErrorDetails: options.includeHttpErrorDetails === true || process.env.CCDX_HTTP_ERROR_DETAILS === "1",
         streamPerformance,

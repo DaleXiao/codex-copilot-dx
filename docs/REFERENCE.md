@@ -258,6 +258,8 @@ For an identified conversation, hovering a point in the input-history chart show
 
 ## Shared source concurrency
 
+`ccdx status` shows the longest admitted wait in the gateway's local request-body queue. `status --json` retains the longest sample and up to 16 recent waits, including cancellations and timeouts. Samples record a route, request ID, wait reason and byte counts in memory; no request body or credential is retained. The existing request details distinguish local waiting from waiting for the selected source. Local waiting ends before the body is read, and source waiting ends before sending upstream.
+
 All three Apps share admission for the same configured source and account. A slot spans the real upstream response body through completion, cancellation or error. Request-body memory is tracked separately; unknown-length uploads retain their full reservation until fully read, then shrink to their actual held bytes. Recovery and internal summaries acquire fresh slots after the rejected response releases its slot.
 
 Automatic control distinguishes explicit concurrency rejection, request-rate feedback and quota exhaustion. Clear concurrency feedback lowers capacity without interrupting active streams; stable successful traffic with real waiting demand slowly increases it. Explicit account-wide rate/quota evidence pauses that account; model-scoped feedback leaves sibling models available after a short spacing interval. Unknown 429s use bounded backoff. Parameters, permissions and long thinking time do not train concurrency. There are no quota probes or automatic source/account/model switches. A first upstream limit rejection can still occur before its capacity is known.

@@ -217,3 +217,19 @@ test("a request pins protection across an off switch while a later request keeps
   assert.match((await f.privacy.wrap(fn, context)({ input: "api_key=another-value" })).input, /\{\{CCDX_/);
   assert.equal(f.privacy.wrap(fn, { ...context, res: {} }), fn);
 });
+
+
+test("a fresh request sees external privacy policy edits, replacements and invalid settings", t => {
+  const f = fixture(t), fn = async body => body, next = () => f.privacy.wrap(fn, { res: {}, protocol: "responses" });
+  assert.equal(next(), fn);
+  fs.writeFileSync(f.file, '{"privacy_enabled":true}');
+  assert.notEqual(next(), fn);
+  const original = fs.statSync(f.file);
+  fs.writeFileSync(f.file, '{"privacy_enabled":  0}');
+  fs.utimesSync(f.file, original.atime, original.mtime);
+  assert.throws(next, /privacy_enabled must be a boolean/);
+  fs.writeFileSync(f.file + ".replacement", '{"privacy_enabled":false}');
+  fs.renameSync(f.file + ".replacement", f.file);
+  assert.equal(next(), fn);
+  fs.unlinkSync(f.file);assert.equal(next(), fn);
+});

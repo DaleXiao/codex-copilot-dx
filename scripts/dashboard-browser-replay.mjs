@@ -169,7 +169,7 @@ function dashboardSnapshot() {
       requests: { total: 1, active: 0 }, model_activity: { active: modelActivity }, models: { models: 1, source: "synthetic" },
       image_generation: { succeeded: 0, active: 0, failed: 0, delivery_failures: 0 },
       stream_performance: { active_requests: flowRequests, active_total: flowRequests.length, recent_requests: [...extraRequests, { at: "2026-10-21T05:51:08Z", request_id: "synthetic-recent", provider: "github", model: "gpt-test", outcome: "completed",
-        context: { payload_bytes: 1048576, images: 0, input_tokens: 150, context_window_tokens: 1000 } },
+        context: { payload_bytes: 1048576, images: 0, input_tokens: 150, context_window_tokens: 1000, source_queue_ms: 20, body_queue: { wait_ms: 942, reason: "exclusive_waiter", requested_bytes: 1048576, active_bytes: 4194304, limit_bytes: 33554432 } } },
         { request_id: "synthetic-unknown", model: "<script>not-html</script>", outcome: "completed", context: {} }], by_route: { responses: {
         ttft_ms: { avg: 1250, samples: 3, p50: 1400, p95: 2000, percentiles_estimated: true }, output_tokens_per_second: { avg: 123.4, samples: 2, unit: "token/s" },
       } } },
@@ -750,6 +750,8 @@ try {
         assert(Math.abs(metadataBefore.x - metadataAfter.x) <= 1, "Request metadata expands without moving the trigger horizontally");
         assert.deepEqual(await page.locator("#context-body").evaluate(body => [...body.closest("table").tHead.rows[0].cells].map(cell => ({ x: cell.getBoundingClientRect().x, width: cell.getBoundingClientRect().width }))), requestColumnsBefore, "Opening request metadata must not redistribute table columns");
         assert.match(await metadata.innerText(), /1\.00 MiB.*0.*1,000.*15\.0%/s);
+        const queueDetail = await metadata.innerText();
+        assert.match(queueDetail, language === "zh" ? /本机排队.*942 ms.*前方请求需独占.*来源排队.*20 ms/s : /Local queue.*942 ms.*Exclusive request ahead.*Source queue.*20 ms/s);
         await refreshStatus();
         assert.equal(await metadata.getAttribute("open"), "", "Unchanged reads keep request details open");
         extraRequests = [{ at: "2026-10-21T06:51:08Z", request_id: "synthetic-new", provider: "github", model: "gpt-new", outcome: "completed", context: {} }];

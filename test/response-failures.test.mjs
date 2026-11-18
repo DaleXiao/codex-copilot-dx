@@ -68,6 +68,17 @@ test("inference errors survive route and MCP method noise without unbounded rete
   assert.equal(diagnostics.snapshot().actionable_recent[0].code, "invalid_parameter");
 });
 
+test("Antigravity generation timeouts retain app attribution and count as inference failures", () => {
+  const diagnostics = createHttpFailureDiagnostics();
+  diagnostics.record(buildHttpFailureDetails({ route: "antigravity", application: "gemini_app", statusCode: 504,
+    code: "upstream_timeout", origin: "transport", model: "gemini-4-carbon", upstream_attempts: 1 }));
+  const { by_category, actionable_recent } = diagnostics.snapshot();
+  assert.equal(by_category.inference, 1);
+  assert.equal(by_category.other, 0);
+  assert.equal(actionable_recent[0].application, "gemini_app");
+  assert.equal(actionable_recent[0].code, "upstream_timeout");
+});
+
 test("response failure diagnostics retain a bounded, redacted runtime history", () => {
   const diagnostics = createResponseFailureDiagnostics({ maxEntries: 2, now: () => "2026-09-14T00:00:00.000Z" });
   const details = responseFailureDetails({

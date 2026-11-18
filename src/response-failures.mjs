@@ -159,7 +159,7 @@ export function createHttpFailureDiagnostics({ maxEntries = 20, now } = {}) {
       all.record(details);
       const accessNotice = details.reason === "ccdx_model_not_selected" || details.reason === "ccdx_client_source_disabled";
       const category = accessNotice || details.route === "messages_count_tokens" ? "capability"
-        : ["responses", "responses_compact", "messages"].includes(details.route) ? "inference"
+        : ["responses", "responses_compact", "messages", "antigravity"].includes(details.route) ? "inference"
         : details.route === "image_mcp" && details.http_status === 405 ? "protocol"
           : details.route === "not_found" ? "route" : "other";
       counts[category]++;
@@ -217,7 +217,7 @@ export function buildHttpFailureDetails({ statusCode, route, requestId, model, c
     ...(request_options ? { request_options } : {}),
     ...(attempt_timings ? { attempt_timings } : {}),
     ...(requested_model ? { requested_model, request_kind: requested_model === "codex-auto-review" ? "auto_review" : "unknown" } : {}),
-    ...(["codex_app", "codex_cli", "codex", "claude_app", "claude_code", "claude", "api"].includes(application) ? { application } : {}),
+    ...(["codex_app", "codex_cli", "codex", "claude_app", "claude_code", "claude", "gemini_app", "api"].includes(application) ? { application } : {}),
     ...(Object.hasOwn(reasons, reason) ? { reason } : {}),
     ...(capability_cached === true ? { capability_cached: true } : {}), ...(shared_upstream === true ? { shared_upstream: true } : {}),
     ...(transport ? { transport: transportErrorDetails({ transport }) } : {}),

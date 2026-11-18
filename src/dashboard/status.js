@@ -152,7 +152,8 @@
           : ["rate_limit_error", "rate_limit_exceeded", "insufficient_quota", "http_429"].includes(failure.code) ? "issue_source_limit"
             : /^m365_catalog_http_/.test(failure.code || "") ? "issue_catalog_unavailable"
               : failure.reason === "ccdx_model_not_selected" ? "issue_model_not_selected"
-                : failure.http_status === 401 || failure.http_status === 403 ? "issue_access_denied" : "issue_request_failed";
+                : failure.http_status === 504 && failure.code === "upstream_timeout" ? "issue_upstream_timeout"
+                  : failure.http_status === 401 || failure.http_status === 403 ? "issue_access_denied" : "issue_request_failed";
         const summary = {
           detail: phrase("issue_brief", {
             time: failure.at ? time(failure.at, { date: true }) : phrase("unknown_time"),
@@ -176,7 +177,7 @@
         const timings = timeline?.timings_ms || {};
         const timingText = ["admission", "body", "history", "images", "serialization", "upstream_start", "upstream_headers", "first_output", "last_activity", "terminal", "finished"]
           .filter((key) => finite(timings[key])).map((key) => `${key}=${Number(timings[key]).toFixed(1)}`).join(" / ");
-        const fields = { time: failure.at, model: notModelRequest ? phrase("not_applicable") : failure.model, event: failure.event_type, code: failure.code, reason: failure.reason, application: failure.application, occurrences: failure.occurrences > 1 ? failure.occurrences : undefined, capability_cached: failure.capability_cached, shared_upstream: failure.shared_upstream,
+        const fields = { time: failure.at, model: notModelRequest ? phrase("not_applicable") : failure.model, event: failure.event_type, code: failure.code, reason: failure.reason, application: failure.application === "gemini_app" ? phrase("flow_app_gemini_app") : failure.application, occurrences: failure.occurrences > 1 ? failure.occurrences : undefined, capability_cached: failure.capability_cached, shared_upstream: failure.shared_upstream,
           message: failure.message, response_id: failure.response_id, upstream_request_id: failure.upstream_request_id,
           retry: failure.retried ? (timeline ? "attempted" : "attempted (outcome not recorded here)") : "not attempted",
           retry_policy: failure.retry_policy, retry_skipped: failure.retry_skipped,
@@ -189,7 +190,7 @@
           request_options: failure.request_options ? JSON.stringify(failure.request_options) : undefined,
           transport: failure.transport ? JSON.stringify(failure.transport) : undefined,
           output_requested: timeline?.context?.max_output_tokens_requested, output_sent: timeline?.context?.max_output_tokens_sent,
-          output_used: timeline?.context?.output_tokens, stop_reason: timeline?.stop_reason, requested_model: failure.requested_model, request_kind: failure.request_kind, provider: failure.provider || timeline?.provider,
+          output_used: timeline?.context?.output_tokens, stop_reason: timeline?.stop_reason, requested_model: failure.requested_model, request_kind: failure.request_kind === "unknown" ? undefined : failure.request_kind, provider: failure.provider || timeline?.provider,
           attempt_timings: failure.attempt_timings || timeline?.attempts ? JSON.stringify(failure.attempt_timings || timeline.attempts) : undefined,
           timings_ms: timingText };
         const diagnostic = document.createElement("dl");

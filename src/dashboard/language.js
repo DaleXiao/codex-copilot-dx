@@ -189,6 +189,7 @@
     "issue_model_not_selected": ["Model not selected for this app", "应用尚未选用此模型"],
     "issue_access_denied": ["Access was denied", "请求被拒绝访问"],
     "issue_request_failed": ["Request did not complete", "请求未完成"],
+    "issue_upstream_timeout": ["Source response timed out", "等待来源响应超时"],
     "api_save_read": ["Save & read models", "保存并读取模型"],
     "api_read_failed": ["API saved. Model lookup failed; retry here. {code}", "来源已保存；模型读取失败，可在此重试。{code}"],
     "sync_capability_unverified": ["Client capabilities are unverified; existing settings were kept.", "客户端能力未验证，现有设置已保留。"],

@@ -169,3 +169,21 @@ test("marked content keeps cache boundaries and system order only for explicitly
 test("Chat conversion cannot discard a top-level sealed agent task", () => {
   assert.throws(() => responsesToChat({ input: [{ type: "agent_message", author: "root", recipient: "worker", encrypted_content: "opaque-task", content: [{ type: "input_text", text: "NEW_TASK" }] }] }), { code: "ccdx_responses_chat_incompatible" });
 });
+
+test("Responses to Chat drops redundant empty user placeholders without removing real or marked input", () => {
+  const image = { type: "input_image", image_url: "data:image/png;base64,AA==" };
+  const input = [
+    { role: "user", content: [{ type: "input_text", text: "continue with the image" }] },
+    { role: "user", content: [{ type: "input_text", text: "" }] },
+    { role: "user", content: [] },
+    { role: "user", content: [image] },
+    { role: "user", content: "", cache_control: { type: "ephemeral" } },
+    { role: "assistant", content: "" },
+  ];
+  const { messages } = responsesToChat({ input }, { cacheSupport: { cache_control: true } });
+  assert.deepEqual(messages.map(message => message.role), ["user", "user", "user", "assistant"]);
+  assert.equal(messages[0].content, "continue with the image");
+  assert.equal(messages[1].content[0].image_url.url, image.image_url);
+  assert.deepEqual(messages[2].content[0].cache_control, { type: "ephemeral" });
+  assert.deepEqual(responsesToChat({ input: [input[1]] }).messages, [{ role: "user", content: "" }]);
+});

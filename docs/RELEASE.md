@@ -1,17 +1,17 @@
-# CCDX 1.4.8
+# CCDX 1.4.9
 
 ## English
 
-- Set an available Copilot model as the Antigravity default, or restore the app default. This applies when the app loads a compatible model catalog. Existing conversations and background tasks keep their current routes.
+- Small Antigravity control requests, including model and account lookups, no longer wait behind large uploads in other apps.
+- Antigravity Copilot request details show when CCDX finished sending the body. A response without a stream body reports an error instead of opening a successful stream.
+- Codex Chat fallback skips redundant empty user placeholders from compacted history. Text, images, and supported cache markers are preserved.
 
-- App controls align with the page title and wrap when needed. App navigation uses the same spacing as other links on small screens.
-
-Not verified: native picker adoption and live generation with the revised catalog.
+Not verified: Carbon timeout recovery against live Copilot.
 
 ## 简体中文
 
-- 可将可用的 Copilot 模型设为 Antigravity 默认，也可恢复应用默认。客户端重新载入兼容目录后生效；旧会话和后台任务保留原路由。
+- Antigravity 的模型、账户等小型查询不再被其他应用的大请求上传挡住。
+- Antigravity 的 Copilot 请求详情会显示 CCDX 何时发完正文。来源没有返回流正文时，直接报告错误。
+- Codex 经 Chat 接口转发时，跳过压缩历史中多余的空白用户占位，保留文本、图片和受支持的缓存标记。
 
-- 应用页头的打开和切换按钮与标题对齐，空间不足时自动换行；窄屏应用导航与其他入口使用一致的间距。
-
-未验证：原生模型选择器采纳及真实生成。
+未验证：真实 Copilot 上的 Carbon 超时是否恢复。

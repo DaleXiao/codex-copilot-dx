@@ -86,8 +86,11 @@ function emptyReasoningItem(item) {
     && Object.keys(item).every(key => ["type", "id", "status", "summary", "content", "encrypted_content"].includes(key));
 }
 
+const isEmptyUser = message => message.role === "user" && (message.content === "" || Array.isArray(message.content) && message.content.length === 0);
+
 export function responsesToChat(body, { reasoningEfforts, cacheSupport } = {}) {
   const messages = [];
+  let emptyUserPlaceholder = false;
   if (body.instructions) messages.push({ role: "system", content: body.instructions });
 
   const cacheFields = value => {
@@ -134,7 +137,9 @@ export function responsesToChat(body, { reasoningEfforts, cacheSupport } = {}) {
         && ["user", "assistant", "system", "developer"].includes(item?.role)
         && Object.prototype.hasOwnProperty.call(item, "content");
       if (item?.type === "message" || isEasyMessage) {
-        messages.push({ role: item.role, content: messageContent(item.content, item) });
+        const message = { role: item.role, content: messageContent(item.content, item) };
+        if (isEmptyUser(message)) emptyUserPlaceholder = true;
+        messages.push(message);
       } else if (item?.type === "agent_message") {
         if (typeof item.author !== "string" || typeof item.recipient !== "string" || !Array.isArray(item.content) || item.encrypted_content != null) {
           throw chatCompatibilityError("input item", "agent_message");
@@ -195,7 +200,10 @@ export function responsesToChat(body, { reasoningEfforts, cacheSupport } = {}) {
     }
   }
 
-  const chatReq = { model: body.model, messages, stream: true };
+  // A media placeholder can be empty after Codex compaction. Preserve lone
+  // empty input for provider validation, and keep images and cache markers.
+  const omitPlaceholders = emptyUserPlaceholder && messages.some(message => message.role === "user" && message.content !== null && !isEmptyUser(message));
+  const chatReq = { model: body.model, messages: omitPlaceholders ? messages.filter(message => !isEmptyUser(message)) : messages, stream: true };
   for (const k of ["temperature", "top_p", "stop", "presence_penalty", "frequency_penalty"]) {
     if (body[k] !== undefined) chatReq[k] = body[k];
   }

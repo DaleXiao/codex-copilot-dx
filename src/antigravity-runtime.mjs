@@ -76,7 +76,7 @@ export function createAntigravityRuntime({client,models=()=>[],refreshModels,pri
     const defaultUnavailable=config.default_model!==null&&(!desiredDefault||activity.catalog_default_supported===false);
     const current=applicationControl?.snapshot().antigravity;
     const visibleApp=current?{status:current.status,version:current.version||null,pids:current.pid?[current.pid]:[]}:app;
-    return {source:"gemini_antigravity",...config,source_enabled:sourceEnabled,default_model_unavailable:defaultUnavailable,models_reload_required:reload,app:visibleApp,application:current||null,route_observed:handler.snapshot().observed,
+    return {source:"gemini_antigravity",...config,source_enabled:sourceEnabled,default_model_unavailable:defaultUnavailable,models_reload_required:reload,app:visibleApp,application:current||null,route_observed:activity.observed,
       model_source:"Google + GitHub Copilot",background_source:"GitHub Copilot",ordinary_chat_source:"Google (unchanged)",
       compaction_source:"Observed conversation source; existing background policy when unassigned",
       models:listed,model_groups:[...groups.values()],activity,last_operation:lastOperation};

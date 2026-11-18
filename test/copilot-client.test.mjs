@@ -1,16 +1,21 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import { createServer } from "node:http";
+import { once } from "node:events";
 import os from "node:os";
 import path from "node:path";
 import {
   copilotRuntimeStatus,
   createCopilotClient,
+  fetchCopilotUpstream,
   getCopilotToken,
   listModels,
   resetCopilotTokenForTests,
 } from "../src/copilot.mjs";
 import { MAX_UPSTREAM_MODEL_CATALOG_BYTES } from "../src/http-transport.mjs";
+import { createStreamPerformanceMetrics } from "../src/stream-performance.mjs";
+import { runWithRequestContext } from "../src/request-context.mjs";
 
 function writeToken(home, name, token) {
   const filePath = path.join(home, name, "github_token");
@@ -173,6 +178,61 @@ test("createCopilotClient: starts the upstream phase only after token and payloa
   });
 
   assert.deepEqual(sequence, ["token", "upstream", "fetch"]);
+});
+
+test("Copilot Chat observes final wire bytes without including request content", async t => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-chat-wire-"));t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const tokenPath = writeToken(home, "codex", "github_enterprise");
+  const client = createCopilotClient({ profile: "codex", tokenPath, allowTokenDiscovery: false,
+    readGithubIdentity: () => ({ login: "enterprise-user", id: 1 }),
+    tokenFetchImpl: async () => Response.json({ token: "service_enterprise",
+      expires_at: Math.floor(Date.now() / 1000) + 1800, endpoints: { api: "https://enterprise.example" } }) });
+  const observed = [];
+  const input = { model: "gemini-4-carbon", stream: true, messages: [{ role: "user", content: "中文测试" }] };
+  await runWithRequestContext({ streamPerformance: { upstreamStarted: () => {}, observeContext: value => observed.push(value) } }, () => client.chatCompletions(input, {
+    fetchImpl: async (_url, init) => {
+      const outgoingBytes = Buffer.byteLength(init.body);
+      assert.deepEqual(observed, [{ payload_bytes: outgoingBytes }]);
+      assert.equal(init.headers["Content-Length"], String(outgoingBytes));
+      assert.equal(JSON.parse(init.body).stream_options.include_usage, true);
+      return Response.json({ choices: [] });
+    },
+  }));
+});
+
+test("real POST records body written before a silent upstream times out, without retry", { timeout: 5000 }, async t => {
+  const body = JSON.stringify({ model: "gemini-4-carbon", input: "测试" });
+  let received, requests = 0;
+  const bodyRead = new Promise(resolve => { received = resolve; });
+  const server = createServer(async req => {
+    requests++;
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    received(Buffer.concat(chunks).toString());
+  });
+  t.after(() => { server.closeAllConnections();server.close(); });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const performance = createStreamPerformanceMetrics({ routeNames: ["antigravity"] });
+  const streamPerformance = performance.begin("antigravity");
+  streamPerformance.upstreamStarted();
+  const url = `http://127.0.0.1:${server.address().port}/chat/completions`;
+  const controller = new AbortController();
+  t.after(() => controller.abort());
+  const result = runWithRequestContext({ streamPerformance }, () => fetchCopilotUpstream(url, {
+    method: "POST", body, signal: controller.signal,
+  }, { observeBodyWrite: true, retries: 0 }));
+  const timeout = assert.rejects(result, { name: "AbortError" });
+  assert.equal(await bodyRead, body);
+  const [attempt] = streamPerformance.attemptTimings();
+  assert.ok(attempt.body_sent_ms >= attempt.started_ms);
+  assert.equal(attempt.headers_ms, null);
+  assert.equal(attempt.http_status, null);
+  controller.abort();
+  await timeout;
+  assert.equal(requests, 1);
+  streamPerformance.finish({ failed: true, statusCode: 504 });
+  assert.deepEqual(performance.snapshot().recent_requests[0].attempts, [attempt]);
 });
 
 test("createCopilotClient: bounds model catalogs before parsing or caching them", async () => {

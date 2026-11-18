@@ -314,6 +314,13 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
           changes.changed();
           if (streaming && upstreamStartedAt === null) upstreamStartedAt = time;
         },
+        observeUpstreamBodyWrite() {
+          const attempt = attemptTimings.at(-1);
+          if (!attempt || finished) return;
+          return () => {
+            if (!finished && attempt.body_sent_ms === undefined) attempt.body_sent_ms = elapsed(now());
+          };
+        },
         upstreamHeaders(statusCode) {
           if (finished) return;
           headersAt = now();
@@ -528,6 +535,10 @@ export function markUpstreamStarted(streaming = true) {
   const context = currentRequestContext();
   if (context) context.upstreamAttempts = (context.upstreamAttempts || 0) + 1;
   tracker()?.upstreamStarted(streaming);
+}
+
+export function observeUpstreamBodyWrite() {
+  return tracker()?.observeUpstreamBodyWrite?.();
 }
 
 export function markUpstreamHeaders(statusCode) {

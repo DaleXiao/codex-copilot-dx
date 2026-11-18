@@ -91,6 +91,7 @@ export function createCopilotClientRuntime({
     fetchImpl,
     retryOptions,
     bodyText,
+    observeBodyWrite,
     onUpstreamStart,
     ...sourceOptions
   } = {}) {
@@ -106,14 +107,15 @@ export function createCopilotClientRuntime({
       initiator: computeInitiator(messages),
       vision: computeVision(messages),
     });
-    headers["Content-Length"] = String(Buffer.byteLength(serializedBody));
+    const bodyBytes = Buffer.byteLength(serializedBody);
+    headers["Content-Length"] = String(bodyBytes);
     return sourceTransport({ ...sourceOptions, signal, onUpstreamStart }, { send: fetchCopilotUpstream, model: upstreamReq.model, bodyText: serializedBody, stream: upstreamReq.stream === true, observe: true,
-      args: [`${tokenSession.getApiBase()}/chat/completions`, {
+      evidence: { payload_bytes: bodyBytes }, args: [`${tokenSession.getApiBase()}/chat/completions`, {
       method: "POST",
       headers,
       body: serializedBody,
       signal,
-    }, { fetchImpl, ...retryOptions }] });
+    }, { fetchImpl, ...retryOptions, observeBodyWrite }] });
   }
 
   async function fetchModels({ signal, fetchImpl, retryOptions }) {

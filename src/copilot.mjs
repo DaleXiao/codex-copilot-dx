@@ -1,3 +1,5 @@
+import { fetchWithBodyWriteTiming } from "./copilot-send-timing.mjs";
+import { observeUpstreamBodyWrite } from "./stream-performance.mjs";
 import { randomUUID } from "node:crypto";
 import { status } from "./status.mjs";
 import { debugLog } from "./log.mjs";
@@ -160,6 +162,7 @@ export async function fetchCopilotUpstream(
     fetchImpl = fetch,
     retries = UPSTREAM_RETRIES,
     retryDelayMs = UPSTREAM_RETRY_DELAY_MS,
+    observeBodyWrite = false,
   } = {},
 ) {
   const retryCount = parseUpstreamRetries(retries);
@@ -173,7 +176,8 @@ export async function fetchCopilotUpstream(
     const attemptStart = Date.now();
     debugLog(`upstream ${method} ${target} attempt=${attempt + 1}/${retryCount + 1}`);
     try {
-      const resp = await fetchImpl(url, init);
+      const onBodySent = observeBodyWrite && method === "POST" && fetchImpl === fetch && observeUpstreamBodyWrite();
+      const resp = await (onBodySent ? fetchWithBodyWriteTiming(url, init, onBodySent) : fetchImpl(url, init));
       debugLog(`upstream ${method} ${target} status=${resp.status} attempt=${attempt + 1}/${retryCount + 1} attempt_ms=${Date.now() - attemptStart} total_ms=${Date.now() - totalStart}`);
       if (attempt < retryCount && isRetryableUpstreamStatus(resp.status, method)) {
         await discardBoundedResponseBody(resp);

@@ -406,6 +406,7 @@
         const queueReason = queue?.reason === "upload_in_progress" ? "body_queue_upload_in_progress" : queue?.reason === "upload_growth" ? "body_queue_upload_growth"
           : queue?.reason === "exclusive_waiter" ? "body_queue_exclusive"
             : queue?.length_known === false && queue.requested_bytes === queue.limit_bytes ? "body_queue_unknown_length" : "body_queue_budget";
+        const attempt = request.attempts?.at(-1);
         for (const [key, value] of [["request_id", request.request_id || "—"], ["http_status", number(request.http_status)], ["attempts", number(request.upstream_attempts)], ["model_outcome", globalThis.ccdxLanguage?.format(outcome.toLowerCase()) || outcome],
           ["time", Number.isFinite(at) ? time(at, { date: true }) : "—"],
           ...(Number.isSafeInteger(queue?.wait_ms) ? [["body_queue_wait", phrase("body_queue_detail", {
@@ -413,6 +414,9 @@
             reserved: mib(queue.requested_bytes), occupied: mib(queue.active_bytes), limit: mib(queue.limit_bytes),
           })]] : []),
           ...(Number.isSafeInteger(context.source_queue_ms) ? [["source_queue_wait", `${number(context.source_queue_ms)} ms`]] : []),
+          ...(Number.isFinite(attempt?.body_sent_ms) ? [["upstream_request_sent", `${number(attempt.body_sent_ms - attempt.started_ms)} ms`]] : []),
+          ...(Number.isFinite(attempt?.body_sent_ms) && Number.isFinite(attempt.headers_ms) ? [["upstream_wait_headers", `${number(Math.max(0, attempt.headers_ms - attempt.body_sent_ms))} ms`]]
+            : Number.isFinite(attempt?.body_sent_ms) && request.origin === "transport" && request.http_status === 504 ? [["upstream_wait_headers", phrase("upstream_no_headers")]] : []),
           ["wire_mib", finite(context.payload_bytes) ? `${(Number(context.payload_bytes) / 1048576).toFixed(2)} MiB` : "—"],
           ["images", number(context.images)], ["model_window", number(context.context_window_tokens)], ["input_window", ratio],
           ["output_requested", number(context.max_output_tokens_requested)], ["output_sent", number(context.max_output_tokens_sent)], ["output_used", number(context.output_tokens)], ["stop_reason", request.stop_reason || "—"],

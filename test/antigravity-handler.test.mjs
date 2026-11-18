@@ -169,6 +169,57 @@ test("only clearly bodyless control GETs skip the shared request-body queue",asy
   }finally{held()}
 });
 
+test("short read-only control POSTs progress behind a queued whole-pool upload",async()=>{
+  const gate=createRequestAdmission({maxBytes:32768,waitTimeoutMs:2000}),held=await gate({headers:{"content-length":"512"}});
+  const f=fixture({acquireRequest:gate}),controlURL="/antigravity/v1internal:fetchUserInfo";
+  const exclusive=gate({headers:{"content-length":"32768"}});
+  const raw=JSON.stringify({project:"local-test-fixture"});
+  const headers={"content-length":String(Buffer.byteLength(raw))};
+  const blocked=[];
+  try{
+    const result=await bounded(invoke(f.handler,null,{url:controlURL,raw,headers}).done);
+    assert.equal(result.status,200);assert.equal(f.google.length,1);
+    for(const options of [
+      {url:"/antigravity/v1internal:writeTrajectoryAcls",headers},
+      {url:controlURL,headers:{"transfer-encoding":"chunked"}},
+      {url:controlURL,headers:{"content-length":"8193"}},
+      {url:controlURL,headers:{...headers,"content-encoding":"gzip"}},
+    ])blocked.push(invoke(f.handler,null,{raw,...options}));
+    assert.equal(gate.diagnostics().queued,5);assert.equal(f.google.length,1);
+  }finally{
+    for(const request of blocked)request.req.emit("aborted");
+    await bounded(Promise.all(blocked.map(request=>request.done)));
+    held();(await exclusive)();
+  }
+  assert.equal(gate.stats().activeBytes,0);
+});
+
+test("short control lane bounds concurrent fetches and gives the slot back after a disconnect",async()=>{
+  const pending=[];
+  const f=fixture({fetchGoogle:(_url,{signal})=>new Promise((resolve,reject)=>{
+    signal.addEventListener("abort",()=>reject(signal.reason),{once:true});pending.push(resolve);
+  })});
+  const options={url:"/antigravity/v1internal:fetchUserInfo",raw:"{}",headers:{"content-length":"2"}};
+  const reads=Array.from({length:5},()=>invoke(f.handler,null,options));
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(pending.length,4);
+  assert.equal(f.handler.snapshot().short_control_queue.waiting,1);
+  reads[0].req.emit("aborted");
+  await bounded(reads[0].done);
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(pending.length,5);
+  for(const resolve of pending.slice(1))resolve(Response.json({}));
+  assert.deepEqual(await Promise.all(reads.slice(1).map(read=>bounded(read.done).then(reply=>reply.status))),[200,200,200,200]);
+  assert.equal(f.handler.snapshot().short_control_queue.active,0);
+});
+
+test("Copilot success headers without a stream return 502 before opening downstream SSE",async()=>{
+  const f=fixture({client:{chatCompletions:async()=>new Response(null)}});
+  const result=await invoke(f.handler,body()).done;
+  assert.equal(result.status,502);assert.match(new Headers(result.res.headers).get("content-type"),/application\/json/i);
+  assert.match(result.text,/stream has no body/);
+});
+
 test("admission timeout stays local 503 and does not consume the request-body deadline",async()=>{
   const gate=createRequestAdmission({maxBytes:4096,waitTimeoutMs:40}),held=await gate({headers:{}}),errors=[];
   const performance=createStreamPerformanceMetrics({routeNames:["antigravity"]}),tracker=performance.begin("antigravity");

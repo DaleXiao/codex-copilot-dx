@@ -1,3 +1,4 @@
+import {createRequestAdmission} from "./request-admission.mjs";
 import {randomUUID,createHash} from "node:crypto";
 import {buildResponsesUsageRecord,recordUsage} from "./usage-store.mjs";
 import {createRequestAbort,abortErrorStatusCode,readJsonBody,readBoundedResponseText,writeOrDrain,httpError,sendJsonError} from "./http-transport.mjs";
@@ -19,6 +20,10 @@ const PREFIX="/antigravity";
 const MAX_REPLY=64*1024*1024;
 const GOOGLE_ORIGIN="https://daily-cloudcode-pa.googleapis.com";
 const controlMethods=new Set(["loadCodeAssist","fetchUserInfo","fetchAdminControls","fetchAvailableModels","retrieveUserQuotaSummary","listExperiments","buildWithGooglePlugins","writeTrajectoryAcls","cascadeNuxes"]);
+const smallReadControls=new Set(["loadCodeAssist","fetchUserInfo","fetchAdminControls","fetchAvailableModels","retrieveUserQuotaSummary","listExperiments"]);
+const CONTROL_BODY_BYTES=8*1024;
+// Reserve a full slot so many tiny bodies cannot fan out unbounded upstream calls.
+const controlSlot={headers:{"content-length":String(CONTROL_BODY_BYTES)}};
 const passthrough=body=>({body,count:0,restoreText:value=>value,restoreValue:value=>value,restoreToolValue:value=>value,release(){}});
 const nativeHeaders=req=>Object.fromEntries(["authorization","user-agent","x-goog-api-client","x-goog-user-project","accept"].filter(key=>typeof req.headers[key]==="string").map(key=>[key,req.headers[key]]));
 
@@ -40,10 +45,11 @@ function groundedSearch(result,query){
 export function createAntigravityHandler({client,models=()=>[],selectedModels=()=>null,defaultModel=()=>null,enabled=()=>false,privacy,searchFn,imageFn,guardSource,acquireRequest=async()=>()=>{},sourceAdmission,applicationEvidence,
   compaction,compactionProfile=()=>"github",rememberConversationSource=()=>{},resolveCompactionSource=()=>null,recordUsageFn=recordUsage,fetchGoogle=fetch,googleOrigin=GOOGLE_ORIGIN,requestBodyTimeoutMs=120000,upstreamTimeoutMs=180000,streamIdleTimeoutMs=60000}={}) {
   if(![GOOGLE_ORIGIN,"https://cloudcode-pa.googleapis.com"].includes(googleOrigin))throw new Error("Unrecognized Google control origin");
+  const acquireControl=createRequestAdmission({maxBytes:4*CONTROL_BODY_BYTES,maxQueued:8});
   let active=0,observed=false,catalogModels=null,catalogDefaultSupported=null,catalogDefaultModel=null;const nativeWindows=new Map();
   const counts={total:0,google:0,copilot:0,search:0,images:0,failed:0};
   const handler=async(req,res)=>{
-    const abort=createRequestAbort(req,res);let release=()=>{},session,body,request,converted,phase="validation",usageEvent=null,usageModel=null,outcome=null,usageMode,usageProvider;
+    const abort=createRequestAbort(req,res);let release=()=>{},releaseControl,session,body,request,converted,phase="validation",usageEvent=null,usageModel=null,outcome=null,usageMode,usageProvider;
     const releaseInput=()=>{
       body=null;request=null;if(converted)converted.chat=null;if(session)session.body=null;
       const done=release;release=()=>{};done();
@@ -76,12 +82,15 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
       const length=req.headers["content-length"];
       const bodylessControl=req.method==="GET"&&controlMethods.has(method)&&req.headers["transfer-encoding"]===undefined
         &&(length===undefined||typeof length==="string"&&/^0+$/.test(length));
+      const smallControl=req.method==="POST"&&smallReadControls.has(method)&&req.headers["transfer-encoding"]===undefined
+        &&(req.headers["content-encoding"]===undefined||req.headers["content-encoding"]==="identity")
+        &&typeof length==="string"&&/^\d+$/.test(length)&&Number(length)<=CONTROL_BODY_BYTES;
       phase="admission";
-      // A framed request still needs the existing reservation. A known control
-      // GET with no body does not occupy space in the upload queue.
-      if(!bodylessControl)release=await measureRequestStageAsync("admission",()=>acquireRequest(req,{signal:abort.signal,streamingBody:req.method==="POST"}));
+      if(smallControl)releaseControl=await measureRequestStageAsync("admission",()=>acquireControl(controlSlot,{signal:abort.signal}));
+      else if(!bodylessControl)release=await measureRequestStageAsync("admission",()=>acquireRequest(req,{signal:abort.signal,streamingBody:req.method==="POST"}));
       phase="body";abort.setTimeout(requestBodyTimeoutMs,"request_body_timeout");
-      body=req.method==="POST"?await measureRequestStageAsync("body",()=>readJsonBody(req,{admission:release,signal:abort.signal,parse:parseBody})):null;
+      body=req.method==="POST"?await measureRequestStageAsync("body",()=>readJsonBody(req,{signal:abort.signal,parse:parseBody,
+        ...(smallControl?{maxBodyBytes:CONTROL_BODY_BYTES,maxDecodedBodyBytes:CONTROL_BODY_BYTES}:{admission:release})})):null;
       phase="preparation";
       const context=currentRequestContext();if(context)context.application="gemini_app";
       const compacting=isCompactionRequest("gemini",body);
@@ -203,7 +212,7 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
       converted=antigravityToChat(request,{model:target.model,effort:target.effort,reasoningEfforts:target.effort?[target.effort]:[],stream});
       markResponseModel(target.model);markRequestObservation({usage_state:"pending"});
       session=privacy?.prepareSession?await privacy.prepareSession(converted.chat,{protocol:"chat",client:"gemini",signal:abort.signal}):passthrough(converted.chat);
-      const callOptions={signal:abort.signal,sourceBodyManaged:true,retryOptions:{retries:0},onUpstreamStart:()=>abort.setTimeout(upstreamTimeoutMs,"upstream_timeout")};
+      const callOptions={signal:abort.signal,sourceBodyManaged:true,observeBodyWrite:true,retryOptions:{retries:0},onUpstreamStart:()=>abort.setTimeout(upstreamTimeoutMs,"upstream_timeout")};
       phase="upstream";
       const upstream=compacting&&compaction?await compaction.run({body:session.body,protocol:"chat",scope:JSON.stringify(["gemini","github",compactionProfile()]),source:"github",client:"gemini",
         inputLimit:target.maxTokens,outputAllowance:session.body.max_completion_tokens||session.body.max_tokens||0,native:client.chatCompletions,options:callOptions,
@@ -217,6 +226,11 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
         const result=chatToAntigravity(data,converted.originalNames);markToolActivity(result,"gemini");
         outcome=result.candidates[0].finishReason==="STOP"?"completed":"incomplete";markResponseTerminal(outcome);
         res.writeHead(200,{"Content-Type":"application/json"});res.end(JSON.stringify({response:session.restoreValue(result)}));return;
+      }
+      if (!upstream.body) {
+        sourceResponseFailed(upstream);
+        markResponseErrorOrigin("upstream_event");
+        throw httpError("Upstream Chat stream has no body",502);
       }
       const text=session.count?createPrivacyTextFragments(session):{push:value=>value,finish:()=>""};
       res.writeHead(200,{"Content-Type":"text/event-stream","Cache-Control":"no-cache"});
@@ -246,7 +260,7 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
       if(res.headersSent&&!res.writableEnded&&!res.destroyed){res.end("data: "+JSON.stringify({error:{code:error.statusCode||502,message:error.message}})+"\n\n");}
       else sendJsonError(res,error,error.statusCode||502);
     }finally{
-      releaseInput();session?.release();abort.cleanup();active--;
+      releaseInput();releaseControl?.();session?.release();abort.cleanup();active--;
       if(usageEvent){
         const u=usageEvent.usage,record=buildResponsesUsageRecord({surface:"antigravity",mode:usageMode,model:usageModel,
           response:{id:usageEvent.id,model:usageEvent.model||usageModel,usage:u?{input_tokens:u.prompt_tokens,output_tokens:u.completion_tokens,
@@ -261,6 +275,10 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
       }
     }
   };
-  handler.snapshot=()=>({enabled:enabled(),observed,catalog_models:catalogModels,catalog_default_supported:catalogDefaultSupported,catalog_default_model:catalogDefaultModel,active,...counts});
+  handler.snapshot=()=>{
+    const queue=acquireControl.diagnostics();
+    return {enabled:enabled(),observed,catalog_models:catalogModels,catalog_default_supported:catalogDefaultSupported,catalog_default_model:catalogDefaultModel,active,...counts,
+      short_control_queue:{active:queue.activeRequests,waiting:queue.queued,queued_total:queue.queuedTotal,rejected:queue.rejected,timed_out:queue.timedOut,wait_ms_max:queue.waitMsMax}};
+  };
   return handler;
 }

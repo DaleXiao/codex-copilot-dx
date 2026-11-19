@@ -822,6 +822,7 @@ The old external image provider, Qwen-specific generation/editing, `/mcp/image`,
 | `CCDX_MAX_UPSTREAM_BODY_BYTES` | `31457280` | Strict maximum forwarded Responses body size; larger payloads are adapted locally or rejected with `413` |
 | `CCDX_MAX_SSE_BUFFER_BYTES` | `8388608` | Maximum buffered bytes for one unterminated upstream SSE line or event |
 | `CCDX_UPSTREAM_TIMEOUT_MS` | `120000` | Per-phase timeout for Responses/Messages preparation and non-streaming upstream requests |
+| `CCDX_ANTIGRAVITY_COPILOT_TIMEOUT_MS` | `CCDX_UPSTREAM_TIMEOUT_MS` | Time to send and receive response headers for Antigravity Copilot generation. Set at CCDX startup; other apps and native Google keep their existing limits. |
 | `CCDX_STREAM_HANDSHAKE_TIMEOUT_MS` | `120000` | Timeout while waiting for upstream streaming response headers |
 | `CCDX_STREAM_IDLE_TIMEOUT_MS` | `120000` | Maximum idle time between upstream streaming body chunks |
 | `CCDX_UPSTREAM_RETRIES` | `2` | Retries for safe requests and clearly pre-connect POST failures; capped at `5` |

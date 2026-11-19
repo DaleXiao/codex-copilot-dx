@@ -35,6 +35,7 @@ test("parseSafePositiveInteger: validates long durations without a timer ceiling
 test("loadRuntimeConfig: centralizes limits without mutating the environment", () => {
   const env = {
     CCDX_UPSTREAM_TIMEOUT_MS: "9000",
+    CCDX_ANTIGRAVITY_COPILOT_TIMEOUT_MS: "18000",
     CCDX_REQUEST_BODY_TIMEOUT_MS: "8000",
     CCDX_MAX_BODY_BYTES: "1234",
     CCDX_MAX_UPSTREAM_CHAT_RESPONSE_BYTES: "5678",
@@ -44,6 +45,7 @@ test("loadRuntimeConfig: centralizes limits without mutating the environment", (
   };
   const config = loadRuntimeConfig(env);
   assert.equal(config.upstreamTimeoutMs, 9000);
+  assert.equal(config.antigravityCopilotTimeoutMs, 18000);
   assert.equal(config.requestBodyTimeoutMs, 8000);
   assert.equal(config.maxBodyBytes, 1234);
   assert.equal(config.maxUpstreamChatResponseBytes, 5678);
@@ -53,6 +55,8 @@ test("loadRuntimeConfig: centralizes limits without mutating the environment", (
   assert.equal(config.streamIdleTimeoutMs, RUNTIME_DEFAULTS.streamIdleTimeoutMs);
   assert.equal(Object.isFrozen(config), true);
   assert.equal(env.CCDX_UPSTREAM_TIMEOUT_MS, "9000");
+  assert.equal(loadRuntimeConfig({}).antigravityCopilotTimeoutMs, undefined);
+  assert.equal(loadRuntimeConfig({ CCDX_ANTIGRAVITY_COPILOT_TIMEOUT_MS: "0" }).antigravityCopilotTimeoutMs, undefined);
 });
 
 test("loadRuntimeConfig: caps only timer fields without imposing low resource ceilings", () => {

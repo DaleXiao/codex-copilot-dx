@@ -173,13 +173,14 @@ export function createAdapterHandler(options = {}) {
     || codexClient.getCachedModelEndpoints;
   const codexModelRegistry = options.codexModelRegistry || options.modelRegistry;
   const openAIModelEnv = options.openAIModelEnv || process.env;
+  const runtimeConfig = options.env ? loadRuntimeConfig(options.env) : ADAPTER_RUNTIME_CONFIG;
   const upstreamTimeoutMs = parsePositiveInteger(options.upstreamTimeoutMs, ADAPTER_RUNTIME_CONFIG.upstreamTimeoutMs);
   const streamHandshakeTimeoutMs = parsePositiveInteger(options.streamHandshakeTimeoutMs, ADAPTER_RUNTIME_CONFIG.streamHandshakeTimeoutMs);
   const streamIdleTimeoutMs = parsePositiveInteger(options.streamIdleTimeoutMs, ADAPTER_RUNTIME_CONFIG.streamIdleTimeoutMs);
   const requestBodyTimeoutMs = parsePositiveInteger(options.requestBodyTimeoutMs, ADAPTER_RUNTIME_CONFIG.requestBodyTimeoutMs);
   const acquireRequest = options.acquireRequest || createRequestAdmission({
     maxBytes: inflightBodyLimitPreference({ env: options.env, home: options.dashboardOptions?.home }).bytes,
-    maxSupplementalBytes: options.env ? loadRuntimeConfig(options.env).maxInflightBodyBytes : ADAPTER_RUNTIME_CONFIG.maxInflightBodyBytes,
+    maxSupplementalBytes: runtimeConfig.maxInflightBodyBytes,
   });
   const requestMetrics = options.requestMetrics || createRequestMetrics();
   const streamPerformanceMetrics = options.streamPerformanceMetrics || createStreamPerformanceMetrics({ routeNames: ["responses", "responses_compact", "antigravity"] });
@@ -204,6 +205,7 @@ export function createAdapterHandler(options = {}) {
           if(!result)throw httpError("GitHub model catalog refresh is unavailable",503);
         }}:{}),
         env: options.env, home: options.dashboardOptions?.home, requestBodyTimeoutMs, upstreamTimeoutMs, streamIdleTimeoutMs,
+        copilotTimeoutMs: runtimeConfig.antigravityCopilotTimeoutMs,
         ...options.antigravityOptions });
       return antigravity;
     })();

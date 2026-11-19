@@ -41,6 +41,7 @@ export function parseTimerMs(value, fallback) {
 export function loadRuntimeConfig(env = process.env) {
   return Object.freeze({
     upstreamTimeoutMs: parseTimerMs(env.CCDX_UPSTREAM_TIMEOUT_MS, RUNTIME_DEFAULTS.upstreamTimeoutMs),
+    antigravityCopilotTimeoutMs: parseTimerMs(env.CCDX_ANTIGRAVITY_COPILOT_TIMEOUT_MS, 0) || undefined,
     streamHandshakeTimeoutMs: parseTimerMs(env.CCDX_STREAM_HANDSHAKE_TIMEOUT_MS, RUNTIME_DEFAULTS.streamHandshakeTimeoutMs),
     streamIdleTimeoutMs: parseTimerMs(env.CCDX_STREAM_IDLE_TIMEOUT_MS, RUNTIME_DEFAULTS.streamIdleTimeoutMs),
     requestBodyTimeoutMs: parseTimerMs(env.CCDX_REQUEST_BODY_TIMEOUT_MS, RUNTIME_DEFAULTS.requestBodyTimeoutMs),

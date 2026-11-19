@@ -271,6 +271,28 @@ test("body, upstream and compaction deadlines return their own status and releas
   }
 });
 
+test("the Copilot headers override does not extend the wait for the first stream chunk", async t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const reading = Promise.withResolvers();
+  const f = fixture({ copilotTimeoutMs: 500, streamIdleTimeoutMs: 80, client: { chatCompletions: async (_, { signal, onUpstreamStart }) => {
+    onUpstreamStart();
+    return new Response(new ReadableStream({
+      start(controller) { signal.addEventListener("abort", () => controller.error(signal.reason), { once: true }); },
+      pull() { reading.resolve(signal); },
+    }));
+  } } });
+  const done = invoke(f.handler, body()).done;
+  const signal = await reading.promise;
+  await new Promise(resolve => setImmediate(resolve));
+  t.mock.timers.tick(79);
+  assert.equal(signal.aborted, false);
+  t.mock.timers.tick(1);
+  assert.equal(signal.aborted, true);
+  const result = await done;
+  assert.equal(result.status, 200);
+  assert.match(result.text, /"code":504/);
+});
+
 test("queued client cancellation is 499 and leaves no reservation or upstream call",async()=>{
   const gate=createRequestAdmission({maxBytes:4096,waitTimeoutMs:500}),held=await gate({headers:{}}),errors=[];
   const f=fixture({acquireRequest:gate});

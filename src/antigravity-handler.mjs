@@ -43,7 +43,7 @@ function groundedSearch(result,query){
 }
 
 export function createAntigravityHandler({client,models=()=>[],selectedModels=()=>null,defaultModel=()=>null,enabled=()=>false,privacy,searchFn,imageFn,guardSource,acquireRequest=async()=>()=>{},sourceAdmission,applicationEvidence,
-  compaction,compactionProfile=()=>"github",rememberConversationSource=()=>{},resolveCompactionSource=()=>null,recordUsageFn=recordUsage,fetchGoogle=fetch,googleOrigin=GOOGLE_ORIGIN,requestBodyTimeoutMs=120000,upstreamTimeoutMs=180000,streamIdleTimeoutMs=60000}={}) {
+  compaction,compactionProfile=()=>"github",rememberConversationSource=()=>{},resolveCompactionSource=()=>null,recordUsageFn=recordUsage,fetchGoogle=fetch,googleOrigin=GOOGLE_ORIGIN,requestBodyTimeoutMs=120000,upstreamTimeoutMs=180000,copilotTimeoutMs,streamIdleTimeoutMs=60000}={}) {
   if(![GOOGLE_ORIGIN,"https://cloudcode-pa.googleapis.com"].includes(googleOrigin))throw new Error("Unrecognized Google control origin");
   const acquireControl=createRequestAdmission({maxBytes:4*CONTROL_BODY_BYTES,maxQueued:8});
   let active=0,observed=false,catalogModels=null,catalogDefaultSupported=null,catalogDefaultModel=null;const nativeWindows=new Map();
@@ -212,7 +212,7 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
       converted=antigravityToChat(request,{model:target.model,effort:target.effort,reasoningEfforts:target.effort?[target.effort]:[],stream});
       markResponseModel(target.model);markRequestObservation({usage_state:"pending"});
       session=privacy?.prepareSession?await privacy.prepareSession(converted.chat,{protocol:"chat",client:"gemini",signal:abort.signal}):passthrough(converted.chat);
-      const callOptions={signal:abort.signal,sourceBodyManaged:true,observeBodyWrite:true,retryOptions:{retries:0},onUpstreamStart:()=>abort.setTimeout(upstreamTimeoutMs,"upstream_timeout")};
+      const callOptions={signal:abort.signal,sourceBodyManaged:true,observeBodyWrite:true,retryOptions:{retries:0},onUpstreamStart:()=>abort.setTimeout(copilotTimeoutMs??upstreamTimeoutMs,"upstream_timeout")};
       phase="upstream";
       const upstream=compacting&&compaction?await compaction.run({body:session.body,protocol:"chat",scope:JSON.stringify(["gemini","github",compactionProfile()]),source:"github",client:"gemini",
         inputLimit:target.maxTokens,outputAllowance:session.body.max_completion_tokens||session.body.max_tokens||0,native:client.chatCompletions,options:callOptions,
@@ -226,6 +226,7 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
         abort.signal.throwIfAborted();counts.failed++;outcome="failed";markResponseTerminal(outcome,{origin:"upstream_http"});
         sendUpstreamError(res,{status,headers},JSON.stringify({error:"Copilot generation was refused (HTTP "+status+")"}));return;
       }
+      if(copilotTimeoutMs!==undefined)abort.setTimeout(stream?streamIdleTimeoutMs:upstreamTimeoutMs,stream?"stream_idle_timeout":"upstream_timeout");
       if(!stream){
         const data=JSON.parse(await readBoundedResponseText(upstream,{maxBytes:MAX_REPLY,signal:abort.signal,label:"Copilot response"}));captureUsage(data);
         const result=chatToAntigravity(data,converted.originalNames);markToolActivity(result,"gemini");

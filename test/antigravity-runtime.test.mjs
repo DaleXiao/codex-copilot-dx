@@ -76,6 +76,39 @@ test("switching an existing Copilot conversation to Google is rejected before Go
   const stored=fs.readFileSync(path.join(path.dirname(f.file),"conversation-sources.json"),"utf8");assert.doesNotMatch(stored,/private fixture|fixture-root/);
 });
 
+test("the Antigravity Copilot timeout override does not change native Google waits", async t => {
+  const f = fixture(t);
+  await f.runtime.action({ action: "enable", accept_background_copilot: true }, "http://127.0.0.1:2026");
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const googleStarted = Promise.withResolvers(), copilotStarted = Promise.withResolvers();
+  const hold = (signal, started) => new Promise((_, reject) => {
+    signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+    started.resolve(signal);
+  });
+  const options = { env: { CCDX_ANTIGRAVITY_COPILOT_TIMEOUT_MS: "500" }, upstreamTimeoutMs: 100,
+    dashboardOptions: { home: f.home }, codexModelRegistry: { models: catalog },
+    codexClient: { chatCompletions: async (_, { signal, onUpstreamStart }) => {
+      onUpstreamStart();
+      return hold(signal, copilotStarted);
+    } },
+    antigravityOptions: { guardSource: () => {}, googleFetch: async (_, { signal }) => hold(signal, googleStarted) } };
+  const invoke = model => invokeAdapter(options, { url: "/antigravity/v1internal:streamGenerateContent",
+    headers: { host: "127.0.0.1:2026", authorization: "Bearer FIXTURE" },
+    body: { model, requestType: "agent", request: { contents: [{ role: "user", parts: [{ text: "fixture" }] }] } } });
+  const google = invoke("gemini-native"), copilot = invoke("ccdx-copilot-gemini-4-carbon-high");
+  const started = (signal, response) => Promise.race([signal.promise, response.then(result => {
+    throw new Error(`Fixture returned HTTP ${result.status} before calling its source`);
+  })]);
+  const [googleSignal, copilotSignal] = await Promise.all([started(googleStarted, google), started(copilotStarted, copilot)]);
+  t.mock.timers.tick(100);
+  assert.equal(googleSignal.aborted, true);
+  assert.equal(copilotSignal.aborted, false);
+  assert.equal((await google).status, 504);
+  t.mock.timers.tick(400);
+  assert.equal(copilotSignal.aborted, true);
+  assert.equal((await copilot).status, 504);
+});
+
 test("model selection persists without altering other settings and rejects unavailable or duplicate IDs",async t=>{
   const f=fixture(t);await f.runtime.action({action:"enable",accept_background_copilot:true},"http://127.0.0.1:2026");
   const ids=f.runtime.snapshot().models.map(model=>model.id);

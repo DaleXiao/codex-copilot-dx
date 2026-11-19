@@ -527,8 +527,6 @@ export function createAdapterHandler(options = {}) {
     const finishRequest = ({ statusCode = 0, aborted = false } = {}) => {
       if (requestFinished) return;
       requestFinished = true;
-      if (!aborted && statusCode >= 200 && statusCode < 300 && !httpEvidence.model_error)
-        try { context?.noteReviewModel?.(); } catch { /* Optional model observation must not affect request completion. */ }
       if (trackRequest && (statusCode >= 400 || httpEvidence.model_error === true)) {
         try { httpErrors.record(buildHttpFailureDetails({ ...httpEvidence, statusCode, route: routeName, requestId, model: context?.model || context?.requestedModel,
           method: ["GET", "HEAD", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"].includes(req.method) ? req.method : "OTHER",
@@ -544,8 +542,11 @@ export function createAdapterHandler(options = {}) {
         rejectionReason: httpEvidence.reason || (httpEvidence.code === "ccdx_client_source_disabled" ? httpEvidence.code : undefined) }); } catch {}
       try { finishTerminalActivity(); } catch {}
       try { context?.finishProvider?.(); } catch {}
-      if (applicationEvidenceScope && !aborted && statusCode >= 200 && statusCode < 300)
+      if (applicationEvidenceScope && !aborted && statusCode >= 200 && statusCode < 300) {
         options.providerRuntime?.applicationEvidence?.accept(req, "codex", applicationEvidenceScope, applicationEvidenceAt);
+        if (context?.noteReviewModel && !httpEvidence.model_error)
+          try { context.noteReviewModel(); } catch { /* Optional model observation must not affect request completion. */ }
+      }
     };
     const containUnexpectedError = (error) => {
       try { finishRequest({ statusCode: res.statusCode >= 400 ? res.statusCode : 500 }); } catch {}

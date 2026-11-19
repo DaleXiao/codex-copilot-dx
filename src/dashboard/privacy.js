@@ -23,7 +23,7 @@
     const status = ["downloading", "loading", "error"].includes(state.state) ? state.state : state.enabled ? state.state === "ready" ? state.pending_checks ? "checking" : "ready" : "error" : state.state === "installed" || state.state === "ready" ? "installed" : "off";
     words("privacy-status", `privacy_state_${status}`, { percent: Math.min(100, Math.round((state.downloaded_bytes || 0) * 100 / Math.max(1, state.download_bytes))) });
     el("privacy-status").hidden = status === "off";
-    el("privacy-device").textContent = state.backend ? state.device && state.device !== state.backend ? `${state.backend} · ${state.device}` : state.backend : "";
+    el("privacy-device").textContent = state.backend ? state.device && state.device !== state.backend ? `${state.backend} (${state.device})` : state.backend : "";
     const check = state.enabled && state.last_check?.state === "failed" ? state.last_check : null;
     if (state.error) words("privacy-error", state.error.includes("download") ? "privacy_download_error" : "privacy_error");
     else if (state.enabled && state.last_response?.state === "failed") words("privacy-error", "privacy_response_error", { code: state.last_response.privacy_error || "ccdx_privacy_response_invalid" });

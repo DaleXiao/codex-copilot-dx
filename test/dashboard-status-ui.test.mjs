@@ -56,7 +56,7 @@ test("request-context rows are lazy, bounded, text-only and distinguish missing 
   const document = { getElementById(id) { if (!nodes.has(id)) nodes.set(id, createNode()); return nodes.get(id); }, createElement: createNode };
   const renderContext = runInNewContext(`${renderScript}\nrenderContext;`, { document, ccdxLanguage: dashboardLanguage });
   renderContext({ recent_requests: [
-    { model: "gpt-6.1-sol", outcome: "completed", context: { payload_bytes: 1048576, images: 0, input_tokens: 150, context_window_tokens: 1000, client_tool_errors_received: 2, source_queue_ms: 20, body_queue: { wait_ms: 942, outcome: "admitted", reason: "exclusive_waiter", requested_bytes: 1048576, active_bytes: 4194304, limit_bytes: 33554432 } } },
+    { model: "gpt-6.1-sol", outcome: "completed", application: "codex_app", provider: "github", timings_ms: { finished: 120030 }, context: { payload_bytes: 1048576, images: 0, input_tokens: 150, context_window_tokens: 1000, client_tool_errors_received: 2, source_queue_ms: 20, body_queue: { wait_ms: 942, outcome: "admitted", reason: "exclusive_waiter", requested_bytes: 1048576, active_bytes: 4194304, limit_bytes: 33554432 } } },
     { model: "<script>not-html</script>", outcome: "failed", context: { payload_bytes: null, images: null, input_tokens: null, context_window_tokens: 1000 } },
   ], by_route: { responses_compact: { terminal_outcomes: { totals: { completed: 2, incomplete: 0, failed: 1 } } } } });
   assert.equal(nodes.get("context-body").children.length, 0);
@@ -69,16 +69,20 @@ test("request-context rows are lazy, bounded, text-only and distinguish missing 
   assert.equal(detail(rows[0], "images"), "—", "Unknown image count remains unknown in technical details");
   assert.equal(detail(rows[0], "input_window"), "—", "Unknown input occupancy remains unknown");
   assert.equal(detail(rows[1], "images"), "0");
+  assert.equal(rows[1].children[1].textContent, "Codex App");
+  assert.equal(rows[1].children[4].textContent, "120.03 s");
+  assert.equal(detail(rows[1], "source"), "GitHub Copilot");
+  assert.equal(detail(rows[1], "input_tokens"), "150");
   assert.equal(detail(rows[1], "input_window"), "15.0%");
   assert.equal(rows[0].children[3].textContent, "Failed");
   assert.equal(rows[1].children[3].textContent, "Completed");
   assert.equal(rows[0].children[0].textContent, "—", "Missing timestamp is not guessed");
   assert.equal(detail(rows[1], "wire_mib"), "1.00 MiB", "Payload bytes remain available");
   assert.equal(detail(rows[0], "body_queue_wait"), undefined);
-  assert.match(detail(rows[1], "body_queue_wait"), /942 ms · Admitted.*At entry: An earlier request needed exclusive access/);
+  assert.match(detail(rows[1], "body_queue_wait"), /942 ms \(Admitted\).*At entry: An earlier request needed exclusive access/);
   assert.equal(detail(rows[1], "source_queue_wait"), "20 ms");
   assert.equal(detail(rows[1], "client_tool_errors_received"), "2", "Explicit tool errors remain separate from model completion");
-  assert.match(nodes.get("context-note").textContent, /2 completed · 0 incomplete · 1 failed/);
+  assert.match(nodes.get("context-note").textContent, /2 completed, 0 incomplete, 1 failed/);
   for (const [result, label] of [["admitted", "Admitted"], ["timed_out", "Queue timed out"], ["aborted", "Wait cancelled"]]) {
     renderContext({ recent_requests: [{ outcome: result === "admitted" ? "completed" : "failed", context: { body_queue: {
       wait_ms: 108247, outcome: result, reason: "body_budget", length_known: false, requested_bytes: 33554432, active_bytes: 211918, limit_bytes: 33554432,
@@ -144,7 +148,7 @@ test("dashboard usage renders percentages, zero hits and unknown rates alongside
 });
 
 test("dashboard shows active per-request caps separately from history occupancy", () => {
-  assert.match(html, /Per-request limits<\/span><br><span id="body-limits">/);
+  assert.match(html, /Per-request limits<\/span><span id="body-limits">/);
   assert.match(html, /<strong id="history">—<\/strong><progress id="history-meter"/);
   const nodes = new Map();
   const createNode = () => ({
@@ -165,6 +169,7 @@ test("dashboard shows active per-request caps separately from history occupancy"
   const data = {
     version: "test",
     requests: { total: 4, status_4xx: 1, status_5xx: 0, active: 1 },
+    http_errors: { by_category: { inference: 1, protocol: 0 } },
     limits: { max_body_bytes: 64 * 1048576, max_decoded_body_bytes: 256 * 1048576 },
     response_history: { bytes: 32 * 1048576, maxBytes: 128 * 1048576, entries: 2 },
   };
@@ -173,6 +178,11 @@ test("dashboard shows active per-request caps separately from history occupancy"
   assert.equal(nodes.get("body-limits").textContent, "Received limit: 64.0 MiB\nAfter unpacking: 256.0 MiB");
   assert.equal(nodes.get("history").textContent, "32.0 MiB / 128.0 MiB");
   assert.equal(nodes.get("history-meter").value, 25);
+  assert.equal(nodes.get("requests-4xx").textContent, "1");
+  assert.equal(nodes.get("requests-active").textContent, "1");
+  assert.equal(nodes.get("http-inference").textContent, "1");
+  assert.equal(nodes.get("http-mobile-inference").textContent, "1");
+  assert.equal(nodes.get("http-protocol").textContent, "0");
 
   data.limits.max_decoded_body_bytes = 128 * 1048576;
   render(data);

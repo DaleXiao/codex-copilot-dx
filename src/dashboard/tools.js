@@ -167,7 +167,7 @@
         el("config-preview-details").textContent = data.checks.map(check => check.message).join("\n");
         text("checks-note", "tools_review_repair");
       } else if (action.action === "compatibility") {
-        el("compatibility-note").textContent = (data.checks || []).map(check => check.message).join(" · ");
+        el("compatibility-note").textContent = (data.checks || []).map(check => check.message).join("\n");
       } else if (action.action === "repair") {
         el("config-repair-preview").hidden = true;repairPreview = null;
         if (data.local?.checked_at) renderChecks(data.local);

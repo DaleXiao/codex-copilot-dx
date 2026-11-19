@@ -93,7 +93,7 @@
       let tr = detailRows.get(id);
       if (!tr) { tr = entry("tr");for (let i = 0; i < 6; i++) tr.append(entry("td"));detailRows.set(id, tr); }
       const values = [appName(row.application), sourceName(row.provider, awaitingMetadata(row)), modelName(row.model, awaitingMetadata(row)), format(fresh ? status(row) : "flow_last_observed"), `${((row.elapsed_ms + Math.max(0, Date.now() - sampledAt)) / 1000).toFixed(1)} s`, row.upstream_attempts.toLocaleString()];
-      if (row.previous_request) values[3] += " · " + format("flow_previous_result", { reason: row.previous_request.stop_reason || row.previous_request.outcome || "—", seconds: (row.previous_request.elapsed_ms / 1000).toFixed(1) });
+      if (row.previous_request) values[3] += " (" + format("flow_previous_result", { reason: row.previous_request.stop_reason || row.previous_request.outcome || "—", seconds: (row.previous_request.elapsed_ms / 1000).toFixed(1) }) + ")";
       tr.title = row.session_id ? format("flow_session_previous", { session: row.session_id, reason: row.previous_request?.stop_reason || row.previous_request?.outcome || "—", seconds: row.previous_request ? (row.previous_request.elapsed_ms / 1000).toFixed(1) : "—" }) : format("flow_session_unknown");
       values.forEach((value, i) => { if (tr.children[i].textContent !== value) tr.children[i].textContent = value; });
       if (body.children[index] !== tr) body.insertBefore(tr, body.children[index] || null);

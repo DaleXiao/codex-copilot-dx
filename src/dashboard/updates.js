@@ -31,7 +31,7 @@ try {
       const command = installationCommand(platform, snapshot?.current?.version, snapshot?.latest?.version);
       element("install-command").textContent = command;
       element("copy-install").disabled = !command;
-      element("install-shell").textContent = platform === "windows" ? "Windows · PowerShell" : "macOS · Terminal";
+      element("install-shell").textContent = platform === "windows" ? "Windows PowerShell" : "macOS Terminal";
       element("install-windows-policy").hidden = platform !== "windows";
     }
     function render(data) {

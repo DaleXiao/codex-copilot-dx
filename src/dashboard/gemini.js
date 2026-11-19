@@ -59,7 +59,7 @@
       const isDefault=ids.includes(currentDefault())&&chosen.has(currentDefault());
       button.type='button';button.value=model.id;button.disabled=busy||sharedPending;
       const title=isDefault?'cap_default':'cap_set_default';language.set(button,title);
-      button.setAttribute('aria-pressed',String(isDefault));button.setAttribute('aria-label',model.name+' · '+language.format(title));
+      button.setAttribute('aria-pressed',String(isDefault));button.setAttribute('aria-label',language.format('model_action_label',{name:model.name,action:language.format(title)}));
       button.addEventListener('click',()=>{
         if(isDefault)return;
         const saved=ids.filter(id=>selected().includes(id)),visible=model.efforts.filter(item=>chosen.has(item.id));

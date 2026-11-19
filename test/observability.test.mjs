@@ -156,7 +156,7 @@ test("dashboard assets serve on loopback without initializing image tools or aff
   assert.equal(page.statusCode, 200);
   assert.match(page.headers["Content-Type"], /^text\/html/);
   assert.match(page.headers["Content-Security-Policy"], /default-src 'none'/);
-  assert.match(page.body, /CCDX · Dashboard/);
+  assert.match(page.body, /CCDX Dashboard/);
   assert.match(page.body, /id="theme-toggle"/);
   assert.match(page.body, /UPDATES WHILE VISIBLE/);
   for (const [url, type] of [["/ui.css", "text/css"], ["/theme.js", "text/javascript"], ["/language.js", "text/javascript"], ["/refresh.js", "text/javascript"], ["/status.js", "text/javascript"], ["/usage.js", "text/javascript"], ["/ui.js", "text/javascript"]]) {

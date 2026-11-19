@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 
+import { dashboardLanguage } from "../test-support/dashboard-language.mjs";
+
 const script = readFileSync(new URL("../src/dashboard/tool-activity.js", import.meta.url), "utf8");
 function fixture(saved) {
   const elements = new Map(), frames = new Map(), timers = new Map(), listeners = new Map();
@@ -22,7 +24,7 @@ function fixture(saved) {
     setTimeout(fn, ms) { timers.set(++sequence, { fn, at: now + ms });return sequence; }, clearTimeout: id => timers.delete(id),
     ResizeObserver: class { observe() {} }, MutationObserver: class { observe() {} },
     IntersectionObserver: class { constructor(fn) { intersection = fn; } observe() {} },
-    ccdxLanguage: { format: (key, values = {}) => `${key}:${values.count ?? ""}`, set: (target, key, values) => { target.textContent = context.ccdxLanguage.format(key, values); } } };
+    ccdxLanguage: { format: (key, values = {}) => key === "model_action_label" ? dashboardLanguage.format(key, values) : `${key}:${values.count ?? ""}`, set: (target, key, values) => { target.textContent = context.ccdxLanguage.format(key, values); } } };
   runInNewContext(script, context);
   return { api: context.ccdxToolActivity, el, motion, document, frames, listeners, get draws() { return draws; }, get saved() { return saved; },
     style(value) { el("tool-style").value = value;el("tool-style").listeners.get("change")(); },

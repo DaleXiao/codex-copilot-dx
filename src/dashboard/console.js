@@ -13,9 +13,9 @@
       const node = el(`client-version-${client}`);if (!node) continue;
       const rows = Array.isArray(value?.[client]) ? value[client] : [];
       if (!rows.length) { node.removeAttribute("data-i18n");node.textContent = "—";node.title = "";continue; }
-      const version = rows.map(row => `${rows.length > 1 ? `${row.name} ` : ""}${row.version}${row.build && row.build !== row.version ? ` (${row.build})` : ""}${row.cli_version ? ` · CLI ${row.cli_version}` : ""}`).join(" / ");
+      const version = rows.map(row => `${rows.length > 1 ? `${row.name} ` : ""}${row.version}${row.build && row.build !== row.version ? ` (${row.build})` : ""}${row.cli_version ? ` (CLI ${row.cli_version})` : ""}`).join(" / ");
       label(node, rows.some(row => row.changed_at) ? "client_version_changed" : "client_version_observed", { version });
-      node.title = rows.filter(row => row.changed_at).map(row => `${row.previous?.version || "—"} → ${row.version} · ${time(row.changed_at, { date: true })}`).join(" / ");
+      node.title = rows.filter(row => row.changed_at).map(row => `${row.previous?.version || "—"} → ${row.version} (${time(row.changed_at, { date: true })})`).join(" / ");
     }
   }
   globalThis.ccdxClientVersions = { render: renderClientVersions };

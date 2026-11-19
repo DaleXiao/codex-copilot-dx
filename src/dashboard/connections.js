@@ -241,7 +241,10 @@
     function showCapabilities() {
       const values = resolved(model, protocol.value), fresh = model.metadata?.deployment === source(editing)?.deployment_revision;
       words(status, fresh ? "cap_catalog_" + (model.metadata.state || "reported") : "cap_unknown");
-      if (fresh && model.metadata.checked_at) status.append(" · ", new Date(model.metadata.checked_at).toLocaleString());
+      if (fresh && model.metadata.checked_at) {
+        const checkedAt = document.createElement("time");checkedAt.className = "metadata-check-time";
+        checkedAt.textContent = new Date(model.metadata.checked_at).toLocaleString();status.append(checkedAt);
+      }
       body.replaceChildren();
       for (const key of ["context_window", "max_input_tokens", "max_output_tokens", "max_tool_definitions", "supported_parameters", "reasoning_efforts", "reasoning_adaptive", "tools", "input_modalities", "web_search"]) {
         const row = node("tr"), label = node("th");words(label, ({ reasoning_efforts: "cap_reasoning", input_modalities: "cap_input_types", web_search: "cap_search" })[key] || "cap_field_" + key);
@@ -455,7 +458,7 @@
       if (editingClient === "codex" && memoryMatches(item)) { const badge = node("span", undefined, "memory-model-badge");words(badge, "memory_extract_role");name.append(badge); }
       const action = button(bindingDefault === routeId(item) && bindingSelection.has(key) ? "cap_default" : "cap_set_default", () => { bindingDirty = true;bindingSelection.add(key);bindingDefault = routeId(item);rememberDraft();bindingRows({ kind: "default", key }); });
       action.setAttribute("aria-pressed", String(bindingDefault === routeId(item) && bindingSelection.has(key)));
-      action.dataset.binding = key;action.disabled = Boolean(item.unavailable);action.setAttribute("aria-label", item.id + " · " + format(bindingDefault === routeId(item) ? "cap_default" : "cap_set_default"));
+      action.dataset.binding = key;action.disabled = Boolean(item.unavailable);action.setAttribute("aria-label", format("model_action_label", { name: item.id, action: format(bindingDefault === routeId(item) ? "cap_default" : "cap_set_default") }));
       if (item.unavailable) { const warning = node("span", undefined, "hint binding-unavailable");words(warning, item.reason ? "visibility_" + item.reason : "cap_model_unavailable");name.append(warning); }
       const cell = node("td");cell.append(action);
       const details = [node("td", source(item.source)?.name || item.source), node("td", count(capability.context_window)), node("td", reasoningText(capability))];
@@ -465,7 +468,7 @@
         const saved = bindingEfforts.get(key);
         if (saved && !levels.includes(saved)) { const option = node("option");option.value = saved;option.disabled = true;words(option, "cap_effort_unavailable", { effort: saved });select.append(option); }
         for (const effort of levels) { const option = node("option", effort);option.value = effort;select.append(option); }
-        select.value = saved || "";select.dataset.effortBinding = key;select.setAttribute("aria-label", (item.display_name || item.id) + " · " + format("cap_reasoning"));
+        select.value = saved || "";select.dataset.effortBinding = key;select.setAttribute("aria-label", format("model_action_label", { name: item.display_name || item.id, action: format("cap_reasoning") }));
         select.disabled = busy || Boolean(item.unavailable) || !bindingSelection.has(key);
         select.addEventListener("change", () => { if (select.value) bindingEfforts.set(key, select.value);else bindingEfforts.delete(key);bindingDirty = true;rememberDraft();bindingRows({ kind: "effort", key }); });
         details[2].replaceChildren(select);effortControls++;

@@ -46,12 +46,11 @@
           applications.get(id).push({ provider, client });
         }
         if (provider.requests) {
-          const item = document.createElement("p");
-          localize(item, "provider_done_done_incomplete_incomplete_failed_failed", { provider: `${provider.name} · ${provider.request_scope || "Claude Messages"}`,
-            done: number(provider.requests.completed), incomplete: number(provider.requests.incomplete), failed: number(provider.requests.failed) });
-          requests.append(item);
+          requests.append(tableRow([provider.name, provider.request_scope || "Claude Messages", number(provider.requests.completed),
+            number(provider.requests.incomplete), number(provider.requests.failed)]));
         }
       }
+      if (!requests.children.length) emptyTable("provider-requests", 5, "no_requests_observed");
       for (const entries of applications.values()) {
         const selected = entries.find(entry => entry.client.selected === true) || (entries.length === 1 ? entries[0] : null);
         const client = selected?.client || { name: entries[0].client.name, state: entries.every(entry => entry.client.state === "paused") ? "paused" : "unknown" };
@@ -239,6 +238,20 @@
       }
     }
     
+    function renderRequestCounts(data) {
+      const requests = data.requests || {};
+      text("requests", number(requests.total));
+      text("requests-4xx", number(requests.status_4xx));
+      text("requests-5xx", number(requests.status_5xx));
+      text("requests-active", number(requests.active));
+      const categories = data.http_errors?.by_category;
+      for (const key of ["inference", "capability", "protocol", "route", "other"]) {
+        const value = categories ? number(categories[key] ?? 0) : "—";
+        text(`http-${key}`, value);
+        text(`http-mobile-${key}`, value);
+      }
+    }
+
     function render(data) {
       if (data.scope === "summary") {
         globalThis.ccdxDashboardActivity?.update(data.model_activity);
@@ -259,12 +272,7 @@
       text("models", number(models.models));
       text("model-source", "source_source_live_ccdx_models", { source: phrase(String(models.source || "unknown").slice(0, 80)) });
     
-      const requests = data.requests || {};
-      text("requests", number(requests.total));
-      text("request-errors", "4xx_client_5xx_server_active_active", { client: number(requests.status_4xx), server: number(requests.status_5xx), active: number(requests.active) });
-      const categories = data.http_errors?.by_category;
-      text("http-error-breakdown", categories ? "http_categories" : "—",
-        categories ? Object.fromEntries(["inference", "capability", "protocol", "route", "other"].map(key => [key, number(categories[key] || 0)])) : {});
+      renderRequestCounts(data);
       text("body-limits", "raw_raw_decoded_decoded", { raw: mib(data.limits?.max_body_bytes), decoded: mib(data.limits?.max_decoded_body_bytes) });
     
       const outcomes = data.stream_performance?.by_route?.responses?.terminal_outcomes?.totals || {};
@@ -350,11 +358,7 @@
       globalThis.ccdxDashboardFlow?.update(data, { live: true });globalThis.ccdxToolActivity?.update(data, { live: true });
       text("version", `v${data.version || "?"}`);
       text("uptime", "pid_pid_uptime_duration", { pid: number(data.pid), duration: duration(data.uptime_ms) });
-      text("requests", number(data.requests?.total));
-      text("request-errors", "4xx_client_5xx_server_active_active", { client: number(data.requests?.status_4xx), server: number(data.requests?.status_5xx), active: number(data.requests?.active) });
-      const categories = data.http_errors?.by_category;
-      text("http-error-breakdown", categories ? "http_categories" : "—",
-        categories ? Object.fromEntries(["inference", "capability", "protocol", "route", "other"].map(key => [key, number(categories[key] || 0)])) : {});
+      renderRequestCounts(data);
       for (const key of ["completed", "incomplete", "failed", "cancelled"]) {
         text(key, number(data.stream_performance?.by_route?.responses?.terminal_outcomes?.totals[key]));
         text(`claude-${key}`, number(data.providers?.claude?.requests?.performance?.by_route?.messages?.terminal_outcomes?.totals[key]));
@@ -401,20 +405,18 @@
         const ratio = finite(context.input_tokens) && finite(context.context_window_tokens) && Number(context.context_window_tokens) > 0
           ? `${(100 * Number(context.input_tokens) / Number(context.context_window_tokens)).toFixed(1)}%` : "—";
         const at = Date.parse(request.at);
-        const row = tableRow([Number.isFinite(at) ? time(at) : "—",
-          String(sourceLabel(request.provider) || "—").slice(0, 80),
-          String(request.model || "unknown").slice(0, 80), outcome, number(context.input_tokens), ""], { labels: [3] });
+        const totalMs = request.timings_ms?.finished;
+        const app = ["codex", "codex_app", "codex_cli", "claude", "claude_app", "claude_code", "gemini_app", "api"].includes(request.application) ? request.application : "api";
+        const row = tableRow([Number.isFinite(at) ? time(at) : "—", "",
+          String(request.model || "unknown").slice(0, 80), outcome, Number.isFinite(totalMs) ? requestTime(totalMs) : "—", ""], { labels: [3] });
+        localize(row.children[1], `flow_app_${app}`);
+        row.children[4].className = "recent-request-duration";
         const wireFailure = Number.isInteger(request.http_status) && request.http_status >= 400;
         if (request.rejection_reason) {
           if (globalThis.ccdxIcons) globalThis.ccdxIcons.set(row.children[3], "request_access_blocked", "unavailable");else localize(row.children[3], "request_access_blocked");
         } else if (globalThis.ccdxIcons) globalThis.ccdxIcons.set(row.children[3], wireFailure ? "request_http_failure" : outcome.toLowerCase(),
           wireFailure ? "warning" : globalThis.ccdxIcons.kind(outcome.toLowerCase()), wireFailure ? { status: request.http_status } : {});
         else if (wireFailure) localize(row.children[3], "request_http_failure", { status: request.http_status });
-        const totalMs = request.timings_ms?.finished;
-        if (Number.isFinite(totalMs)) {
-          const total = document.createElement("small");total.className = "table-note";
-          localize(total, "request_total_inline", { value: requestTime(totalMs) });row.children[3].append(total);
-        }
         const details = document.createElement("details"), summary = document.createElement("summary"), fields = document.createElement("dl");
         const key = String(request.request_id || `${request.at || ""}/${request.provider || ""}/${request.model || ""}`).slice(0, 256);
         details.setAttribute?.("data-request-key", key);details.open = expanded.has(key);
@@ -429,6 +431,7 @@
         const attempt = request.attempts?.at(-1);
         for (const [key, value] of [["request_id", request.request_id || "—"], ["http_status", number(request.http_status)], ["attempts", number(request.upstream_attempts)], ["model_outcome", globalThis.ccdxLanguage?.format(outcome.toLowerCase()) || outcome],
           ["time", Number.isFinite(at) ? time(at, { date: true }) : "—"],
+          ["source", String(sourceLabel(request.provider) || "—").slice(0, 80)], ["input_tokens", number(context.input_tokens)],
           ...(Number.isSafeInteger(queue?.wait_ms) && queue.wait_ms > 0 ? [["body_queue_wait", phrase("body_queue_detail", {
             ms: number(queue.wait_ms), result: phrase(queueResult), reason: phrase(queueReason),
             reserved: mib(queue.requested_bytes), occupied: mib(queue.active_bytes), limit: mib(queue.limit_bytes),

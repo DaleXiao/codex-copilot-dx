@@ -148,7 +148,7 @@
     const displayed = active.length ? rows : agents.length ? agents : rows;
     const groups = new Map(displayed.map(row => [`${row.application}:${row.provider}:${row.model}`, row]));
     el("tool-context").hidden = !displayed.length;
-    el("tool-context").textContent = groups.size === 1 ? `${appName(displayed[0].application)} · ${displayed[0].model === "other" ? phrase("flow_model_pending") : displayed[0].model}` : phrase("tool_groups", { count: groups.size });
+    el("tool-context").textContent = groups.size === 1 ? phrase("model_action_label", { name: appName(displayed[0].application), action: displayed[0].model === "other" ? phrase("flow_model_pending") : displayed[0].model }) : phrase("tool_groups", { count: groups.size });
     const list = el("tool-list");list.replaceChildren();
     for (const row of displayed.slice(0, 6)) {
       const agent = row.responding !== undefined;
@@ -161,7 +161,13 @@
     el("tool-details").hidden = !rows.length;
     el("tool-technical").replaceChildren();
     for (const row of rows) {
-      const line = document.createElement("p");line.textContent = `${appName(row.application)} · ${sourceName(row.provider)} · ${row.model} · ${row.name || phrase("tool_action_generic")} · ${phrase(`tool_row_${row.state}`)}`;el("tool-technical").append(line);
+      const line = document.createElement("dl");line.className = "tool-record-fields";
+      for (const [label, value] of [["client", appName(row.application)], ["source", sourceName(row.provider)],
+        ["model", row.model], ["tool_heading", row.name || phrase("tool_action_generic")], ["outcome", phrase(`tool_row_${row.state}`)]]) {
+        const term = document.createElement("dt"), detail = document.createElement("dd");
+        term.textContent = phrase(label);detail.textContent = value;line.append(term, detail);
+      }
+      el("tool-technical").append(line);
     }
     el("tool-more").hidden = rows.length <= 6 && !omitted;
     text("tool-more", "tool_more", { count: Math.max(0, rows.length - 6) + omitted });

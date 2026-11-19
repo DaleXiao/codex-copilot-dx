@@ -634,6 +634,11 @@ try {
         assert.ok(icon.includes(iconColors[palette][theme === "dark" ? 0 : 1]));
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, "No whole-page horizontal overflow");
         await nav("checks");
+        const desktopErrors = page.locator("#http-error-breakdown"), narrowErrors = page.locator(".http-error-grid");
+        assert.equal(await desktopErrors.isVisible(), width > 620);
+        assert.equal(await narrowErrors.isVisible(), width <= 620);
+        if (width <= 620) assert.equal(await narrowErrors.locator(":scope > div").evaluateAll(cells => new Set(cells.map(cell => cell.getBoundingClientRect().top)).size), 2);
+        else assert.equal(await desktopErrors.locator("thead tr th").count(), 5);
         const entries = page.locator('[data-view="checks"] .account-entry');
         assert.equal(await entries.count(), 2);
         const entryBoxes = await entries.evaluateAll(nodes => nodes.map(node => { const rect = node.getBoundingClientRect();return { height: rect.height, y: rect.y, decoration: getComputedStyle(node).textDecorationLine }; }));
@@ -645,7 +650,7 @@ try {
         await page.waitForFunction(() => document.getElementById("client-version-codex").textContent.includes("26.1103.32239"));
         assert.match(await page.locator("#client-version-codex").innerText(), /0\.167\.0-alpha\.3\.2/);
         assert.match(await page.locator("#client-version-antigravity").innerText(), /1\.141\.3\.1394/);
-        assert.match(await page.locator("#client-version-claude").innerText(), language === "zh" ? /已更新，接入待确认/ : /updated, access unverified/);
+        assert.match(await page.locator("#client-version-claude").innerText(), language === "zh" ? /已更新，接入待确认/ : /updated; access unverified/);
         await page.waitForFunction(() => document.getElementById("checks-body").children.length > 0);
         assert.equal(await page.locator("#checks-body .state-warning .state-icon").count(), 1);
         await page.locator("#preview-config-repair").click();
@@ -767,7 +772,7 @@ try {
         assert.match(await page.locator("#recent-failures li summary").innerText(), /Microsoft 365/);
         await page.locator("#failure-kind").selectOption("capability");
         assert.equal(await page.locator("#failures > li").count(), 1);
-        assert.match(await page.locator("#failures").innerText(), language === "zh" ? /出现 2 次/ : /2 occurrences/);
+        assert.match(await page.locator("#failures").innerText(), language === "zh" ? /共 2 次/ : /2 occurrences/);
         await page.locator("#failure-kind").selectOption("connection");
         assert.equal(await page.locator("#failures > li").count(), 1);
         await page.locator("#failures details > summary").click();

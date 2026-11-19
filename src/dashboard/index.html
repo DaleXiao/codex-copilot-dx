@@ -9,7 +9,7 @@
     <script src="/theme.js"></script>
     <link rel="stylesheet" href="/ui.css">
     <script src="/dashboard.js" defer></script>
-    <title data-i18n="ccdx_local_dashboard">CCDX · Dashboard</title>
+    <title data-i18n="ccdx_local_dashboard">CCDX Dashboard</title>
   </head>
   <body>
     <div class="shell">
@@ -31,7 +31,7 @@
 
       <header class="topbar">
         <div class="brand">CCDX </div>
-        <div class="topbar-actions"><span id="connection" class="badge neutral" role="status" data-i18n="reading">READING</span><button id="theme-toggle" class="icon-button" type="button" aria-label="Switch to light mode" title="Switch to light mode"><svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42"/></svg><svg class="icon-moon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M12 3A9 9 0 1 0 21 12 7 7 0 0 1 12 3Z"/></svg></button><button id="language-toggle" class="icon-button language-button" type="button" aria-label="Switch to Chinese" title="Switch to Chinese">中文</button><button id="auto-refresh" type="button" aria-pressed="true" data-i18n-title="activity_updates_live" title="Activity updates live. Catalogs and retained usage refresh on demand or every 30 minutes while open."><span class="auto-refresh-measure" aria-hidden="true" data-i18n="auto_refresh_off">Auto refresh · OFF</span><span id="auto-refresh-label" data-i18n="auto_refresh_on">Auto refresh · ON</span></button><button id="refresh" type="button" data-i18n="refresh">Refresh</button></div>
+        <div class="topbar-actions"><span id="connection" class="badge neutral" role="status" data-i18n="reading">READING</span><button id="theme-toggle" class="icon-button" type="button" aria-label="Switch to light mode" title="Switch to light mode"><svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42"/></svg><svg class="icon-moon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M12 3A9 9 0 1 0 21 12 7 7 0 0 1 12 3Z"/></svg></button><button id="language-toggle" class="icon-button language-button" type="button" aria-label="Switch to Chinese" title="Switch to Chinese">中文</button><button id="auto-refresh" type="button" aria-pressed="true" data-i18n-title="activity_updates_live" title="Activity updates live. Catalogs and retained usage refresh on demand or every 30 minutes while open."><span class="auto-refresh-measure" aria-hidden="true" data-i18n="auto_refresh_off">Auto refresh: Off</span><span id="auto-refresh-label" data-i18n="auto_refresh_on">Auto refresh: On</span></button><button id="refresh" type="button" data-i18n="refresh">Refresh</button></div>
       </header>
 
       <main id="main-content" tabindex="-1">
@@ -98,7 +98,7 @@
           </div>
           <p id="source-model-note" class="hint" data-i18n="github_model_in_codex">Choose your conversation model in Codex.</p>
           <div id="source-control-note" class="hint" role="status"></div>
-          <p class="table-note model-summary"><span data-i18n="codex_models">CODEX MODELS</span>: <strong id="models">—</strong> · <span id="model-source">—</span></p>
+          <p class="table-note model-summary"><span data-i18n="codex_models">CODEX MODELS</span>: <strong id="models">—</strong> <span id="model-source">—</span></p>
           <a class="section-link" href="#models" data-source-link="codex" data-i18n="view_model_list">View model list</a>
         </section>
         <section class="panel dashboard-section" aria-labelledby="review-heading">
@@ -280,7 +280,7 @@
             <div class="section-actions"><button id="source-access-save" type="submit" data-i18n="api_save" disabled>Save</button><button id="source-access-cancel" type="button" data-i18n="cap_discard_changes" disabled>Discard changes</button></div>
             <p id="source-access-note" class="hint" role="status" aria-live="polite"></p>
           </form>
-          <details class="tool-details" id="source-concurrency"><summary data-i18n="source_concurrency">Concurrency · Auto</summary>
+          <details class="tool-details" id="source-concurrency"><summary data-i18n="source_concurrency">Concurrency (Auto)</summary>
             <form id="source-limit-form"><div class="connection-fields"><label><span data-i18n="source_concurrency_maximum">Maximum concurrency</span><input id="source-limit-maximum" type="number" min="1" max="128" step="1" inputmode="numeric" placeholder="Auto" data-i18n-placeholder="source_concurrency_auto"></label></div>
               <p class="hint" data-i18n="source_concurrency_hint">Leave blank for Auto. A value only sets its ceiling.</p>
               <div class="section-actions"><button id="source-limit-save" type="submit" data-i18n="api_save" disabled>Save</button></div><p id="source-limit-note" class="hint" role="status" aria-live="polite"></p>
@@ -325,7 +325,21 @@
           </section>
           <details class="panel dashboard-section" id="runtime-diagnostics"><summary data-i18n="runtime_details">RUNTIME DETAILS</summary>
         <section class="diagnostic-section"><h2 data-i18n="process_listener">LOCAL SERVICE</h2><p id="process-state" class="table-note"></p><p id="process-memory" class="hint"></p><p id="process-queues" class="hint"></p><p id="process-notice" class="hint" role="status"></p></section>
-        <section class="diagnostic-section"><h2 data-i18n="http_traffic">SERVICE REQUESTS</h2><strong id="requests">—</strong><p id="request-errors">—</p><p id="http-error-breakdown">—</p><p><span data-i18n="per_request_limits_active">Per-request limits</span><br><span id="body-limits">—</span></p></section>
+        <section class="diagnostic-section request-diagnostics"><h2 data-i18n="http_traffic">SERVICE REQUESTS</h2>
+          <dl id="request-errors" class="request-kpis">
+            <div><dt data-i18n="requests">Requests</dt><dd id="requests">—</dd></div>
+            <div><dt>4xx</dt><dd id="requests-4xx">—</dd></div><div><dt>5xx</dt><dd id="requests-5xx">—</dd></div>
+            <div><dt data-i18n="active">Active</dt><dd id="requests-active">—</dd></div>
+          </dl>
+          <table id="http-error-breakdown" class="http-error-table" data-i18n-label="http_error_classes" aria-label="HTTP errors by category">
+            <thead><tr><th scope="col" data-i18n="http_error_inference">Generation</th><th scope="col" data-i18n="http_error_capability">Capability and access</th><th scope="col" data-i18n="http_error_protocol">Request method</th><th scope="col" data-i18n="http_error_route">Request path</th><th scope="col" data-i18n="other">Other</th></tr></thead>
+            <tbody><tr><td id="http-inference">—</td><td id="http-capability">—</td><td id="http-protocol">—</td><td id="http-route">—</td><td id="http-other">—</td></tr></tbody>
+          </table>
+          <dl class="http-error-grid" data-i18n-label="http_error_classes" aria-label="HTTP errors by category">
+            <div><dt data-i18n="http_error_inference">Generation</dt><dd id="http-mobile-inference">—</dd></div><div><dt data-i18n="http_error_capability">Capability and access</dt><dd id="http-mobile-capability">—</dd></div><div><dt data-i18n="http_error_protocol">Request method</dt><dd id="http-mobile-protocol">—</dd></div><div><dt data-i18n="http_error_route">Request path</dt><dd id="http-mobile-route">—</dd></div><div><dt data-i18n="other">Other</dt><dd id="http-mobile-other">—</dd></div>
+          </dl>
+          <p class="request-limits-line"><span data-i18n="per_request_limits_active">Per-request limits</span><span id="body-limits">—</span></p>
+        </section>
           </details>
           <details class="panel dashboard-section"><summary data-i18n="more_checks_reports">MORE CHECKS AND REPORTS</summary>
             <div class="section-actions"><button id="check-network" type="button" data-i18n="tools_network_check">Network settings</button></div><p id="network-check-result" class="hint" role="status"></p>
@@ -390,7 +404,7 @@
         <section id="tool-activity" class="panel dashboard-section" aria-labelledby="tool-title" data-paused="true">
           <div class="panel-heading"><h2 id="tool-title" data-i18n="tool_heading">TOOL AND AGENT ACTIVITY</h2><label class="tool-style" for="tool-style"><span data-i18n="tool_style">Style</span><select id="tool-style"><option value="halo" data-i18n="tool_style_halo">Beam ring</option><option value="grid" data-i18n="tool_style_grid">Grid</option><option value="busy" data-i18n="tool_style_busy">Busy pulse</option><option value="speed" data-i18n="tool_style_speed">Fast streaks</option><option value="assembly" data-i18n="tool_style_assembly">Assembly line</option><option value="off" data-i18n="tool_style_off">Off</option></select></label></div>
           <div id="tool-stage" class="tool-stage" data-style="halo">
-            <div class="tool-visual"><div class="tool-orbit"><canvas id="tool-canvas" role="img" data-i18n-label="tool_heading" aria-label="Tool and agent activity"></canvas></div><p class="tool-narration"><span id="tool-state" role="status" aria-live="polite" data-i18n="flow_status_unknown">Waiting for a fresh status</span><span id="tool-cursor" aria-hidden="true" hidden> ···</span></p></div>
+            <div class="tool-visual"><div class="tool-orbit"><canvas id="tool-canvas" role="img" data-i18n-label="tool_heading" aria-label="Tool and agent activity"></canvas></div><p class="tool-narration"><span id="tool-state" role="status" aria-live="polite" data-i18n="flow_status_unknown">Waiting for a fresh status</span><span id="tool-cursor" aria-hidden="true" hidden> …</span></p></div>
             <div class="tool-content"><p id="tool-context" class="tool-context" hidden></p><div id="tool-list"></div><p id="tool-more" class="hint" hidden></p><details id="tool-details" class="tool-details tool-technical" hidden><summary data-i18n="tool_details">Call details</summary><div id="tool-technical"></div></details></div>
           </div>
         </section>
@@ -398,13 +412,12 @@
           <summary data-i18n="requests_by_source">REQUESTS BY SOURCE</summary>
           <p class="hint" data-i18n="results_since_startup_partial_usage_is_marked_separately">Results since startup. Partial usage is marked separately.</p>
           <div class="table-wrap"><table><thead><tr><th data-i18n="source">Source</th><th data-i18n="protocol">Protocol</th><th data-i18n="active">Active</th><th data-i18n="completed">Completed</th><th data-i18n="incomplete">Incomplete</th><th data-i18n="failed">Failed</th><th data-i18n="cancelled">Cancelled</th><th data-i18n="unknown">Unknown</th></tr></thead><tbody id="source-requests-body"></tbody></table></div>
-          <details class="tool-details"><summary data-i18n="source_summary_details">Source summaries</summary><div id="provider-requests" class="hint"></div></details>
+          <details class="tool-details"><summary data-i18n="source_summary_details">Source summaries</summary><div class="table-wrap"><table><thead><tr><th scope="col" data-i18n="source">Source</th><th scope="col" data-i18n="protocol">Protocol</th><th scope="col" data-i18n="completed">Completed</th><th scope="col" data-i18n="incomplete">Incomplete</th><th scope="col" data-i18n="failed">Failed</th></tr></thead><tbody id="provider-requests"></tbody></table></div></details>
         </details>
         <details class="panel dashboard-section" id="request-context" open>
           <summary data-i18n="recent_request_context">RECENT REQUESTS</summary>
-          <p id="context-note" class="table-note">—</p>
-          <div class="table-wrap"><table><thead><tr><th scope="col" data-i18n="time">Time</th><th scope="col" data-i18n="source">Source</th><th scope="col" data-i18n="model">MODEL</th><th scope="col" data-i18n="outcome">RESULT</th><th scope="col" data-i18n="input_tokens">INPUT USAGE</th><th scope="col" data-i18n="tools_details">Details</th></tr></thead><tbody id="context-body"><tr><td colspan="6" data-i18n="no_observed_request_metadata">No request records yet.</td></tr></tbody></table></div>
-          <details class="tool-details"><summary data-i18n="record_scope">Record scope</summary><p class="hint" data-i18n="recent_upstream_request_metadata_not_exact_live_session_occupanc">No prompts or images are stored. — means unavailable data.</p><p class="hint" data-i18n="http_2xx_model_completed">HTTP status and model outcome are recorded separately.</p></details>
+          <div class="table-wrap"><table class="recent-requests-table"><thead><tr><th scope="col" data-i18n="time">Time</th><th scope="col" data-i18n="client">App</th><th scope="col" data-i18n="model">MODEL</th><th scope="col" data-i18n="outcome">RESULT</th><th scope="col" class="recent-request-duration" data-i18n="request_total_time">Total time</th><th scope="col" data-i18n="tools_details">Details</th></tr></thead><tbody id="context-body"><tr><td colspan="6" data-i18n="no_observed_request_metadata">No request records yet.</td></tr></tbody></table></div>
+          <details class="tool-details"><summary data-i18n="record_scope">Record scope</summary><p id="context-note" class="table-note">—</p><p class="hint" data-i18n="recent_upstream_request_metadata_not_exact_live_session_occupanc">No prompts or images are stored. — means unavailable data.</p><p class="hint" data-i18n="http_2xx_model_completed">HTTP status and model outcome are recorded separately.</p></details>
         </details>
         <details class="lower" id="recent-failures" open>
           <summary class="panel-heading"><h2 data-i18n="recent_inference_http_failures">RECENT REQUEST ISSUES</h2><span id="failure-count">requests + events</span></summary>
@@ -437,7 +450,7 @@
         </details>
     <details class="tool-details"><summary data-i18n="terminal_color_preview">Terminal preview</summary>
 <div id="terminal-color-sample" class="terminal-sample" data-terminal-palette="green" aria-label="Terminal color preview" data-i18n-label="terminal_color_preview">
-      <div class="terminal-caption"><span>CCDX · Terminal</span><span data-i18n="appearance_sample">Sample data</span></div>
+      <div class="terminal-caption"><span>CCDX Terminal</span><span data-i18n="appearance_sample">Sample data</span></div>
       <div class="terminal-brand">
         <pre class="terminal-logo" aria-hidden="true">   ▄▀█▄ ▄█▀▄
    █ ▄███▄ █
@@ -483,7 +496,7 @@
           <div class="nightly-update">
             <div class="setting-row"><label for="nightly-update" data-i18n="nightly_update">Update overnight</label><input id="nightly-update" type="checkbox" role="switch" aria-describedby="nightly-risk" disabled><span id="nightly-state" class="hint" role="status"></span></div>
             <p id="nightly-risk" class="hint" data-i18n="nightly_risk">Updates install a new version and restart CCDX. Continuing a conversation may be affected.</p>
-            <div id="nightly-rules" hidden><dl class="nightly-rules"><div><dt data-i18n="nightly_window">Update window</dt><dd data-i18n="nightly_window_value">00:00–04:00 · Local time</dd></div><div><dt data-i18n="nightly_when">When to update</dt><dd data-i18n="nightly_when_value">Idle for 10 minutes, after checks pass</dd></div><div><dt data-i18n="nightly_versions">Versions</dt><dd data-i18n="nightly_versions_value">Stable patches released at least 24 hours ago</dd></div><div><dt data-i18n="nightly_failure">If an update fails</dt><dd data-i18n="nightly_failure_value">Try restoring the previous version and pause this update</dd></div></dl></div>
+            <div id="nightly-rules" hidden><dl class="nightly-rules"><div><dt data-i18n="nightly_window">Update window</dt><dd data-i18n="nightly_window_value">00:00–04:00 local time</dd></div><div><dt data-i18n="nightly_when">When to update</dt><dd data-i18n="nightly_when_value">Idle for 10 minutes, after checks pass</dd></div><div><dt data-i18n="nightly_versions">Versions</dt><dd data-i18n="nightly_versions_value">Stable patches released at least 24 hours ago</dd></div><div><dt data-i18n="nightly_failure">If an update fails</dt><dd data-i18n="nightly_failure_value">Try restoring the previous version and pause this update</dd></div></dl></div>
           </div>
           <p id="update-state" class="hint" role="status" data-i18n="reading">READING</p>
           <div class="section-actions"><button id="install-update" type="button" data-i18n="update_install_now" disabled>Install update</button><span id="manual-update-note" class="hint" role="status"></span></div><details class="tool-details" id="update-advanced"><summary data-i18n="advanced_terminal">Advanced: terminal commands</summary><div id="update-command-row" class="update-command"><code id="update-command">ccdx update github</code><button type="button" id="copy-update" data-i18n="copy_command">Copy command</button></div>
@@ -491,7 +504,7 @@
           <p id="update-checked" class="refresh-time"></p>
           <details class="update-install"><summary data-i18n="update_install_help">Update failed? View full installation commands</summary><p class="hint" data-i18n="update_install_hint">Download the official installer. No Git required.</p>
             <div class="section-actions install-platforms" role="group" aria-label="Installation platform" data-i18n-label="installation_platform"><button type="button" data-install-platform="macos" aria-pressed="true">macOS</button><button type="button" data-install-platform="windows" aria-pressed="false">Windows</button></div>
-            <div class="install-command-heading"><span id="install-shell" class="hint">macOS · Terminal</span><button type="button" id="copy-install" data-i18n="copy_command">Copy command</button></div><pre id="install-command" class="install-command"></pre>
+            <div class="install-command-heading"><span id="install-shell" class="hint">macOS Terminal</span><button type="button" id="copy-install" data-i18n="copy_command">Copy command</button></div><pre id="install-command" class="install-command"></pre>
             <p class="hint" data-i18n="update_install_policy">Reuses compatible Node/npm or installs a private runtime. Keeps your registry, proxy, certificates and shell policy.</p>
             <p id="install-windows-policy" class="hint" hidden data-i18n="update_windows_policy">If scripts are blocked, use your company’s approved installation method.</p>
           </details></details><p id="update-copy-note" class="hint" role="status"></p>

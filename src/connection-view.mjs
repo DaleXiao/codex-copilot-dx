@@ -208,6 +208,16 @@ export function createConnectionView({ legacy, env, binding, plan, getSource, en
     snapshot() {
       const result = legacy.snapshot();
       if (!isManaged()) return result;
+      const codex = binding("codex");
+      let githubPreference;
+      if (codex.source === "github" && Array.isArray(codex.deployments) && result.github?.preference?.source !== "environment") {
+        const compiled = plan("codex"), reviewId = codex.auto_review_model || compiled.defaultModel;
+        const model = compiled.routes.get(reviewId)?.upstreamModel ??
+          (reviewId ? codex.deployments.find(item => deploymentModelId(item.source, item.model) === reviewId)?.model : null);
+        if (model) githubPreference = {
+          model, source: codex.auto_review_model ? "settings" : "default", reasoningEffort: codex.auto_review_effort,
+        };
+      }
       const performance = legacy.claudePerformance.snapshot(),
         totals = performance.by_route.messages.terminal_outcomes.totals;
       const ms = performance.by_route.messages.by_provider.m365;
@@ -226,6 +236,7 @@ export function createConnectionView({ legacy, env, binding, plan, getSource, en
         : null;
       return {
         ...result,
+        ...(githubPreference ? { github: { ...result.github, preference: githubPreference } } : {}),
         codex_provider: this.selection().codex,
         connections: snapshot(true),
         m365: {

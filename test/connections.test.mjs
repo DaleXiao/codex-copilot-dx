@@ -181,6 +181,24 @@ test("cached source catalogs and client inspection never create a gateway bindin
   assert.deepEqual(fs.readFileSync(path.join(s.home, ".codex/config.toml")), config);assert.deepEqual(fs.readFileSync(path.join(s.home, ".codex/auth.json")), auth);
   assert.equal(s.calls.length, 0);assert.equal(s.catalogCalls.length, 0);
 });
+test("managed GitHub review preferences are read back from disk after restart", async t => {
+  const primary = "gpt-6.1-sol", review = "gpt-5.5";
+  const githubRegistry = { models: { data: [primary, review].map(id => ({
+    id, supported_endpoints: ["/responses"], reasoning_efforts: ["low", "high"],
+  })) } };
+  const s = runtime(t, { githubRegistry });
+  await s.runtime.manageConnections({ operation: "client", id: "codex", enabled: true, allowed: ["github"],
+    deployments: [primary, review].map(model => ({ source: "github", model })), default_model: deploymentModelId("github", primary), auto_sync: false });
+  await s.runtime.action({ action: "auto-review", provider: "github", model: review, effort: "high" });
+  const persisted = readAccessSettings({ home: s.home, env: s.env }).clients.codex;
+  assert.equal(persisted.auto_review_model, deploymentModelId("github", review));
+  assert.equal(persisted.auto_review_effort, "high");
+  await s.runtime.close();
+  const restarted = runtime(t, { home: s.home, githubRegistry });
+  assert.deepEqual(restarted.runtime.snapshot().github.preference, { model: review, source: "settings", reasoningEffort: "high" });
+  const locked = runtime(t, { home: s.home, githubRegistry, env: { ...s.env, CCDX_AUTO_REVIEW_MODEL: primary } });
+  assert.equal(locked.runtime.snapshot().github.preference.source, "environment");
+});
 test("explicit manual sync writes only the target, retains auto_sync false and refuses stale client drafts", async t => {
   const writes = [], s = runtime(t, { configureCodex: input => { writes.push(input);return { state: "configured" }; } });
   const api = await save(s.runtime), client = s.runtime.connections().clients.find(client => client.id === "codex"), model = client.model_plan.available.find(model => model.source === api && model.id === "custom/response");

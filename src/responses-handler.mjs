@@ -379,8 +379,12 @@ export function createResponsesHandler(options) {
           carbonBridge = prepareCarbonToolBridge(prepared.body, prepared.currentInputStart);
           if (streaming) carbonStream = createCarbonStreamAdapter(carbonBridge);
         }
-        const chatContext = carbonBridge
+        let chatContext = carbonBridge
           ? { ...prepared, body: carbonBridge.body, currentInputStart: carbonBridge.currentInputStart } : prepared;
+        if (carbonRoute) {
+          const { normalizeCarbonToolSchemas } = await import("./carbon-tool-schema.mjs");
+          chatContext = { ...chatContext, body: normalizeCarbonToolSchemas(chatContext.body) };
+        }
         let { chatReq, bodyText } = await prepareResponsesChatPayload(chatContext, {
           assertActive: assertPrepareActive,
           payloadOptions: responsesPayloadOptions,

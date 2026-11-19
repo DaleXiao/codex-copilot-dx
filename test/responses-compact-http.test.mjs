@@ -486,7 +486,7 @@ test("successful compaction clears visual-history recovery for the compacted tre
 });
 
 test("compact preserves its first visual request and applies recovery only after timeout", async t => {
-  t.mock.timers.enable({ apis: ["setTimeout"] });
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: Date.now() });
   clearResponseHistoryForTests();
   try {
     const history = prepareResponsesRequest({
@@ -527,6 +527,8 @@ test("compact preserves its first visual request and applies recovery only after
     const options = {
       imagePressure,
       responsesCompactFn,
+      // Preparation checks the clock as well as arming a timer. Keep both virtual.
+      now: () => Date.now(),
       upstreamTimeoutMs: 5,
     };
     const request = {

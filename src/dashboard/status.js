@@ -396,7 +396,19 @@
       const signature = JSON.stringify(contextRequests);
       if (signature === contextSignature) return;
       contextSignature = signature;
-      const expanded = new Set([...(body.querySelectorAll?.("details[open]") || [])].filter(details => details.dataset.disclosureClosing !== "true").map(details => details.getAttribute("data-request-key")));
+      const openDetails = [...(body.querySelectorAll?.("details[open]") || [])].filter(details => details.dataset.disclosureClosing !== "true");
+      const expanded = new Set(openDetails.map(details => details.getAttribute("data-request-key")));
+      const viewport = document.defaultView;
+      const focused = document.activeElement?.closest?.(".request-details > summary");
+      const keepFocus = Boolean(focused && body.contains?.(focused));
+      const topInView = summary => {
+        if (!viewport?.scrollY || !summary) return null;
+        const box = summary.getBoundingClientRect();return box.bottom > 0 && box.top < viewport.innerHeight ? box.top : null;
+      };
+      let reading = keepFocus ? focused : null;
+      if (!reading && viewport?.scrollY) reading = openDetails.map(details => details.querySelector("summary")).find(summary => topInView(summary) !== null);
+      const readingKey = reading?.parentElement?.getAttribute("data-request-key"), readingTop = topInView(reading);
+      let restoredSummary;
       body.replaceChildren();
       for (const request of contextRequests) {
         const context = request.context || {};
@@ -420,6 +432,7 @@
         const details = document.createElement("details"), summary = document.createElement("summary"), fields = document.createElement("dl");
         const key = String(request.request_id || `${request.at || ""}/${request.provider || ""}/${request.model || ""}`).slice(0, 256);
         details.setAttribute?.("data-request-key", key);details.open = expanded.has(key);
+        if (key === readingKey) restoredSummary = summary;
         details.className = "request-details";fields.className = "failure-detail";
         localize(summary, "tools_details");details.append(summary, fields);
         const queue = context.body_queue;
@@ -456,6 +469,13 @@
           fields.append(term, detail);
         }
         row.children[5].append(details);body.append(row);
+      }
+      if (restoredSummary) {
+        if (keepFocus) restoredSummary.focus({ preventScroll: true });
+        if (readingTop !== null) {
+          const shift = restoredSummary.getBoundingClientRect().top - readingTop;
+          if (Math.abs(shift) > 1) viewport.scrollBy(0, shift);
+        }
       }
       if (!contextRequests.length) emptyTable("context-body", 6, "no_observed_request_metadata");
     }

@@ -356,6 +356,18 @@ test("a truncated upstream stream reports an error without a successful finish",
   const f=fixture({client:{chatCompletions:async()=>new Response('data: {"choices":[{"delta":{"content":"partial"}}]}\n\n')}}),result=await invoke(f.handler,body()).done;
   assert.match(result.text,/partial/);assert.match(result.text,/ended before completion/);assert.doesNotMatch(result.text,/"finishReason":"STOP"/);
 });
+test("a malformed Copilot event after output fails the same stream without replay", async()=>{
+  let calls=0;
+  const perf=createStreamPerformanceMetrics({routeNames:["antigravity"]}),tracker=perf.begin("antigravity");
+  const f=fixture({client:{chatCompletions:async()=>{
+    calls++;return new Response('data: {"choices":[{"delta":{"content":"partial"}}]}\n\ndata: not-json\n\n');
+  }}});
+  const result=await runWithRequestContext({streamPerformance:tracker},()=>invoke(f.handler,body()).done);
+  tracker.finish({statusCode:result.status});
+  assert.equal(result.status,200);assert.equal(calls,1);
+  assert.match(result.text,/partial/);assert.match(result.text,/"error"/);assert.doesNotMatch(result.text,/"finishReason":"STOP"/);
+  assert.equal(perf.snapshot().recent_requests.at(-1).outcome,"failed");
+});
 test("privacy sessions restore split text tokens and release on completion",async()=>{
   const token="{{CCDX_"+"a".repeat(24)+"}}";let released=false,masked=false;
   const f=fixture({privacy:{prepareSession:async value=>{value.messages[0].content=token;masked=true;return {body:value,count:1,restoreText:text=>text.replaceAll(token,"fixture-secret"),restoreValue:value=>value,restoreToolValue:value=>value,release(){released=true}}}},

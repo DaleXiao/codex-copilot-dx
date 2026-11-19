@@ -765,9 +765,16 @@ try {
         assert.match(queueDetail, language === "zh" ? /本机排队记录.*108,247 ms.*已放行.*请求长度未知.*占用.*来源排队.*20 ms/s : /Local queue history.*108,247 ms.*Admitted.*Unknown body length.*in use.*Source queue.*20 ms/s);
         await refreshStatus();
         assert.equal(await metadata.getAttribute("open"), "", "Unchanged reads keep request details open");
+        const currentSummary = metadata.locator("summary");
+        const readingTop = await currentSummary.evaluate(node => {
+          node.scrollIntoView({ block: "center" });node.focus({ preventScroll: true });return node.getBoundingClientRect().top;
+        });
         extraRequests = [{ at: "2026-10-21T06:51:08Z", request_id: "synthetic-new", provider: "github", model: "gpt-new", outcome: "completed", context: {} }];
         await refreshStatus();
         assert.equal(await metadata.getAttribute("open"), "", "A new request keeps retained request details open");
+        const readingAfter = await currentSummary.evaluate(node => ({ focused: node === document.activeElement, top: node.getBoundingClientRect().top }));
+        assert.equal(readingAfter.focused, true, "New requests keep keyboard focus on the retained disclosure");
+        assert.ok(Math.abs(readingAfter.top - readingTop) <= 2, "New requests keep open details at the reader's viewport position");
         assert.equal(await page.locator("#recent-failures").isVisible(), true);
         assert.match(await page.locator("#recent-failures li summary").innerText(), /Microsoft 365/);
         await page.locator("#failure-kind").selectOption("capability");

@@ -47,6 +47,8 @@
     gemini_source_disabled: ["Copilot source is off.", "Copilot 来源未启用。"],
     gemini_open_sources: ["Model sources", "前往模型来源"],
     gemini_new_chat_default: ["New chat default", "新会话默认"],
+    gemini_copilot_timeout: ["Copilot response timeout (s)", "Copilot 响应超时（秒）"],
+    gemini_timeout_default: ["Default: {seconds}", "默认：{seconds}"],
     gemini_settings_saved: ["Model settings saved", "模型设置已保存"],
     gemini_scope: ["Native Google models keep their route. Copilot models and all Antigravity summaries, searches and images use Copilot. Ordinary Gemini chat keeps Google.", "原生 Google 模型保留原路由；Copilot 模型及全部 Antigravity 摘要、搜索和图像使用 Copilot。Gemini 普通聊天保留 Google。"],
     gemini_enable: ["Enable Copilot access", "启用 Copilot 接入"], gemini_disable: ["Pause Copilot access", "停用 Copilot 接入"], gemini_open: ["Open client", "打开客户端"],

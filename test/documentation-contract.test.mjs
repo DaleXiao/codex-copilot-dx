@@ -31,7 +31,7 @@ test("documented runtime defaults match the runtime configuration", () => {
   const defaults = loadRuntimeConfig({});
   assert.equal(bindings.length, Object.keys(defaults).length);
   for (const [, property, variable] of bindings) {
-    assert.ok(readme.includes(`| \`${variable}\` | \`${defaults[property]}\` |`), `${variable} default is missing or stale`);
+    assert.ok(readme.includes(`| \`${variable}\` | \`${defaults[property] ?? "unset"}\` |`), `${variable} default is missing or stale`);
   }
 });
 

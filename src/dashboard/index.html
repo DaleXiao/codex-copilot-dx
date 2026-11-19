@@ -179,6 +179,7 @@
             <div class="panel-heading"><h2 data-i18n="cap_visible_model">Available models</h2><span id="gemini-draft-state" role="status" hidden></span></div>
             <form id="gemini-model-form">
               <div class="table-wrap"><table class="binding-table"><thead><tr><th data-i18n="model">Model</th><th data-i18n="source">Source</th><th data-i18n="cap_context">Context</th><th data-i18n="cap_reasoning">Reasoning</th><th data-i18n="gemini_new_chat_default">New chat default</th></tr></thead><tbody id="gemini-models"></tbody></table></div>
+              <div class="section-actions"><label><span data-i18n="gemini_copilot_timeout">Copilot response timeout (s)</span> <input id="gemini-copilot-timeout" type="number" min="1" max="600" step="1" inputmode="numeric" disabled></label><span id="gemini-timeout-lock" class="hint" data-i18n="controlled_by_environment" hidden>Set at startup</span></div>
               <div class="section-actions"><button id="gemini-save" type="submit" data-i18n="api_save" disabled>Save</button><button id="gemini-cancel" type="button" data-i18n="cap_discard_changes" disabled>Discard changes</button><button id="gemini-use-app-default" type="button" data-i18n="gemini_use_app_default" hidden>Use app default</button></div>
             </form>
             <p id="gemini-default-note" class="hint" role="status" hidden></p>

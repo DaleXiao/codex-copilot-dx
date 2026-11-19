@@ -3,9 +3,10 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import {Readable} from "node:stream";
 import {createAntigravityRuntime} from "../src/antigravity-runtime.mjs";
 import {userSettingsPath} from "../src/user-settings.mjs";
-import {invokeAdapter} from "../test-support/adapter.mjs";
+import {invokeAdapter,invokeAdapterRequest} from "../test-support/adapter.mjs";
 import {parseManagedCommand} from "../src/cli-command-spec.mjs";
 import {runManagementCommand} from "../src/cli-management.mjs";
 
@@ -107,6 +108,50 @@ test("the Antigravity Copilot timeout override does not change native Google wai
   t.mock.timers.tick(400);
   assert.equal(copilotSignal.aborted, true);
   assert.equal((await copilot).status, 504);
+});
+
+test("saving only the Antigravity Copilot timeout preserves models and leaves in-flight waits alone", async t => {
+  const f = fixture(t);
+  await f.runtime.action({ action: "enable", accept_background_copilot: true }, "http://127.0.0.1:2026");
+  const old = Promise.withResolvers(), next = Promise.withResolvers(), started = [old, next];
+  const runtime = createAntigravityRuntime({ ...f.options, upstreamTimeoutMs: 100, client: { chatCompletions: async (_, { signal, onUpstreamStart }) => {
+    onUpstreamStart();
+    return new Promise((_, reject) => {
+      signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      started.shift().resolve(signal);
+    });
+  } } });
+  t.after(() => runtime.close());
+  const invoke = () => {
+    const body = { model: "ccdx-copilot-gemini-4-carbon-high", requestType: "agent",
+      request: { contents: [{ role: "user", parts: [{ text: "fixture" }] }] } };
+    const req = Readable.from([Buffer.from(JSON.stringify(body))]);
+    Object.assign(req, { method: "POST", url: "/antigravity/v1internal:streamGenerateContent",
+      headers: { host: "127.0.0.1:2026", "content-type": "application/json" }, socket: { remoteAddress: "127.0.0.1" } });
+    return invokeAdapterRequest({}, req, runtime.handle);
+  };
+  const save = value => runtime.action({ action: "models", copilot_timeout_seconds: value }, "http://127.0.0.1:2026");
+  const original = JSON.parse(fs.readFileSync(f.file));
+  for (const invalid of [0, 601, 2.5, "180"]) await assert.rejects(save(invalid), { statusCode: 400 });
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const first = invoke(), oldSignal = await old.promise;
+  const settings = await save(1);
+  assert.equal(settings.copilot_timeout.effective_ms, 1000);
+  assert.deepEqual(JSON.parse(fs.readFileSync(f.file)), { ...original, gemini_antigravity_copilot_timeout_seconds: 1 });
+  assert.equal(settings.selected_models, null);
+  const second = invoke(), nextSignal = await next.promise;
+  t.mock.timers.tick(100);
+  assert.equal(oldSignal.aborted, true);
+  assert.equal(nextSignal.aborted, false);
+  assert.equal((await first).status, 504);
+  t.mock.timers.tick(900);
+  assert.equal((await second).status, 504);
+  const locked = createAntigravityRuntime({ ...f.options, copilotTimeoutMs: 180000 });
+  t.after(() => locked.close());
+  assert.equal(locked.snapshot().copilot_timeout.effective_ms, 180000);
+  await assert.rejects(locked.action({ action: "models", copilot_timeout_seconds: 300 }), { statusCode: 409 });
+  assert.equal((await save(null)).copilot_timeout.effective_ms, 100);
+  assert.deepEqual(JSON.parse(fs.readFileSync(f.file)), original);
 });
 
 test("model selection persists without altering other settings and rejects unavailable or duplicate IDs",async t=>{

@@ -20,10 +20,13 @@ import {httpError} from "./http-errors.mjs";
 import {antigravityCopilotModels} from "./antigravity-models.mjs";
 
 const execute=promisify(execFile),key="gemini_antigravity_enabled",modelKey="gemini_antigravity_models",defaultKey="gemini_antigravity_default_model";
+const timeoutKey="gemini_antigravity_copilot_timeout_seconds";
+const validTimeout=value=>Number.isSafeInteger(value)&&value>=1&&value<=600;
 const validAlias=id=>typeof id==="string"&&/^ccdx-copilot-[a-z0-9._-]{1,140}$/.test(id);
 
 export function createAntigravityRuntime({client,models=()=>[],refreshModels,privacy,home=os.homedir(),env=process.env,inspect=inspectGeminiApp,
-  exec=execute,searchFn,imageFn,guardSource,googleFetch,acquireRequest,applicationControl,readToken=()=>readSavedGithubToken(home),...timeouts}={}) {
+  exec=execute,searchFn,imageFn,guardSource,googleFetch,acquireRequest,applicationControl,readToken=()=>readSavedGithubToken(home),
+  upstreamTimeoutMs=180000,copilotTimeoutMs,...timeouts}={}) {
   const options={home,env},guard=createConversationSourceGuard(options);
   const web=searchFn?null:createCopilotWeb({client,readToken});
   let app={status:"unknown"},route=null,lastOperation=null,compactionSalt;const conversationSources=new Map();
@@ -38,8 +41,10 @@ export function createAntigravityRuntime({client,models=()=>[],refreshModels,pri
     if(saved[key]!==undefined&&typeof saved[key]!=="boolean")throw httpError("Invalid Gemini integration setting",409);
     if(saved[modelKey]!==undefined&&(!Array.isArray(saved[modelKey])||saved[modelKey].length>100||new Set(saved[modelKey]).size!==saved[modelKey].length||saved[modelKey].some(id=>!validAlias(id))))throw httpError("Invalid Antigravity model selection",409);
     if(saved[defaultKey]!==undefined&&!validAlias(saved[defaultKey]))throw httpError("Invalid Antigravity default model",409);
-    return {configured:Object.hasOwn(saved,key),enabled:saved[key]===true,selected_models:saved[modelKey]??null,default_model:saved[defaultKey]??null};
+    return {configured:Object.hasOwn(saved,key),enabled:saved[key]===true,selected_models:saved[modelKey]??null,default_model:saved[defaultKey]??null,
+      copilot_timeout_seconds:validTimeout(saved[timeoutKey])?saved[timeoutKey]:null};
   };
+  const configuredTimeout=saved=>copilotTimeoutMs??(saved.copilot_timeout_seconds===null?undefined:saved.copilot_timeout_seconds*1000);
   const available=()=>settings().enabled&&readAccessSettings(options).providers.github?models():[];
   const sourceGuard=guardSource||((body,source,signal)=>{
     const labels=body.request?.labels||{},id=labels.root_cascade_id||labels.cascade_id;
@@ -60,7 +65,9 @@ export function createAntigravityRuntime({client,models=()=>[],refreshModels,pri
       }
       if(owner===profileHash("codex:"+githubTokenFingerprint(readToken()||"")))return{source:"github",background:true};
       return null;
-    },fetchGoogle:googleFetch,acquireRequest,...timeouts});
+    },fetchGoogle:googleFetch,acquireRequest,upstreamTimeoutMs,...timeouts,generationSettings(){
+      const saved=settings();return { selection:saved.selected_models, copilotTimeoutMs:configuredTimeout(saved) };
+    }});
   function snapshot(){
     const config=settings(),sourceEnabled=readAccessSettings(options).providers.github,activity=handler.snapshot();
     const listed=antigravityCopilotModels(models()).map(({id,model,displayName,effort,maxTokens})=>({id,model,name:displayName,effort,context_window:maxTokens,default:id===config.default_model,selected:config.selected_models===null||config.selected_models.includes(id)}));
@@ -76,34 +83,48 @@ export function createAntigravityRuntime({client,models=()=>[],refreshModels,pri
     const defaultUnavailable=config.default_model!==null&&(!desiredDefault||activity.catalog_default_supported===false);
     const current=applicationControl?.snapshot().antigravity;
     const visibleApp=current?{status:current.status,version:current.version||null,pids:current.pid?[current.pid]:[]}:app;
-    return {source:"gemini_antigravity",...config,source_enabled:sourceEnabled,default_model_unavailable:defaultUnavailable,models_reload_required:reload,app:visibleApp,application:current||null,route_observed:activity.observed,
+    return {source:"gemini_antigravity",...config,copilot_timeout:{effective_ms:configuredTimeout(config)??upstreamTimeoutMs,default_ms:upstreamTimeoutMs,locked:copilotTimeoutMs!==undefined},
+      source_enabled:sourceEnabled,default_model_unavailable:defaultUnavailable,models_reload_required:reload,app:visibleApp,application:current||null,route_observed:activity.observed,
       model_source:"Google + GitHub Copilot",background_source:"GitHub Copilot",ordinary_chat_source:"Google (unchanged)",
       compaction_source:"Observed conversation source; existing background policy when unassigned",
       models:listed,model_groups:[...groups.values()],activity,last_operation:lastOperation};
   }
   async function action(input={},baseUrl){
-    if(input&&Object.keys(input).some(name=>!["action","accept_background_copilot","models","default_model"].includes(name)))throw httpError("Invalid Gemini operation",400);
+    if(input&&Object.keys(input).some(name=>!["action","accept_background_copilot","models","default_model","copilot_timeout_seconds"].includes(name)))throw httpError("Invalid Gemini operation",400);
     const operation=input.action||"status";
+    const timeout=input.copilot_timeout_seconds;
     if(!["status","summary","refresh","models","enable","disable","open","preview"].includes(operation))throw httpError("Unknown Gemini operation",400);
     if((input.models!==undefined||input.default_model!==undefined)&&operation!=="models")throw httpError("Models require the models operation",400);
+    if(timeout!==undefined){
+      if(operation!=="models"||timeout!==null&&!validTimeout(timeout))throw httpError("Choose a Copilot timeout from 1 to 600 seconds, or use the default",400);
+      if(copilotTimeoutMs!==undefined)throw httpError("Copilot timeout is controlled by the startup environment",409);
+    }
     if(operation==="refresh"){
       if(!refreshModels)throw httpError("Antigravity model refresh is unavailable in this service",503);
       await refreshModels();lastOperation={action:operation,status:"models_refreshed"};
     }
     if(operation==="models"){
-      const ids=input.models,known=new Set(antigravityCopilotModels(models()).map(model=>model.id));
-      if(!Array.isArray(ids)||ids.length>100||new Set(ids).size!==ids.length||ids.some(id=>!known.has(id)))throw httpError("Choose available Antigravity models",400);
+      const ids=input.models;
+      if(ids!==undefined||timeout===undefined||input.default_model!==undefined){
+        const known=new Set(antigravityCopilotModels(models()).map(model=>model.id));
+        if(!Array.isArray(ids)||ids.length>100||new Set(ids).size!==ids.length||ids.some(id=>!known.has(id)))throw httpError("Choose available Antigravity models",400);
+      }
       const file=userSettingsPath(options);fs.mkdirSync(path.dirname(file),{recursive:true,mode:0o700});
       if(input.default_model!==undefined&&input.default_model!==null&&(!validAlias(input.default_model)||!ids.includes(input.default_model)))throw httpError("Choose a selected Antigravity model as the default",400);
       withFileLockSync(file+".lock",()=>{
-        const saved=readUserSettings({...options,strict:true});saved[modelKey]=ids;
-        if(input.default_model!==undefined&&input.default_model!==null)saved[defaultKey]=input.default_model;
-        if(input.default_model===null||saved[defaultKey]!==undefined&&!ids.includes(saved[defaultKey]))delete saved[defaultKey];
+        const saved=readUserSettings({...options,strict:true});
+        if(ids!==undefined){
+          saved[modelKey]=ids;
+          if(input.default_model!==undefined&&input.default_model!==null)saved[defaultKey]=input.default_model;
+          if(input.default_model===null||saved[defaultKey]!==undefined&&!ids.includes(saved[defaultKey]))delete saved[defaultKey];
+        }
+        if(timeout===null)delete saved[timeoutKey];
+        else if(timeout!==undefined)saved[timeoutKey]=timeout;
         atomicWriteFileIfChangedSync(file,JSON.stringify(saved,null,2)+"\n",{mode:0o600});
       });
       lastOperation={action:operation,status:"models_saved"};
     }
-    if(operation==="summary")return snapshot();
+    if(operation==="summary"||operation==="models"&&input.models===undefined)return snapshot();
     if(["enable","disable"].includes(operation)){
       if(operation==="enable"&&input.accept_background_copilot!==true)throw httpError("Antigravity background requests use GitHub Copilot; accept this scope before enabling",400);
       if(operation==="enable")readClientGatewayKeys(options);

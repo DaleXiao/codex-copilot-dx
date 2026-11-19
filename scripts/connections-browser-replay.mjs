@@ -357,9 +357,10 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter
           await page.locator("#application-open").click();await page.locator("#application-reopen-apply").click();
           await page.waitForFunction(() => document.getElementById("application-state").textContent === "接入待确认");
           assert.deepEqual(appCalls.slice(before), [["antigravity", "quit"], ["antigravity", "open"]]);
-          appStates.antigravity="stopped";await page.locator("#refresh").click();await page.waitForFunction(()=>document.getElementById("application-open-label").textContent==="打开应用"&&!document.getElementById("gemini-open").disabled);
-          const legacyOpen=appCalls.length;await page.locator("#gemini-open").click();await page.waitForFunction(()=>document.getElementById("application-state").textContent==="接入待确认");
-          assert.deepEqual(appCalls.slice(legacyOpen),[["antigravity","open"]]);assert.equal(await page.locator("#gemini-open").isDisabled(),true);
+          appStates.antigravity="stopped";await page.locator("#refresh").click();await page.waitForFunction(()=>document.getElementById("application-open-label").textContent==="打开应用"&&!document.getElementById("application-open").disabled);
+          assert.equal(await page.locator("#gemini-open").isVisible(),false,"The application header is the only visible launch control");
+          const open=appCalls.length;await page.locator("#application-open").click();await page.waitForFunction(()=>document.getElementById("application-state").textContent==="接入待确认");
+          assert.deepEqual(appCalls.slice(open),[["antigravity","open"]]);
           await page.setViewportSize({width:320,height:1000});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),true);
         }
         assert.deepEqual(errors, []);report.push({ engine, palette, mode, language, width, saved: true, assigned: true, disabled: true, restored: true });

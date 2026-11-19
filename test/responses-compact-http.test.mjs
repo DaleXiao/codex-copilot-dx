@@ -485,7 +485,8 @@ test("successful compaction clears visual-history recovery for the compacted tre
   clearResponseHistoryForTests();
 });
 
-test("compact preserves its first visual request and applies recovery only after timeout", async () => {
+test("compact preserves its first visual request and applies recovery only after timeout", async t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   clearResponseHistoryForTests();
   try {
     const history = prepareResponsesRequest({
@@ -512,6 +513,8 @@ test("compact preserves its first visual request and applies recovery only after
           const onAbort = () => reject(signal.reason);
           signal.addEventListener("abort", onAbort, { once: true });
           if (signal.aborted) onAbort();
+          // Expire the send timer only after dispatch, independent of host load.
+          else t.mock.timers.tick(5);
         });
       }
       return Response.json({

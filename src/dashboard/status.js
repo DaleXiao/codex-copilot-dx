@@ -100,6 +100,15 @@
       return days ? `${days}d ${hours}h` : hours ? `${hours}h ${minutes}m` : `${minutes}m`;
     }
     
+    const requestTime = ms => ms >= 1000 ? `${(ms / 1000).toFixed(2)} s` : `${number(ms)} ms`;
+    function retryAfterSeconds(failure) {
+      const value = failure.retry_after;
+      if (typeof value !== "string") return null;
+      if (/^\d{1,8}$/.test(value)) return Number(value) || null;
+      const seconds = Math.ceil((Date.parse(value) - Date.parse(failure.at)) / 1000);
+      return Number.isFinite(seconds) && seconds > 0 ? seconds : null;
+    }
+
     function renderFailures(recent, recentRequests = []) {
       if (!visible(element("failures"))) return;
       const signature = JSON.stringify([element("failure-kind")?.value, recent, recentRequests]);
@@ -144,6 +153,9 @@
         details.dataset.key = `${failure.at}/${failure.request_id || failure.response_id}/${failure.code}`;
         details.open = expanded.has(details.dataset.key);
         const title = document.createElement("summary");
+        const timeline = failure.timeline;
+        const attempt = (failure.attempt_timings || timeline?.attempts)?.at(-1);
+        const seconds = retryAfterSeconds(failure);
         const cause = failure.route === "messages_count_tokens" && [404, 405, 501].includes(failure.http_status) ? "issue_count_unavailable"
           : ["credit_balance_exhausted", "insufficient_quota", "quota_exceeded"].includes(failure.upstream_code) ? "issue_source_quota"
             : ["rate_limit_exceeded", "rate_limit_error"].includes(failure.upstream_code) ? "issue_source_rate"
@@ -152,13 +164,15 @@
           : ["rate_limit_error", "rate_limit_exceeded", "insufficient_quota", "http_429"].includes(failure.code) ? "issue_source_limit"
             : /^m365_catalog_http_/.test(failure.code || "") ? "issue_catalog_unavailable"
               : failure.reason === "ccdx_model_not_selected" ? "issue_model_not_selected"
-                : failure.http_status === 504 && failure.code === "upstream_timeout" ? "issue_upstream_timeout"
+                : failure.http_status === 429 && failure.origin === "upstream_http" ? "issue_source_rate"
+                  : failure.http_status === 504 && failure.code === "upstream_timeout"
+                    ? Number.isFinite(attempt?.body_sent_ms) && attempt.headers_ms === null ? "issue_after_send_timeout" : "issue_upstream_timeout"
                   : failure.http_status === 401 || failure.http_status === 403 ? "issue_access_denied" : "issue_request_failed";
         const summary = {
           detail: phrase("issue_brief", {
             time: failure.at ? time(failure.at, { date: true }) : phrase("unknown_time"),
             model: notModelRequest ? phrase("not_applicable") : failure.model ? String(failure.model).slice(0, 80) : phrase("unknown_model"),
-            cause: phrase(cause),
+            cause: failure.http_status === 429 && failure.origin === "upstream_http" && seconds ? phrase("issue_source_rate_wait", { seconds: number(seconds) }) : phrase(cause),
           }),
           retry: phrase(failure.upstream_attempts === 0 ? "no_upstream_call" : failure.retried ? "retry_attempted" : "no_retry"),
         };
@@ -167,7 +181,6 @@
           summary.detail = phrase("repeated_issue", { detail: summary.detail, count: failure.occurrences });
           localize(title, "detail_retry", summary);
         }
-        const timeline = failure.timeline;
         const provider = failure.provider || timeline?.provider;
         if (provider) {
           const source = sourceLabel(provider);
@@ -178,7 +191,9 @@
         const timingText = ["admission", "body", "history", "images", "serialization", "upstream_start", "upstream_headers", "first_output", "last_activity", "terminal", "finished"]
           .filter((key) => finite(timings[key])).map((key) => `${key}=${Number(timings[key]).toFixed(1)}`).join(" / ");
         const fields = { time: failure.at, model: notModelRequest ? phrase("not_applicable") : failure.model, event: failure.event_type, code: failure.code, reason: failure.reason, application: failure.application === "gemini_app" ? phrase("flow_app_gemini_app") : failure.application, occurrences: failure.occurrences > 1 ? failure.occurrences : undefined, capability_cached: failure.capability_cached, shared_upstream: failure.shared_upstream,
-          message: failure.message, response_id: failure.response_id, upstream_request_id: failure.upstream_request_id,
+          message: failure.message, response_id: failure.response_id, client_request_id: attempt?.client_request_id,
+          upstream_request_id: failure.upstream_request_id, retry_after: failure.retry_after,
+          request_total_time: Number.isFinite(timings.finished) ? requestTime(timings.finished) : undefined,
           retry: failure.retried ? (timeline ? "attempted" : "attempted (outcome not recorded here)") : "not attempted",
           retry_policy: failure.retry_policy, retry_skipped: failure.retry_skipped,
           recovery: failure.recovery ? JSON.stringify(failure.recovery) : undefined,
@@ -395,12 +410,16 @@
         } else if (globalThis.ccdxIcons) globalThis.ccdxIcons.set(row.children[3], wireFailure ? "request_http_failure" : outcome.toLowerCase(),
           wireFailure ? "warning" : globalThis.ccdxIcons.kind(outcome.toLowerCase()), wireFailure ? { status: request.http_status } : {});
         else if (wireFailure) localize(row.children[3], "request_http_failure", { status: request.http_status });
+        const totalMs = request.timings_ms?.finished;
+        if (Number.isFinite(totalMs)) {
+          const total = document.createElement("small");total.className = "table-note";
+          localize(total, "request_total_inline", { value: requestTime(totalMs) });row.children[3].append(total);
+        }
         const details = document.createElement("details"), summary = document.createElement("summary"), fields = document.createElement("dl");
         const key = String(request.request_id || `${request.at || ""}/${request.provider || ""}/${request.model || ""}`).slice(0, 256);
         details.setAttribute?.("data-request-key", key);details.open = expanded.has(key);
         details.className = "request-details";fields.className = "failure-detail";
-        if (Number.isSafeInteger(context.privacy_count)) globalThis.ccdxLanguage.set(summary, "privacy_result", { count: context.privacy_count, ms: context.privacy_ms || 0 });
-        else localize(summary, "request_metadata");details.append(summary, fields);
+        localize(summary, "tools_details");details.append(summary, fields);
         const queue = context.body_queue;
         const queueResult = queue?.outcome === "admitted" ? "body_queue_admitted" : queue?.outcome === "timed_out" ? "body_queue_timed_out"
           : queue?.outcome === "aborted" ? "body_queue_aborted" : "body_queue_result_unknown";
@@ -410,16 +429,19 @@
         const attempt = request.attempts?.at(-1);
         for (const [key, value] of [["request_id", request.request_id || "—"], ["http_status", number(request.http_status)], ["attempts", number(request.upstream_attempts)], ["model_outcome", globalThis.ccdxLanguage?.format(outcome.toLowerCase()) || outcome],
           ["time", Number.isFinite(at) ? time(at, { date: true }) : "—"],
-          ...(Number.isSafeInteger(queue?.wait_ms) ? [["body_queue_wait", phrase("body_queue_detail", {
+          ...(Number.isSafeInteger(queue?.wait_ms) && queue.wait_ms > 0 ? [["body_queue_wait", phrase("body_queue_detail", {
             ms: number(queue.wait_ms), result: phrase(queueResult), reason: phrase(queueReason),
             reserved: mib(queue.requested_bytes), occupied: mib(queue.active_bytes), limit: mib(queue.limit_bytes),
           })]] : []),
-          ...(Number.isSafeInteger(context.source_queue_ms) ? [["source_queue_wait", `${number(context.source_queue_ms)} ms`]] : []),
+          ...(Number.isSafeInteger(context.source_queue_ms) && context.source_queue_ms > 0 ? [["source_queue_wait", `${number(context.source_queue_ms)} ms`]] : []),
           ...(Number.isSafeInteger(attempt?.body_written_bytes) && !Number.isFinite(attempt.body_sent_ms) ? [["upstream_body_written", `${number(attempt.body_written_bytes)} / ${number(context.payload_bytes)} B`]] : []),
           ...(attempt?.transport_error ? [["upstream_transport_error", attempt.transport_error]] : []),
           ...(Number.isFinite(attempt?.body_sent_ms) ? [["upstream_request_sent", `${number(attempt.body_sent_ms - attempt.started_ms)} ms`]] : []),
-          ...(Number.isFinite(attempt?.body_sent_ms) && Number.isFinite(attempt.headers_ms) ? [["upstream_wait_headers", `${number(Math.max(0, attempt.headers_ms - attempt.body_sent_ms))} ms`]]
-            : Number.isFinite(attempt?.body_sent_ms) && request.origin === "transport" && request.http_status === 504 ? [["upstream_wait_headers", phrase("upstream_no_headers")]] : []),
+          ...(Number.isFinite(attempt?.body_sent_ms) && Number.isFinite(attempt.headers_ms) ? [["upstream_wait_headers", requestTime(Math.max(0, attempt.headers_ms - attempt.body_sent_ms))]]
+            : Number.isFinite(attempt?.body_sent_ms) && attempt.headers_ms === null && request.origin === "transport" && request.http_status === 504 ? [["upstream_wait_headers", phrase("upstream_no_headers")]] : []),
+          ...(Number.isFinite(request.timings_ms?.first_output) ? [["request_first_output", requestTime(request.timings_ms.first_output)]] : []),
+          ...(attempt?.client_request_id ? [["client_request_id", attempt.client_request_id]] : []),
+          ...(Number.isSafeInteger(context.privacy_count) ? [["request_masking", phrase("privacy_result", { count: context.privacy_count, ms: context.privacy_ms || 0 })]] : []),
           ["wire_mib", finite(context.payload_bytes) ? `${(Number(context.payload_bytes) / 1048576).toFixed(2)} MiB` : "—"],
           ["images", number(context.images)], ["model_window", number(context.context_window_tokens)], ["input_window", ratio],
           ["output_requested", number(context.max_output_tokens_requested)], ["output_sent", number(context.max_output_tokens_sent)], ["output_used", number(context.output_tokens)], ["stop_reason", request.stop_reason || "—"],

@@ -14,6 +14,6 @@ export function sourceTransport(options, input) {
   const context = options[SOURCE_HTTP_CONTEXT];
   if (!context || options.countTokens) return send(input);
   return context.scheduler.run(context.descriptor(), send, { args: input, signal: options.signal,
-    model: input.model, client: currentRequestContext()?.application || "other", bodyText: input.bodyText,
+    model: input.model, client: currentRequestContext()?.application || "other", bodyText: input.bodyText, bytes: input.bodyBytes,
     sourceBodyManaged: options.sourceBodyManaged === true });
 }

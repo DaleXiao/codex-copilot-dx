@@ -27,6 +27,29 @@ function headerValue(headers, name) {
   return typeof value === "string" && value.trim() ? value : null;
 }
 
+// Keep only a valid delay or an HTTP-date from an upstream rejection.
+export function upstreamRetryAfter(headers) {
+  const value = headerValue(headers, "retry-after")?.trim();
+  if (!value) return null;
+  if (/^\d{1,8}(?:\.\d{1,3})?$/.test(value)) return String(Math.ceil(Number(value)));
+  if (!/^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun), \d{2} [A-Za-z]{3} \d{4} \d{2}:\d{2}:\d{2} GMT$/.test(value)) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) && new Date(parsed).toUTCString() === value ? value : null;
+}
+
+export function upstreamRejectionHeaders(status, headers) {
+  const out = new Headers();
+  if (status === 429 || status === 503) {
+    const retry = upstreamRetryAfter(headers);
+    if (retry !== null) out.set("Retry-After", retry);
+  }
+  for (const name of REQUEST_ID_HEADERS) {
+    const id = headerValue(headers, name)?.trim();
+    if (/^[A-Za-z0-9._:/-]{1,160}$/.test(id || "")) { out.set(name, id);break; }
+  }
+  return out;
+}
+
 function canonicalHeaderName(name) {
   return String(name).split("-").map((part) => (
     part ? `${part[0].toUpperCase()}${part.slice(1).toLowerCase()}` : part

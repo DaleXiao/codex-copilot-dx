@@ -100,6 +100,20 @@ async function bounded(promise){
   let timer;try{return await Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error("fixture did not settle")),1500)})])}finally{clearTimeout(timer)}
 }
 
+test("Copilot Antigravity preserves retry guidance and correlation without exposing the source body or retrying",async()=>{
+  let calls=0;const evidence=[],gate=createRequestAdmission({maxBytes:4096});
+  const f=fixture({acquireRequest:gate,client:{chatCompletions:async()=>{
+    calls++;return new Response("private source body",{status:429,headers:{"Retry-After":"23.2","X-GitHub-Request-Id":"abc:123","Set-Cookie":"private=example"}});
+  }}});
+  const result=await runWithRequestContext({onHttpError:value=>evidence.push(value)},()=>invoke(f.handler,body()).done);
+  assert.equal(result.status,429);assert.equal(calls,1);
+  const headers=new Headers(result.res.headers);
+  assert.equal(headers.get("Retry-After"),"24");assert.equal(headers.get("X-Upstream-Request-Id"),"abc:123");
+  assert.equal(headers.has("Set-Cookie"),false);assert.doesNotMatch(result.text,/private/);
+  assert.equal(evidence.at(-1)?.origin,"upstream_http");
+  assert.equal(gate.diagnostics().activeBytes,0, "Upstream failure releases request-body admission");
+});
+
 test("held Google and Copilot streams release body admission before another client enters",async()=>{
   for(const native of [true,false])for(const compressed of [true,false]){
     const gate=createRequestAdmission({maxBytes:4096,waitTimeoutMs:500}),opened=Promise.withResolvers();

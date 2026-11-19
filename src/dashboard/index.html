@@ -176,9 +176,9 @@
         <div data-view="gemini" hidden>
           <section class="connection-access"><div class="connection-row"><label for="gemini-enabled" data-i18n="gemini_access_title">Copilot access</label><label class="switch-hit"><input id="gemini-enabled" type="checkbox" role="switch" data-i18n-label="gemini_access_title" aria-label="Copilot access" disabled></label></div></section>
           <section class="panel dashboard-section">
-            <div class="panel-heading"><h2 data-i18n="cap_visible_model">Available models</h2><span id="gemini-draft-state" role="status">—</span></div>
+            <div class="panel-heading"><h2 data-i18n="cap_visible_model">Available models</h2><span id="gemini-draft-state" role="status" hidden></span></div>
             <form id="gemini-model-form">
-              <div class="table-wrap"><table class="binding-table"><thead><tr><th data-i18n="model">Model</th><th data-i18n="source">Source</th><th data-i18n="cap_context">Context</th><th data-i18n="cap_reasoning">Reasoning</th><th data-i18n="cap_default">Default</th></tr></thead><tbody id="gemini-models"></tbody></table></div>
+              <div class="table-wrap"><table class="binding-table"><thead><tr><th data-i18n="model">Model</th><th data-i18n="source">Source</th><th data-i18n="cap_context">Context</th><th data-i18n="cap_reasoning">Reasoning</th><th data-i18n="gemini_new_chat_default">New chat default</th></tr></thead><tbody id="gemini-models"></tbody></table></div>
               <div class="section-actions"><button id="gemini-save" type="submit" data-i18n="api_save" disabled>Save</button><button id="gemini-cancel" type="button" data-i18n="cap_discard_changes" disabled>Discard changes</button><button id="gemini-use-app-default" type="button" data-i18n="gemini_use_app_default" hidden>Use app default</button></div>
             </form>
             <p id="gemini-default-note" class="hint" role="status" hidden></p>
@@ -190,7 +190,7 @@
             <p class="hint" data-i18n="gemini_scope">Native Google models remain available. Copilot models and background requests use Copilot.</p>
             <p id="gemini-app-state" class="table-note">—</p><p class="hint"><span data-i18n="gemini_version">Version</span>: <span id="gemini-version">—</span></p>
             <p id="gemini-reopen" class="hint" data-i18n="gemini_reopen" hidden>Quit Gemini, then open it here to load CCDX models.</p>
-            <div class="section-actions"><button id="gemini-open" type="button" data-i18n="gemini_open">Open Antigravity</button><button id="gemini-refresh" type="button" data-i18n="refresh">Refresh</button><a class="section-link" href="#models" data-source-link="github">GitHub Copilot</a></div>
+            <div class="section-actions"><button id="gemini-open" type="button" data-i18n="gemini_open">Open Antigravity</button><button id="gemini-refresh" type="button" data-i18n="refresh">Refresh</button><a class="section-link" href="#models" data-source-link="github" data-i18n="gemini_open_sources">Model sources</a></div>
           </details>
           <details class="panel dashboard-section"><summary data-i18n="gemini_activity">Connection activity</summary>
             <p class="hint" data-i18n="gemini_activity_scope">Includes model requests and client discovery.</p>

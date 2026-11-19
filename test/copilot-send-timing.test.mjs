@@ -6,15 +6,16 @@ import { createStreamPerformanceMetrics } from "../src/stream-performance.mjs";
 
 const emit = (event, request, extra) => channel(`undici:request:${event}`).publish({ request, ...extra });
 
-function attempt() {
+function attempt(clientId) {
   let time = 10;
   const obs = createStreamPerformanceMetrics({ now: () => time, routeNames: ["antigravity"] }).begin("antigravity");
   obs.upstreamStarted();
-  return { callback: obs.observeUpstreamBodyWrite(), advance(value) { time += value; }, values: () => obs.attemptTimings()[0] };
+  return { callback: obs.observeUpstreamBodyWrite(clientId), advance(value) { time += value; }, values: () => obs.attemptTimings()[0] };
 }
 
 test("request write bytes and the send completion event remain separate", async () => {
-  const trace = attempt();
+  const outboundId = "05a8745c-b7e6-437d-ba45-82f0c9c5e2f5";
+  const trace = attempt(outboundId);
   await fetchWithBodyWriteTiming("unused", {}, trace.callback, async () => {
     const request = {};
     emit("create", request);
@@ -22,6 +23,7 @@ test("request write bytes and the send completion event remain separate", async 
     emit("bodyChunkSent", request, { chunk: "中文" });
     emit("bodyChunkSent", request, { chunk: new Uint8Array(2) });
     assert.equal(trace.values().body_written_bytes, 8);
+    assert.equal(trace.values().client_request_id, outboundId);
     assert.equal(trace.values().body_sent_ms, undefined);
     trace.advance(23);
     emit("bodySent", request);

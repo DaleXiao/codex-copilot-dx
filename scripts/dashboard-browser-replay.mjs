@@ -757,7 +757,7 @@ try {
         assert.deepEqual(await page.locator("#context-body").evaluate(body => [...body.closest("table").tHead.rows[0].cells].map(cell => ({ x: cell.getBoundingClientRect().x, width: cell.getBoundingClientRect().width }))), requestColumnsBefore, "Opening request metadata must not redistribute table columns");
         assert.match(await metadata.innerText(), /1\.00 MiB.*0.*1,000.*15\.0%/s);
         const queueDetail = await metadata.innerText();
-        assert.match(queueDetail, language === "zh" ? /本机排队记录.*108,247 ms.*已放行.*请求长度未知.*入队时占用.*来源排队.*20 ms/s : /Local queue history.*108,247 ms.*Admitted.*Unknown body length.*in use.*Source queue.*20 ms/s);
+        assert.match(queueDetail, language === "zh" ? /本机排队记录.*108,247 ms.*已放行.*请求长度未知.*占用.*来源排队.*20 ms/s : /Local queue history.*108,247 ms.*Admitted.*Unknown body length.*in use.*Source queue.*20 ms/s);
         await refreshStatus();
         assert.equal(await metadata.getAttribute("open"), "", "Unchanged reads keep request details open");
         extraRequests = [{ at: "2026-10-21T06:51:08Z", request_id: "synthetic-new", provider: "github", model: "gpt-new", outcome: "completed", context: {} }];
@@ -1099,7 +1099,7 @@ try {
         await page.locator("#gemini-refresh").click();await page.waitForFunction(()=>!document.getElementById("gemini-refresh").disabled);
         assert.equal(await modelBoxes.first().isChecked(),false,"Refresh keeps the model draft");
         geminiAppState="running";await page.locator("#gemini-enabled").uncheck();await page.waitForFunction(()=>!document.getElementById("gemini-enabled").disabled);
-        assert.equal(await page.locator('#gemini-reopen').isVisible(),true);assert.equal(await page.locator('#gemini-open').isDisabled(),true);
+        assert.equal(await page.locator('#gemini-reopen').isVisible(),false);assert.equal(await page.locator('#gemini-open').isVisible(),false,"The shared application header owns the launch action");
         assert.equal(await modelBoxes.count(),2,"Pausing retains both model choices");assert.equal(await modelBoxes.first().isChecked(),false,"Pausing keeps the model draft");
         await page.locator("#gemini-enabled").check();await page.waitForFunction(()=>!document.getElementById("gemini-enabled").disabled);
         geminiAppState="stopped";await page.locator("#gemini-save").click();
@@ -1109,7 +1109,7 @@ try {
         assert.equal(await modelBoxes.first().isChecked(),false);
         await modelBoxes.first().check();await page.locator("#gemini-cancel").click();
         assert.equal(await modelBoxes.first().isChecked(),false);
-        assert.equal(await page.locator("#gemini-reopen").isVisible(),true);
+        assert.equal(await page.locator("#gemini-reopen").isVisible(),false,"The stopped app uses the header Open action");
         const alternate=language==="zh"?"Source":"来源";
         await page.locator("#language-toggle").click();await page.waitForFunction(expected=>document.querySelector('#gemini-models td[data-label]')?.dataset.label===expected,alternate);
         assert.equal(await page.locator('#gemini-models [undefined]').count(),0);await page.locator("#language-toggle").click();
@@ -1144,7 +1144,7 @@ try {
         await page.locator('#gemini-cancel').click();assert.equal(await argonDefault.getAttribute('aria-pressed'),'false');
         await argonDefault.click();await page.locator('#gemini-save').click();
         await page.waitForFunction(()=>document.getElementById('gemini-save').disabled&&!document.getElementById('gemini-refresh').disabled);
-        assert.equal(await page.locator('#gemini-reopen').isVisible(),true,"A default-only change reloads the catalog");
+        assert.equal(await page.locator('#gemini-reopen').isVisible(),false,"The model form does not add a second reopen instruction");
         const nativeCatalog=()=>page.request.post(`http://127.0.0.1:${server.address().port}/antigravity/v1internal:fetchAvailableModels`,{data:{}});
         assert.equal((await (await nativeCatalog()).json()).defaultAgentModelId,'ccdx-copilot-gemini-4-argon-medium');
         await page.locator('#gemini-use-app-default').click();await page.locator('#gemini-save').click();

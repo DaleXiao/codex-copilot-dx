@@ -4,6 +4,8 @@ import { isProviderId } from "./provider-metadata.mjs";
 import { transportErrorDetails } from "./operation-error.mjs";
 import { safeUpstreamReason } from "./safe-upstream-error.mjs";
 
+import { upstreamRetryAfter } from "./upstream-headers.mjs";
+
 const DEFAULT_RECENT_FAILURES = 10;
 
 function safeIdentifier(value, fallback = "unknown") {
@@ -208,7 +210,9 @@ export function buildHttpFailureDetails({ statusCode, route, requestId, model, c
       : error_body === "empty" ? "Upstream returned no error details." : "HTTP request failed; original response was preserved.");
   const details = responseFailureDetails({ model, error: { code: typeof code === "string" && /^[a-z\d_.:-]{1,80}$/i.test(code) ? code : `http_${statusCode}`,
     message: model_error ? "The model source reported an error; the original HTTP response was preserved." : message } }, model_error ? "model.error" : "http.error", { headers, provider });
+  const retryAfter = origin === "upstream_http" && [429, 503].includes(statusCode) ? upstreamRetryAfter(headers) : null;
   return { ...details, request_id: requestId, http_status: statusCode, route,
+    ...(retryAfter === null ? {} : { retry_after: retryAfter }),
     origin: origin || (route === "not_found" ? "route" : "unclassified"), local_message: true,
     ...(error_body ? { error_body } : {}), ...(error_type ? { error_type } : {}),
     ...(safeUpstreamReason(upstream_code, statusCode) ? { upstream_code } : {}), ...(parameter ? { parameter } : {}),

@@ -176,7 +176,7 @@ export async function fetchCopilotUpstream(
     const attemptStart = Date.now();
     debugLog(`upstream ${method} ${target} attempt=${attempt + 1}/${retryCount + 1}`);
     try {
-      const onBodySent = observeBodyWrite && method === "POST" && fetchImpl === fetch && observeUpstreamBodyWrite();
+      const onBodySent = observeBodyWrite && method === "POST" && fetchImpl === fetch && observeUpstreamBodyWrite(init.headers?.["X-Request-Id"]);
       const resp = await (onBodySent ? fetchWithBodyWriteTiming(url, init, onBodySent) : fetchImpl(url, init));
       debugLog(`upstream ${method} ${target} status=${resp.status} attempt=${attempt + 1}/${retryCount + 1} attempt_ms=${Date.now() - attemptStart} total_ms=${Date.now() - totalStart}`);
       if (attempt < retryCount && isRetryableUpstreamStatus(resp.status, method)) {

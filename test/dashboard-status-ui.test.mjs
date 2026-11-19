@@ -75,7 +75,7 @@ test("request-context rows are lazy, bounded, text-only and distinguish missing 
   assert.equal(rows[0].children[0].textContent, "—", "Missing timestamp is not guessed");
   assert.equal(detail(rows[1], "wire_mib"), "1.00 MiB", "Payload bytes remain available");
   assert.equal(detail(rows[0], "body_queue_wait"), undefined);
-  assert.match(detail(rows[1], "body_queue_wait"), /Waited 942 ms · Admitted.*At entry: An earlier request needed exclusive access/);
+  assert.match(detail(rows[1], "body_queue_wait"), /942 ms · Admitted.*At entry: An earlier request needed exclusive access/);
   assert.equal(detail(rows[1], "source_queue_wait"), "20 ms");
   assert.equal(detail(rows[1], "client_tool_errors_received"), "2", "Explicit tool errors remain separate from model completion");
   assert.match(nodes.get("context-note").textContent, /2 completed · 0 incomplete · 1 failed/);

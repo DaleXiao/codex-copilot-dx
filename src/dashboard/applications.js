@@ -1,9 +1,10 @@
 (() => {
   function create({ element: el, change, localize, isBusy = () => false }) {
-    let data, pending = false, sequence = 0, confirmation = null, claudeApp = true, note = null, autoError = false;
+    let data, pending = false, sequence = 0, confirmation = null, claudeApp = true, note = null, autoError = false, antigravityCatalogPending = false;
     const route = () => ({ codex: "codex", claude: claudeApp ? "claude_app" : null, gemini: "antigravity" })[location.hash.slice(1)] || null;
     const label = (id, key) => localize(el(id), key);
-    const buttonKey = state => state?.status === "running" ? state.needs_reload ? "application_reopen" : "application_focus"
+    const needsReload = state => state?.needs_reload || route() === "antigravity" && antigravityCatalogPending;
+    const buttonKey = state => state?.status === "running" ? needsReload(state) ? "application_reopen" : "application_focus"
       : state?.status === "starting" ? "application_opening" : state?.status === "stopped" ? "application_open" : "application_check";
     function render() {
       const id = route(), state = data?.applications?.[id];
@@ -15,7 +16,7 @@
       label("application-open-label", buttonKey(state));
       el("application-open").disabled = pending || isBusy() || ["starting", "unsupported", "not_installed", "multiple"].includes(state?.status);
       el("application-open").setAttribute("aria-busy", String(pending || isBusy() || state?.status === "starting"));
-      label("application-state", note || (state?.status === "running" ? state.needs_reload ? "application_reload_pending" : state.connection === "observed" ? "application_connected" : "application_pending"
+      label("application-state", note || (state?.status === "running" ? needsReload(state) ? id === "antigravity" ? "gemini_settings_saved" : "application_reload_pending" : state.connection === "observed" ? "application_connected" : "application_pending"
         : state?.status === "stopped" ? "application_stopped" : state?.status === "starting" ? "application_opening" : "application_" + (state?.status || "unknown")));
       if (!pending) {
         el("codex-auto-launch").checked = data?.effective?.codex_auto_launch?.value === true;
@@ -47,7 +48,9 @@
           ...(operation === "restart" ? { confirmed: true, expected_pid: expected.pid, expected_started: expected.started } : {}) }, el("application-open"), { quiet: true });
         if (!next) { note = "application_action_failed";return; }
         data = next;const result = next.last_operation?.feature === "application" ? next.last_operation.result : null;
-        if (["opened", "opening"].includes(result?.status)) for (const delay of [1000, 10500]) setTimeout(() => { if (route() === id && document.visibilityState === "visible") void check(true); }, delay);
+        if (["opened", "opening"].includes(result?.status)) for (const delay of [1000, 10500]) setTimeout(() => { if (route() === id && document.visibilityState === "visible") {
+          void check(true);if (id === "antigravity") void globalThis.ccdxAntigravity?.refreshStatus();
+        } }, delay);
         if (result && !["opened", "opening", "focused", "checked"].includes(result.status)) {
           const direct = { unknown: "application_unknown", app_check_failed: "application_unknown", not_installed: "application_not_installed", multiple: "application_multiple", multiple_apps: "application_multiple", unsupported: "application_unsupported", app_not_running: "application_stopped", app_route_conflict: "application_action_route_conflict" };
           note = direct[result.status] || (["open_failed", "focus_unavailable", "quit_refused", "quit_timeout", "app_changed", "needs_app_relaunch", "route_conflict"].includes(result.status) ? "application_action_" + result.status : "application_action_failed");
@@ -56,7 +59,7 @@
     }
     function openCurrent() {
       const id = route(), state = data?.applications?.[id];
-      if (state?.status === "running" && state.needs_reload) { confirmation = { id, pid: state.pid, started: state.started };render(); }
+      if (state?.status === "running" && needsReload(state)) { confirmation = { id, pid: state.pid, started: state.started };render(); }
       else if (state?.status === "running") void act("focus");
       else if (state?.status === "stopped") void act("open");
       else void check(true);
@@ -75,6 +78,7 @@
     });
     window.addEventListener("focus", () => { if (document.visibilityState === "visible") void check(); });
     window.addEventListener("ccdx-gemini-state", event => {
+      antigravityCatalogPending = event.detail?.needsCatalogReload === true;
       const state = event.detail?.application;if (state) sync({ ...data, applications: { ...data?.applications, antigravity: state } });
     });
     return { sync, render, open(id) { if (route() === id && !pending && !isBusy()) openCurrent(); }, routeChanged() { confirmation = null;note = null;sequence++;render();void check(); }, refresh: () => check(true) };

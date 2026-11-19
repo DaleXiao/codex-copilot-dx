@@ -473,12 +473,15 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
           else route.success_with_output += 1;
         },
       };
-      if (routeName === "antigravity") tracker.observeUpstreamBodyWrite = () => {
+      if (routeName === "antigravity") tracker.observeUpstreamBodyWrite = clientRequestId => {
         const attempt = attemptTimings.at(-1);
         if (!attempt || finished) return;
         return (kind, value) => {
           if (finished) return;
-          if (kind === "start") attempt.body_written_bytes ??= 0;
+          if (kind === "start") {
+            attempt.body_written_bytes ??= 0;
+            if (typeof clientRequestId === "string" && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(clientRequestId)) attempt.client_request_id = clientRequestId;
+          }
           if (kind === "chunk") attempt.body_written_bytes = (attempt.body_written_bytes || 0) + value;
           if (kind === "sent") attempt.body_sent_ms ??= elapsed(now());
           if (kind === "error") attempt.transport_error ??= value;
@@ -542,8 +545,8 @@ export function markUpstreamStarted(streaming = true) {
   tracker()?.upstreamStarted(streaming);
 }
 
-export function observeUpstreamBodyWrite() {
-  return tracker()?.observeUpstreamBodyWrite?.();
+export function observeUpstreamBodyWrite(clientRequestId) {
+  return tracker()?.observeUpstreamBodyWrite?.(clientRequestId);
 }
 
 export function markUpstreamHeaders(statusCode) {

@@ -32,7 +32,7 @@ export async function inspectApplicationConfiguration(id, { port = 2026, host = 
         || (value.provider === "ccdx_gateway" && sameUrl(value.gateway?.base_url, `http://${host}:${port}/v1`)) ? "configured" : "preserved";
     } else {
       let settings;try { settings = await read(userSettingsPath(options)); } catch (error) { if (error.code !== "ENOENT") throw error;settings = {}; }
-      value = { enabled: settings.gemini_antigravity_enabled === true, models: settings.gemini_antigravity_models || null, port, host };
+      value = { enabled: settings.gemini_antigravity_enabled === true, models: settings.gemini_antigravity_models || null, defaultModel: settings.gemini_antigravity_default_model ?? null, port, host };
       state = value.enabled ? "configured" : "native";
     }
     const reload = { ...value };delete reload.key;

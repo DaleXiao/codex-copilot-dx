@@ -1,8 +1,8 @@
 import {createRequestAdmission} from "./request-admission.mjs";
 import {randomUUID,createHash} from "node:crypto";
 import {buildResponsesUsageRecord,recordUsage} from "./usage-store.mjs";
-import {createRequestAbort,abortErrorStatusCode,readJsonBody,readBoundedResponseText,writeOrDrain,httpError,sendJsonError} from "./http-transport.mjs";
-import {safeUpstreamResponseHeaders} from "./upstream-headers.mjs";
+import {createRequestAbort,abortErrorStatusCode,readJsonBody,readBoundedResponseText,writeOrDrain,httpError,sendJsonError,sendUpstreamError} from "./http-transport.mjs";
+import {safeUpstreamResponseHeaders,upstreamRejectionHeaders} from "./upstream-headers.mjs";
 import {isLoopbackAddress,isLoopbackHostHeader} from "./security.mjs";
 import {antigravityToChat,chatToAntigravity,chatStreamToAntigravity,parseAntigravityJSON} from "./antigravity-chat-bridge.mjs";
 import {ANTIGRAVITY_MODEL_PREFIX,antigravityCopilotModels,hasAntigravityAgentDefault,mergeAntigravityModels} from "./antigravity-models.mjs";
@@ -220,7 +220,12 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
       releaseInput();
       markUpstreamHeaders(upstream.status);
       applicationEvidence?.accept(req,"antigravity","inference");
-      if(!upstream.ok){markResponseErrorOrigin("upstream_http");await cancelSourceResponse(upstream).catch(()=>{});throw httpError("Copilot generation was refused (HTTP "+upstream.status+")",upstream.status)}
+      if(!upstream.ok){
+        const status=upstream.status,headers=upstreamRejectionHeaders(status,upstream.headers);
+        markResponseErrorOrigin("upstream_http");await cancelSourceResponse(upstream).catch(()=>{});
+        abort.signal.throwIfAborted();counts.failed++;outcome="failed";markResponseTerminal(outcome,{origin:"upstream_http"});
+        sendUpstreamError(res,{status,headers},JSON.stringify({error:"Copilot generation was refused (HTTP "+status+")"}));return;
+      }
       if(!stream){
         const data=JSON.parse(await readBoundedResponseText(upstream,{maxBytes:MAX_REPLY,signal:abort.signal,label:"Copilot response"}));captureUsage(data);
         const result=chatToAntigravity(data,converted.originalNames);markToolActivity(result,"gemini");

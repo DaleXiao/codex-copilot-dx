@@ -10,7 +10,7 @@ import { validCapabilities } from "./model-capabilities.mjs";
 
 export const CLIENT_IDS = Object.freeze(["codex", "claude_app", "claude_code"]);
 export const CLIENT_NAMES = Object.freeze({ codex: "Codex App", claude_app: "Claude App", claude_code: "Claude Code" });
-const APIS = ["messages", "responses", "chat"];
+const APIS = ["messages", "responses", "chat", "gemini"];
 const messages = {
   ccdx_codex_catalog_cache_unavailable: "Codex model cache could not be refreshed safely. Close Codex App and try again; existing files were kept.",
   ccdx_client_source_disabled: "CCDX access is paused. Enable the app and source, then select a model in the WebUI.",
@@ -45,12 +45,14 @@ export function checkedApi(value) {
   apiUrl(value.base_url);
   const origin = new URL(value.base_url).origin;
   for (const url of Object.values(value.endpoints)) if (new URL(apiUrl(url)).origin !== origin) throw accessError("ccdx_api_origin_mismatch");
+  if (value.endpoints.gemini && !new URL(value.endpoints.gemini).pathname.endsWith("/models")) throw accessError("ccdx_api_url_invalid");
   const seen = new Set();
   for (const model of value.models) {
     if (model?.id === CODEX_AUTO_REVIEW_MODEL) throw accessError("ccdx_api_model_reserved");
     if (!fields(model, ["id", "protocols", "context_window", "reasoning_efforts", "capabilities", "metadata"]) || !modelId(model.id) || seen.has(model.id)
       || !Array.isArray(model.protocols) || !model.protocols.length || new Set(model.protocols).size !== model.protocols.length
       || model.protocols.some(api => !value.endpoints[api])
+      || model.protocols.includes("gemini") && !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,139}$/.test(model.id)
       || model.capabilities !== undefined && !validCapabilities(model.capabilities)
       || model.metadata !== undefined && (!fields(model.metadata, ["values", "protocols", "state", "checked_at", "deployment"]) || !validCapabilities(model.metadata.values)
         || model.metadata.protocols !== undefined && (!fields(model.metadata.protocols, APIS) || Object.values(model.metadata.protocols).some(value => !validCapabilities(value)))

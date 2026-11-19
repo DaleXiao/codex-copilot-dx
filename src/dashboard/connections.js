@@ -210,7 +210,7 @@
     cell.append(detail);row.append(cell);modelRow.after(row);
     trigger.setAttribute("aria-expanded", "true");
     const heading = node("div", undefined, "panel-heading");heading.append(node("h3", model.id), button("close", () => { closeModelDetail();trigger.focus(); }));detail.append(heading);
-    const protocol = choice(model.protocols.map(id => ({ id, name: id === "messages" ? "Messages" : id === "responses" ? "Responses" : "Chat" })), model.protocols.includes("messages") ? "messages" : model.protocols[0], false);
+    const protocol = choice(model.protocols.map(id => ({ id, name: { messages: "Messages", responses: "Responses", chat: "Chat", gemini: "Gemini" }[id] || id })), model.protocols.includes("messages") ? "messages" : model.protocols[0], false);
     protocol.setAttribute("aria-label", format("cap_api"));detail.append(protocol);
     const status = node("p", undefined, "hint"), table = node("table"), body = node("tbody");table.append(body);detail.append(status, table);
     const maker = model.display || source(editing)?.model_display?.[model.id] || {};
@@ -296,8 +296,8 @@
       selection.firstChild.addEventListener("change", e => { if (e.target.checked) selectedModels.add(model.id);else selectedModels.delete(model.id); });name.append(selection);
       const maker = model.display || source(editing)?.model_display?.[model.id];
       if (maker?.publisher || maker?.vendor) name.append(node("span", maker.publisher || maker.vendor, "model-maker"));
-      for (const protocol of ["messages", "responses", "chat"]) {
-        const label = check("model-api", protocol, model.protocols.includes(protocol), protocol === "chat" ? "Chat" : protocol === "messages" ? "Messages" : "Responses");
+      for (const [protocol, title] of Object.entries({ messages: "Messages", responses: "Responses", chat: "Chat", gemini: "Gemini" })) {
+        const label = check("model-api", protocol, model.protocols.includes(protocol), title);
         label.firstChild.disabled = !apiForm.querySelector(`[name="protocol"][value="${protocol}"]`).checked;
         label.firstChild.addEventListener("change", e => {
           model.protocols = [...new Set([...model.protocols.filter(api => api !== protocol), ...(e.target.checked ? [protocol] : [])])];
@@ -313,14 +313,14 @@
       apis.append(group);actions.append(details, button("api_remove_model", () => { models = models.filter(item => item !== model);selectedModels.delete(model.id);modelRows(); }));tr.append(name, apis, context, reasoning, search, actions);body.append(tr);
     }
   }
-  function setEndpoints(base, endpoints) { for (const [api, path] of [["messages", "messages"], ["responses", "responses"], ["chat", "chat/completions"]]) apiForm.elements[api + "_url"].value = endpoints?.[api] || base.replace(/\/+$/, "") + "/" + path; }
+  function setEndpoints(base, endpoints) { for (const [api, path] of [["messages", "messages"], ["responses", "responses"], ["chat", "chat/completions"], ["gemini", "models"]]) apiForm.elements[api + "_url"].value = endpoints?.[api] || base.replace(/\/+$/, "") + "/" + path; }
   function editApi(provider) {
     stopDiscovery();editorOrigin = document.activeElement;editing = provider?.id || null;panels("api");apiForm.reset();words(el("connection-editor-title"), provider ? "api_manage" : "api_add");
     apiForm.elements.name.value = provider?.name || "";apiForm.elements.base.value = provider?.base_url || "";
     apiForm.elements.key.required = !provider;globalThis.ccdxLanguage.set(apiForm.elements.key, provider ? "api_key_keep" : "api_key_enter", {}, "placeholder");
     apiForm.elements.auth_header.value = provider?.auth_header || "x-api-key";
     apiForm.elements.key_env.value = provider?.key_env || "";keyMode();
-    for (const input of apiForm.querySelectorAll('[name="protocol"]')) input.checked = provider ? Boolean(provider.endpoints?.[input.value]) : input.value !== "chat";
+    for (const input of apiForm.querySelectorAll('[name="protocol"]')) input.checked = provider ? Boolean(provider.endpoints?.[input.value]) : ["messages", "responses"].includes(input.value);
     setEndpoints(provider?.base_url || "", provider?.endpoints);
     el("connection-model-detail").hidden = true;
     models = structuredClone(provider?.models || []);selectedModels = new Set(models.map(model => model.id));modelRows();el("connection-manual-model").open = false;el("connection-discover").disabled = !editing;el("connection-model-id").value = "";apiForm.elements.name.focus();

@@ -97,11 +97,14 @@ export function createApplicationControl({ providerRuntime, clientIntegration, i
     return { status: "opened", app: states[id] };
   }
   async function antigravityPlan(app) {
-    const config = readUserSettings({ env, home, strict: true });
-    if (config.gemini_antigravity_enabled !== true) return { status: "prepared", command: "/usr/bin/open", args: ["-a", app.app] };
+    const bridgeEnabled = () => {
+      const config = readUserSettings({ env, home, strict: true });
+      return config.gemini_antigravity_enabled === true || typeof config.gemini_antigravity_native_source === "string";
+    };
+    if (!bridgeEnabled()) return { status: "prepared", command: "/usr/bin/open", args: ["-a", app.app] };
     const verified = await inspectGemini({ ...options, app: app.app });
     if (verified.status !== "stopped") return { status: verified.status === "running" ? "app_changed" : verified.status };
-    if (readUserSettings({ env, home, strict: true }).gemini_antigravity_enabled !== true) return { status: "prepared", command: "/usr/bin/open", args: ["-a", app.app] };
+    if (!bridgeEnabled()) return { status: "prepared", command: "/usr/bin/open", args: ["-a", app.app] };
     return planGeminiAppLaunch(verified, { cloudCodeUrl: `http://${host}:${port}/antigravity`, env, home });
   }
   return { snapshot, evidence, check, busy: () => operations > 0,

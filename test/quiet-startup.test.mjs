@@ -21,7 +21,7 @@ test("default startup keeps request details out of the terminal while opt-in fil
       ADAPTER_PORT: String(port), ADAPTER_HOST: "127.0.0.1", CCDX_AUTO_LAUNCH: "0", CCDX_M365: "0",
       CCDX_MODEL_REFRESH_INTERVAL_MS: "0", CCDX_DISABLE_TOKEN_DISCOVERY: "1", CCDX_LOG_PATH: log }, stdio: ["ignore", "pipe", "pipe", "ipc"] });
   const done = once(child, "exit");let output = "";child.stdout.on("data", value => { output += value; });child.stderr.on("data", value => { output += value; });
-  t.after(async () => { if (child.exitCode === null && !child.signalCode) child.kill("SIGTERM");await done;await fs.rm(home, { recursive: true, force: true }); });
+  t.after(async () => { if (child.exitCode === null && !child.signalCode) child.kill("SIGTERM");await done;await fs.rm(home, { recursive: true, force: true, maxRetries: 3 }); });
   const deadline = Date.now() + 10000;
   while (!output.includes("Ready       Local service ready")) {
     if (Date.now() > deadline || child.exitCode !== null) throw new Error(`Quiet startup failed: ${output}`);

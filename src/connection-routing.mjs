@@ -1,3 +1,4 @@
+import { createHmac, randomBytes } from "node:crypto";
 import { accessError } from "./access-settings.mjs";
 import { gatewayClient } from "./client-gateway-keys.mjs";
 import { createClaudeGatewayHandler } from "./claude-gateway.mjs";
@@ -8,6 +9,12 @@ export function createConnectionRouting({ legacy, legacyClaudeAccess, isManaged,
   resolveDeployment, codexAccessMode, codexRequiresKey, requireCodexKey, identities, track, guardConversation, messagesTransfer,
   acquireClaudeRequest, privacy, env, log, lastClients, capabilitySupport, applicationEvidence }) {
   const handlers = new Map();
+  const reviewSessions = new Map(), reviewSalt = randomBytes(32);
+  const reviewSession = (headers, app) => {
+    const id = headers.session_id || headers["session-id"] || headers["x-conversation-id"];
+    return typeof id === "string" && id.length > 0 && id.length <= 512 && !/[\x00-\x1f\x7f]/.test(id)
+      ? createHmac("sha256", reviewSalt).update((app || "codex") + "\0" + id).digest("hex") : null;
+  };
   function requireSource(clientId, id) {
     if (!permitted(clientId, id)) throw accessError("ccdx_client_source_disabled", 503);
     if (id === "m365" && legacy.snapshot().m365.account_change_in_flight)
@@ -91,19 +98,30 @@ export function createConnectionRouting({ legacy, legacyClaudeAccess, isManaged,
       if (!isManaged()) return null;
       const mode = codexAccessMode();
       if (mode === "paused" || mode === "disabled") throw accessError("ccdx_client_source_disabled", 503);
-      if (!Array.isArray(binding("codex").deployments)) return null;
+      const codex = binding("codex");
+      if (!Array.isArray(codex.deployments)) return null;
       if (codexRequiresKey()) requireCodexKey(req);
-      const requested =
-        body.model === "codex-auto-review"
-          ? binding("codex").auto_review_model || plan("codex").defaultModel
-          : body.model;
-      if (body.model === "codex-auto-review") {
+      const context = currentRequestContext(), review = body.model === "codex-auto-review";
+      const key = !codex.auto_review_model && (review || context?.purpose === "conversation") ? reviewSession(req.headers, context?.application) : null;
+      let requested = body.model;
+      if (review) {
+        const compiled = plan("codex"), remembered = key && reviewSessions.get(key);
+        const candidate = remembered && Date.now() - remembered.at <= 1800000 && compiled.routes.get(remembered.route);
+        const sameProfile = candidate && typeof remembered.profile === "string" && candidate.provider.profileId?.("responses") === remembered.profile;
+        requested = codex.auto_review_model || (sameProfile ? remembered.route : compiled.defaultModel);
         delete body.service_tier;
-        if (binding("codex").auto_review_effort)
-          body.reasoning = { ...body.reasoning, effort: binding("codex").auto_review_effort };
       }
-      const record = resolveDeployment("codex", requested),
-        context = currentRequestContext();
+      const record = resolveDeployment("codex", requested);
+      if (review) {
+        const supports = record.model.capability.values.reasoning_efforts || [];
+        const chosen = codex.auto_review_effort && supports.includes(codex.auto_review_effort) ? codex.auto_review_effort
+          : body.reasoning?.effort === undefined && supports.includes("low") ? "low" : undefined;
+        if (chosen) body.reasoning = { ...body.reasoning, effort: chosen };
+      } else if (key && context) context.noteReviewModel = () => {
+        reviewSessions.delete(key);
+        reviewSessions.set(key, { route: record.model.route_id, profile: record.provider.profileId?.("responses"), at: Date.now() });
+        if (reviewSessions.size > 256) reviewSessions.delete(reviewSessions.keys().next().value);
+      };
       if (context) {
         context.finishProvider?.();
         context.finishProvider = track(record.provider);

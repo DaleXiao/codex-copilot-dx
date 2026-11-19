@@ -25,10 +25,10 @@
     const running=active||waiting;
     const phase=reduced?.42:(t*(waiting?.7:1.04))%2.1/2.1;
     const press=running?Math.max(0,1-Math.abs(phase-.5)/.14):0;
-    const workX=returned?132+91*Math.min(1,t/.85):
-      phase<.34?29+103*phase/.34:phase<.66?132:132+91*(phase-.66)/.34;
-    const moving=running&&(phase<.34||phase>=.66)||returned;
-    const shift=moving?(reduced?0:t*78)%14:0;
+    const travel=value=>value*(.7+.3*value);
+    const workX=returned?132+91*travel(Math.min(1,t/.85)):
+      phase<.34?29+103*travel(phase/.34):phase<.66?132:132+91*travel((phase-.66)/.34);
+    const shift=running||returned?(workX-29)%14:0;
     const assembled=returned||phase>=.5;
     function path(points,closed=false){
       ctx.beginPath();ctx.moveTo(points[0],points[1]);

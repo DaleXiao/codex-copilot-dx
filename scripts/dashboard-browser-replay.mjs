@@ -43,7 +43,8 @@ let contextLimit = 1000;
 const contextFixture = () => ({ source: "run_context", sessions: [{ id: "0-session-1", application: "codex_app", provider: "github", model: "gpt-test", concurrent: false,
   points: [100, 200, 120].map((input, index) => ({ at: `2026-10-29T11:00:0${index}Z`, order: index * 10, finished: index * 10 + 1,
     input_tokens: input, context_window_tokens: contextLimit, cached_input_tokens: 60, request_id: `context-${index}`, outcome: "completed" })),
-  compactions: [{ at: "2026-10-29T11:00:02Z", order: 20, elapsed_ms: 2400, outcome: "completed" }] }],
+  compactions: [{ at: "2026-10-29T11:00:00Z", order: 0, elapsed_ms: 1000, outcome: "completed" },
+    { at: "2026-10-29T11:00:02Z", order: 20, elapsed_ms: 2400, outcome: "completed" }] }],
   unassigned: [{ id: "0-request-2", application: "claude_app", provider: "m365", model: "external-test", input_tokens: 50, context_window_tokens: null, cached_input_tokens: null, at: "2026-10-29T10:00:00Z" }] });
 const concurrentFlow = () => [
   { request_id: "flow-codex", application: requestApplication({ originator: "Codex Desktop" }), provider: "github", model: "gpt-test", first_output_ms: 100, upstream_attempts: 1, elapsed_ms: 1200 },
@@ -673,8 +674,12 @@ try {
         assert.equal(await page.locator("#flow-hub small").count(), 0, "Total is not repeated under the logo");
         assert.equal(await page.locator(".flow-halo-turn").evaluate(node => getComputedStyle(node).animationPlayState), "running");
         assert.equal(await page.locator(".flow-logo").evaluate(node => getComputedStyle(node).animationName), "none");
+        const motionPositions = () => page.evaluate(() => ["flow-hub", "tool-canvas"].map(id =>
+          document.getElementById(id).getBoundingClientRect().top + scrollY));
+        const motionStart = await motionPositions();
         if (await page.locator("#flow-active").getAttribute("open") === null) await page.locator("#flow-active > summary").click();
         await page.locator("#flow-active-body tr").first().waitFor({ state: "visible" });
+        assert.deepEqual(await motionPositions(), motionStart, "Opening request rows does not move either motion area");
         await page.evaluate(() => { window.keptFlowRow = document.querySelector("#flow-active-body tr"); });
         flowRequests[0].elapsed_ms += 1000;await refreshStatus();
         if (width === 1280) {
@@ -697,6 +702,10 @@ try {
         assert.equal(await page.locator("#request-flow").getAttribute("data-state"), "active");
         assert.equal(await page.locator("#flow-apps .flow-node").count(), 3);
         assert.equal(await page.locator("#flow-models .flow-node").count(), 3);
+        assert.deepEqual(await motionPositions(), motionStart, "Additional apps and models do not move either motion area");
+        const gaps = await page.locator("#flow-models .flow-node").evaluateAll(nodes => nodes.slice(1).map((node, i) =>
+          node.querySelector(".flow-source").getBoundingClientRect().top - nodes[i].querySelector(".flow-note").getBoundingClientRect().bottom));
+        assert.ok(gaps.every(gap => gap >= 16), "A model status is visually separated from the next model source");
         // A shared right edge keeps application paths and their bends aligned.
         const appEdges = await page.locator("#flow-apps .flow-node").evaluateAll(nodes => nodes.map(node => node.getBoundingClientRect().right));
         assert.ok(Math.max(...appEdges) - Math.min(...appEdges) < 1, "Every app uses the same right edge");
@@ -802,6 +811,11 @@ try {
         const pointTips = await page.locator("#context-history-chart .context-point title").allTextContents();
         assert.equal(pointTips.length, 3);assert.match(pointTips[0], /60\.0%/);assert.match(pointTips[1], /30\.0%/);assert.match(pointTips[2], /50\.0%/);
         assert.match(await page.locator("#context-compactions").textContent(), /2.4 s/);
+        assert.equal(await page.locator("#context-history-chart .context-compact").count(), 2);
+        assert.equal(await page.locator("#context-history-chart").evaluate(host => {
+          const unit = host.querySelector(".context-unit").getBoundingClientRect();
+          return [...host.querySelectorAll(".context-compact-label")].every(marker => marker.getBoundingClientRect().top >= unit.bottom);
+        }), true, "The axis unit and compaction labels occupy separate rows");
         for(const limit of [1050000,20000000]){
           contextLimit=limit;await page.locator("#refresh").click();
           await page.waitForFunction(value=>document.getElementById("context-window").textContent===value.toLocaleString(),limit);

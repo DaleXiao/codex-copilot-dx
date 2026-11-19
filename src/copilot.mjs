@@ -163,6 +163,7 @@ export async function fetchCopilotUpstream(
     retries = UPSTREAM_RETRIES,
     retryDelayMs = UPSTREAM_RETRY_DELAY_MS,
     observeBodyWrite = false,
+    onBodySent,
   } = {},
 ) {
   const retryCount = parseUpstreamRetries(retries);
@@ -176,8 +177,18 @@ export async function fetchCopilotUpstream(
     const attemptStart = Date.now();
     debugLog(`upstream ${method} ${target} attempt=${attempt + 1}/${retryCount + 1}`);
     try {
-      const onBodySent = observeBodyWrite && method === "POST" && fetchImpl === fetch && observeUpstreamBodyWrite(init.headers?.["X-Request-Id"]);
-      const resp = await (onBodySent ? fetchWithBodyWriteTiming(url, init, onBodySent) : fetchImpl(url, init));
+      const observedPost = observeBodyWrite && method === "POST" && fetchImpl === fetch;
+      const observe = observedPost && observeUpstreamBodyWrite(init.headers?.["X-Request-Id"]);
+      const releaseInput = observedPost && retryCount === 0 && typeof onBodySent === "function";
+      const report = releaseInput ? (kind, value) => {
+        if (observe) observe(kind, value);
+        if (kind === "sent" && !signal?.aborted) {
+          delete init.body;
+          onBodySent();
+        }
+      } : observe;
+      if (releaseInput) init.redirect = "error";
+      const resp = await (report ? fetchWithBodyWriteTiming(url, init, report) : fetchImpl(url, init));
       debugLog(`upstream ${method} ${target} status=${resp.status} attempt=${attempt + 1}/${retryCount + 1} attempt_ms=${Date.now() - attemptStart} total_ms=${Date.now() - totalStart}`);
       if (attempt < retryCount && isRetryableUpstreamStatus(resp.status, method)) {
         await discardBoundedResponseBody(resp);

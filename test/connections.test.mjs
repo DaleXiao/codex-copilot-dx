@@ -14,6 +14,7 @@ import { createConnectionRuntime } from "../src/connection-runtime.mjs";
 import { readClientGatewayKeys } from "../src/client-gateway-keys.mjs";
 import { configureCodexApi } from "../src/codex-api-config.mjs";
 import { runWithRequestContext } from "../src/request-context.mjs";
+import { apiTargetAllowed } from "../src/api-target.mjs";
 import { updateM365Settings } from "../src/m365-settings.mjs";
 import { transportErrorDetails } from "../src/operation-error.mjs";
 import { claudeModelEntries } from "../src/claude-models.mjs";
@@ -198,6 +199,61 @@ test("managed GitHub review preferences are read back from disk after restart", 
   assert.deepEqual(restarted.runtime.snapshot().github.preference, { model: review, source: "settings", reasoningEffort: "high" });
   const locked = runtime(t, { home: s.home, githubRegistry, env: { ...s.env, CCDX_AUTO_REVIEW_MODEL: primary } });
   assert.equal(locked.runtime.snapshot().github.preference.source, "environment");
+});
+test("managed auto review uses only the confirmed session model and defaults to supported low", async t => {
+  const primary = "gpt-6.1-sol", alternate = "gpt-5.5";
+  const s = runtime(t, { githubRegistry: { models: { data: [primary, alternate].map(id => ({
+    id, supported_endpoints: ["/responses"], reasoning_efforts: ["low", "high"],
+  })) } } });
+  await s.runtime.manageConnections({ operation: "client", id: "codex", enabled: true, allowed: ["github"],
+    deployments: [primary, alternate].map(model => ({ source: "github", model })), default_model: deploymentModelId("github", primary), auto_sync: false });
+  const route = (model, session, confirm = true, reasoning) => {
+    const body = { model, ...(reasoning ? { reasoning } : {}) }, context = { application: "codex_app", purpose: "conversation" };
+    runWithRequestContext(context, () => {
+      s.runtime.resolveCodex(body, { headers: { session_id: session } });
+      if (confirm) context.noteReviewModel?.();
+    });
+    return body;
+  };
+  route(alternate, "session-a");
+  route(alternate, "unconfirmed", false);
+  assert.deepEqual(route("codex-auto-review", "session-a"), { model: alternate, reasoning: { effort: "low" } });
+  assert.deepEqual(route("codex-auto-review", "unconfirmed"), { model: primary, reasoning: { effort: "low" } });
+  assert.deepEqual(route("codex-auto-review", "session-a", true, { effort: "high" }), { model: alternate, reasoning: { effort: "high" } });
+  await s.runtime.action({ action: "auto-review", provider: "github", model: primary, effort: "high" });
+  assert.deepEqual(route("codex-auto-review", "session-a"), { model: primary, reasoning: { effort: "high" } });
+});
+
+test("custom Gemini discovery and generation pin credentials and paths to the configured model root", async () => {
+  const root = "https://api.example.test/v1beta/models", calls = [];
+  const provider = createApiProvider({ config: checkedApi({ ...apiConfig, base_url: "https://api.example.test/v1beta",
+    endpoints: { gemini: root }, models: [{ id: "gemini-fixture", protocols: ["gemini"] }] }), secrets: { get: async () => "synthetic-gemini-key" },
+    networkFactory: async ({ targets, geminiModelsUrl }) => ({ close() {}, async fetch(url, init) {
+      assert.equal(apiTargetAllowed(url, targets.map(value => new URL(value).href), init.method, geminiModelsUrl), true);
+      calls.push({ url, init });
+      if (init.method === "GET") return Response.json(url === root
+        ? { models: [{ name: "models/gemini-fixture", supportedGenerationMethods: ["generateContent"], inputTokenLimit: 100000 }], nextPageToken: "next+page" }
+        : { models: [{ name: "models/embedding-fixture", supportedGenerationMethods: ["embedContent"] }] });
+      return Response.json({ totalTokens: 7 });
+    } }) });
+  try {
+    const catalog = await provider.discover();
+    assert.deepEqual(catalog.map(model => model.id), ["gemini-fixture"]);
+    assert.equal(catalog[0].metadata.protocols.gemini.context_window, 100000);
+    assert.equal(calls[1].url, root + "?pageToken=next%2Bpage");
+    const input = { model: "gemini-fixture", request: { labels: { root_cascade_id: "local-only" }, contents: [] } };
+    await provider.client.gemini(input, { countTokens: true });
+    await provider.client.gemini(input, { stream: true });
+    assert.equal(calls[2].url, root + "/gemini-fixture:countTokens");
+    assert.equal(calls[3].url, root + "/gemini-fixture:streamGenerateContent?alt=sse");
+    assert.deepEqual(JSON.parse(calls[2].init.body), { generateContentRequest: { model: "models/gemini-fixture", contents: [] } });
+    for (const { init } of calls) {
+      assert.equal(init.headers["x-goog-api-key"], "synthetic-gemini-key");
+      assert.equal(init.headers.Authorization, undefined);
+    }
+    for (const url of ["https://other.example.test/v1beta/models?spec=1", root + "/evil:delete", root + "/gemini-fixture:generateContent?key=leak"])
+      assert.equal(apiTargetAllowed(url, [root], "POST", root), false);
+  } finally { provider.close(); }
 });
 test("explicit manual sync writes only the target, retains auto_sync false and refuses stale client drafts", async t => {
   const writes = [], s = runtime(t, { configureCodex: input => { writes.push(input);return { state: "configured" }; } });

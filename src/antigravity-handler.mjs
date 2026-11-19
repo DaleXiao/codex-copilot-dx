@@ -5,7 +5,7 @@ import {createRequestAbort,abortErrorStatusCode,readJsonBody,readBoundedResponse
 import {safeUpstreamResponseHeaders,upstreamRejectionHeaders} from "./upstream-headers.mjs";
 import {isLoopbackAddress,isLoopbackHostHeader} from "./security.mjs";
 import {antigravityToChat,chatToAntigravity,chatStreamToAntigravity,parseAntigravityJSON} from "./antigravity-chat-bridge.mjs";
-import {ANTIGRAVITY_MODEL_PREFIX,antigravityCopilotModels,hasAntigravityAgentDefault,mergeAntigravityModels} from "./antigravity-models.mjs";
+import {ANTIGRAVITY_MODEL_PREFIX,ANTIGRAVITY_NATIVE_PREFIX,antigravityCopilotModels,hasAntigravityAgentDefault,mergeAntigravityModels} from "./antigravity-models.mjs";
 import {createPrivacyTextFragments} from "./privacy-stream.mjs";
 import {createGoogleResponseObserver,googleUsageEvent} from "./antigravity-usage.mjs";
 import {currentRequestContext,observeRequestedModel} from "./request-context.mjs";
@@ -43,6 +43,7 @@ function groundedSearch(result,query){
 }
 
 export function createAntigravityHandler({client,models=()=>[],selectedModels=()=>null,defaultModel=()=>null,enabled=()=>false,privacy,searchFn,imageFn,guardSource,acquireRequest=async()=>()=>{},sourceAdmission,applicationEvidence,
+  nativeModels=()=>[],resolveNativeModel=()=>null,
   compaction,compactionProfile=()=>"github",rememberConversationSource=()=>{},resolveCompactionSource=()=>null,recordUsageFn=recordUsage,fetchGoogle=fetch,googleOrigin=GOOGLE_ORIGIN,requestBodyTimeoutMs=120000,upstreamTimeoutMs=180000,copilotTimeoutMs,streamIdleTimeoutMs=60000,
   generationSettings=()=>({ selection:selectedModels(), copilotTimeoutMs })}={}) {
   if(![GOOGLE_ORIGIN,"https://cloudcode-pa.googleapis.com"].includes(googleOrigin))throw new Error("Unrecognized Google control origin");
@@ -133,10 +134,10 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
         if(method==="fetchAvailableModels"&&upstream.ok){
           const value=JSON.parse(await readBoundedResponseText(upstream,{maxBytes:8*1024*1024,signal:abort.signal,label:"Google model catalog"}));
           nativeWindows.clear();for(const[id,entry]of Object.entries(value.models||{}).slice(0,256))if(Number.isSafeInteger(entry?.maxTokens)&&entry.maxTokens>0){nativeWindows.set(id,entry.maxTokens);if(typeof entry.model==="string")nativeWindows.set(entry.model,entry.maxTokens)}
-          const merged=mergeAntigravityModels(value,models(),selectedModels(),defaultModel());
+          const merged=mergeAntigravityModels(value,models(),selectedModels(),defaultModel(),nativeModels());
           catalogDefaultSupported=hasAntigravityAgentDefault(value);
           catalogDefaultModel=catalogDefaultSupported&&merged.defaultAgentModelId.startsWith(ANTIGRAVITY_MODEL_PREFIX)?merged.defaultAgentModelId:null;
-          catalogModels=Object.keys(merged.models).filter(id=>id.startsWith(ANTIGRAVITY_MODEL_PREFIX));
+          catalogModels=Object.keys(merged.models).filter(id=>id.startsWith(ANTIGRAVITY_MODEL_PREFIX)||id.startsWith(ANTIGRAVITY_NATIVE_PREFIX));
           res.writeHead(200,{"Content-Type":"application/json","Cache-Control":"no-store"});res.end(JSON.stringify(merged));return;
         }
         const nativeStreaming=/text\/event-stream/i.test(upstream.headers.get("content-type")||"");
@@ -169,6 +170,25 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
         if(outcome)markResponseTerminal(outcome,outcome==="failed"?{origin:upstream.ok?"upstream_event":"upstream_http"}:undefined);
         res.end();
       };
+      if(method==="countTokens"&&req.method==="POST"&&typeof body?.model==="string"&&body.model.startsWith(ANTIGRAVITY_NATIVE_PREFIX)){
+        const selected=resolveNativeModel(body.model);
+        if(!selected)throw httpError("The selected Gemini source is unavailable",503);
+        if(!body.request)throw httpError("Invalid Gemini token count request",400);
+        if(body.request.labels?.root_cascade_id||body.request.labels?.cascade_id)await guardSource?.(body,selected.source,abort.signal);
+        const input={model:selected.model,request:body.request};
+        session=privacy?.prepareSession?await privacy.prepareSession(input,{protocol:"gemini",client:"gemini",signal:abort.signal}):passthrough(input);
+        phase="upstream";
+        const reply=await selected.transport.client.gemini(session.body,{countTokens:true,signal:abort.signal,
+          onUpstreamStart:()=>abort.setTimeout(upstreamTimeoutMs,"upstream_timeout")});
+        releaseInput();
+        if(!reply.ok){
+          const {status,headers}=reply;await cancelSourceResponse(reply).catch(()=>{});
+          sendUpstreamError(res,{status,headers:upstreamRejectionHeaders(status,headers)},JSON.stringify({error:"Gemini token count was refused"}));return;
+        }
+        const value=JSON.parse(await readBoundedResponseText(reply,{maxBytes:65536,signal:abort.signal,label:"Gemini token count"}));
+        if(!Number.isSafeInteger(value.totalTokens)||value.totalTokens<0)throw httpError("Invalid Gemini token count response",502);
+        res.writeHead(200,{"Content-Type":"application/json"});res.end(JSON.stringify({totalTokens:value.totalTokens}));return;
+      }
       if(!generation){
         if(!controlMethods.has(method)||body?.requestType||body?.request?.contents||body?.contents)throw httpError("Unsupported Antigravity control endpoint",400);
         if(method==="writeTrajectoryAcls"&&(!body||Object.keys(body).some(key=>key!=="trajectoryId")||typeof body.trajectoryId!=="string"||body.trajectoryId.length>160))throw httpError("Unsupported Antigravity trajectory permission request",400);
@@ -176,6 +196,76 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
       }
       if(req.method!=="POST"||!body||typeof body.model!=="string"||!body.request)throw httpError("Invalid Antigravity generation request",400);
       const { selection, copilotTimeoutMs:requestCopilotTimeoutMs }=generationSettings();
+      if(body.model.startsWith(ANTIGRAVITY_NATIVE_PREFIX)){
+        const selected=resolveNativeModel(body.model);
+        if(!selected)throw httpError("The selected Gemini source is unavailable",503);
+        if(!["agent","checkpoint","summarization","title"].includes(body.requestType))throw httpError("Unsupported native Gemini request type",400);
+        await guardSource?.(body,selected.source,abort.signal);
+        if(body.requestType==="agent")rememberConversationSource(body,selected.source);
+        const stream=method==="streamGenerateContent",source=selected.transport;
+        usageProvider=selected.source;usageModel=selected.model;usageMode=stream?"sse":"json";
+        if(context){context.provider=selected.source;context.streamPerformance?.setProvider?.(selected.source)}
+        observeContextSession(null,{session_id:body.request.labels?.root_cascade_id||body.request.labels?.cascade_id},source,"gemini");
+        context?.streamPerformance?.observeToolInput?.(body.request,"gemini");
+        markResponseModel(selected.model,{configured:true});
+        markRequestObservation({usage_state:"pending",context_window_tokens:selected.maxTokens});
+        const original={model:selected.model,request:body.request};
+        const open=(value,options={})=>source.client.gemini(value,{...options,stream:options.internal===true||stream,sourceBodyManaged:true,
+          onUpstreamStart:()=>abort.setTimeout(upstreamTimeoutMs,"upstream_timeout")});
+        session=privacy?.prepareSession?await privacy.prepareSession(original,{protocol:"gemini",client:"gemini",signal:abort.signal}):passthrough(original);
+        phase="upstream";
+        const upstream=compacting&&compaction?await compaction.run({body:session.body,protocol:"gemini",scope:source.profileId("gemini"),
+          source:selected.source,model:selected.model,client:"gemini",inputLimit:selected.maxTokens,outputAllowance:body.request.generationConfig?.maxOutputTokens||0,
+          native:open,summarize:compactionSummarizer(session.body,"gemini",(value,options)=>open(value,{...options,internal:true})),
+          options:{signal:abort.signal},onActivity:()=>abort.setTimeout(streamIdleTimeoutMs,"compaction_idle_timeout")}):await open(session.body,{signal:abort.signal});
+        releaseInput();markUpstreamHeaders(upstream.status);
+        applicationEvidence?.accept(req,"antigravity","inference");
+        if(!upstream.ok){
+          const {status,headers}=upstream;
+          await cancelSourceResponse(upstream).catch(()=>{});abort.signal.throwIfAborted();
+          outcome="failed";counts.failed++;markResponseErrorOrigin("upstream_http");markResponseTerminal(outcome,{origin:"upstream_http"});
+          sendUpstreamError(res,{status,headers:upstreamRejectionHeaders(status,headers)},JSON.stringify({error:"Gemini generation was refused (HTTP "+status+")"}));return;
+        }
+        const events=[];
+        const observe=createGoogleResponseObserver({streaming:stream,onEvent:value=>events.push(value),parseJSON:parseAntigravityJSON});
+        const emit=async value=>{
+          abort.signal.throwIfAborted();
+          if(value?.error)throw httpError("Gemini stream ended with an upstream error",502);
+          const event=googleUsageEvent(value);if(event)captureUsage(event);
+          const reply=session.restoreValue(value),candidates=reply?.candidates||[];
+          markToolActivity(reply,"gemini");
+          if(candidates.some(candidate=>candidate.content?.parts?.some(part=>part.functionCall||!part.thought&&part.text)))markFirstOutput("delta");
+          if(candidates.some(candidate=>candidate.finishReason)){outcome=candidates.every(candidate=>candidate.finishReason==="STOP")?"completed":"incomplete";sourceResponseAccepted(upstream);}
+          const wrapped=JSON.stringify({response:reply});
+          if(stream){if(!await writeOrDrain(res,"data: "+wrapped+"\n\n",{signal:abort.signal}))throw httpError("Antigravity client disconnected",499);}
+          else res.end(wrapped);
+        };
+        try {
+          if(!upstream.body||stream&&!/^text\/event-stream/i.test(upstream.headers.get("content-type")||""))throw httpError("Expected a Gemini response stream",502);
+          if(stream){
+            res.writeHead(200,safeUpstreamResponseHeaders(upstream.headers,{contentType:"text/event-stream"}));
+            abort.setTimeout(streamIdleTimeoutMs,"stream_idle_timeout");
+            const reader=sourceResponseReader(upstream);
+            try{
+              while(true){
+                const next=await reader.read();observeSourceRead(reader,next);
+                if(next.done){if(observe.finish().unavailable)throw httpError("Invalid Gemini stream",502);break;}
+                abort.setTimeout(streamIdleTimeoutMs,"stream_idle_timeout");observe.push(next.value);
+                for(const value of events.splice(0))await emit(value);
+              }
+              for(const value of events.splice(0))await emit(value);
+            }finally{await cancelSourceReader(reader).catch(()=>{});releaseSourceReader(reader);}
+          }else{
+            const value=parseAntigravityJSON(await readBoundedResponseText(upstream,{maxBytes:MAX_REPLY,signal:abort.signal,label:"Gemini response"}));
+            if(value?.error||!Array.isArray(value?.candidates)||!value.candidates.some(candidate=>candidate.finishReason))throw httpError("Invalid Gemini response",502);
+            res.writeHead(200,safeUpstreamResponseHeaders(upstream.headers,{contentType:"application/json"}));
+            await emit(value);
+          }
+          if(!outcome)throw httpError("Gemini response ended without a terminal result",502);
+          markResponseTerminal(outcome);if(stream)res.end();
+        }catch(error){sourceResponseFailed(upstream);await cancelSourceResponse(upstream).catch(()=>{});markResponseErrorOrigin("upstream_event");throw error;}
+        return;
+      }
       const copilotModels=antigravityCopilotModels(models()),selected=copilotModels.find(model=>model.id===body.model&&(selection===null||selection.includes(model.id)));
       if((body.requestType==="agent"||compactBinding?.source==="google")&&!selected){
         if(body.model.startsWith(ANTIGRAVITY_MODEL_PREFIX))throw httpError("The selected Copilot model is unavailable",503);
@@ -212,9 +302,11 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
       if(!target)throw httpError("Copilot Carbon is unavailable for Antigravity background tasks",503);
       const stream=method==="streamGenerateContent";usageModel=target.model;usageMode=stream?"sse":"json";usageProvider="github";
       converted=antigravityToChat(request,{model:target.model,effort:target.effort,reasoningEfforts:target.effort?[target.effort]:[],stream});
-      markResponseModel(target.model);markRequestObservation({usage_state:"pending"});
+      markResponseModel(target.model);markRequestObservation({usage_state:"pending",context_window_tokens:target.maxTokens});
       session=privacy?.prepareSession?await privacy.prepareSession(converted.chat,{protocol:"chat",client:"gemini",signal:abort.signal}):passthrough(converted.chat);
-      const callOptions={signal:abort.signal,sourceBodyManaged:true,observeBodyWrite:true,retryOptions:{retries:0},onUpstreamStart:()=>abort.setTimeout(requestCopilotTimeoutMs??upstreamTimeoutMs,"upstream_timeout")};
+      const callOptions={signal:abort.signal,sourceBodyManaged:true,observeBodyWrite:true,retryOptions:{retries:0},
+        ...(compacting?{}:{onBodySent:releaseInput}),
+        onUpstreamStart:()=>abort.setTimeout(requestCopilotTimeoutMs??upstreamTimeoutMs,"upstream_timeout")};
       phase="upstream";
       const upstream=compacting&&compaction?await compaction.run({body:session.body,protocol:"chat",scope:JSON.stringify(["gemini","github",compactionProfile()]),source:"github",client:"gemini",
         inputLimit:target.maxTokens,outputAllowance:session.body.max_completion_tokens||session.body.max_tokens||0,native:client.chatCompletions,options:callOptions,

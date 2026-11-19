@@ -171,6 +171,16 @@ test("Responses Lite inline descriptions are masked while definitions and gramma
   assert.notEqual(session.body.input[0].tools[0].tools[0].description, key);
   assert.equal(session.body.input[0].tools[0].tools[0].format.definition, key);assert.equal(session.body.input[0].tools[0].name, "functions");session.release();
 });
+test("replayed MCP tool descriptions are masked without changing identities or schemas", async () => {
+  const tool = { name: "fixture", description: key, input_schema: { type: "object", properties: { value: { type: "string" } } } };
+  const item = { type: "mcp_list_tools", id: "list_fixture", server_label: "fixture", tools: [tool] };
+  const session = await maskPrivacyRequest({ input: [item] }, { ...options, protocol: "responses" });
+  const [masked] = session.body.input;
+  assert.notEqual(masked.tools[0].description, key);
+  assert.deepEqual({ ...masked, tools: [{ ...masked.tools[0], description: key }] }, item);
+  assert.equal(session.restoreText(masked.tools[0].description), key);
+  session.release();
+});
 test("restored tool frames preserve their wire metadata and upstream errors discard incomplete parameters", async () => {
   const session = await maskPrivacyRequest(body(key), options), token = session.body.messages[0].content;
   const stream = createPrivacyStream(session), args = JSON.stringify({ signature: token, data: token });

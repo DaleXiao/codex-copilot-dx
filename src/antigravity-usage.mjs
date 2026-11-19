@@ -22,13 +22,13 @@ export function googleUsageEvent(value) {
 
 // Observe the same chunks the caller forwards, without buffering delivery,
 // changing bytes or reading ahead. Oversized metadata is unavailable, not zero.
-export function createGoogleResponseObserver({ streaming, onEvent, maxBytes = MAX_BYTES }) {
+export function createGoogleResponseObserver({ streaming, onEvent, maxBytes = MAX_BYTES, parseJSON = JSON.parse }) {
   const decoder = new TextDecoder("utf-8", { fatal: true });
   let parts = [], bytes = 0, data = [], frameBytes = 0, skipLF = false, skipFrame = false, unavailable = false;
   let rawTail = null, rawBytes = 0;
   const parse = text => {
     if (!text || text === "[DONE]") return;
-    try { const value = JSON.parse(text);for (const item of Array.isArray(value) ? value : [value]) onEvent(item); }
+    try { const value = parseJSON(text);for (const item of Array.isArray(value) ? value : [value]) onEvent(item); }
     catch { unavailable = true; }
   };
   const line = () => {
@@ -86,7 +86,7 @@ export function createGoogleResponseObserver({ streaming, onEvent, maxBytes = MA
           if (parts.length) line();
           if (!skipFrame && data.length) parse(data.join("\n"));
           if (!skipFrame && rawTail && rawBytes <= maxBytes) {
-            const value = JSON.parse(rawTail);
+            const value = parseJSON(rawTail);
             if (value?.error && typeof value.error === "object" && !Array.isArray(value.error)) onEvent(value);
           }
         } else if (!unavailable) parse(parts.join(""));

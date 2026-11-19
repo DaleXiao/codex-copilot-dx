@@ -145,7 +145,7 @@ export function requestOptionsEvidence(body) {
   return result;
 }
 
-export function createHttpFailureDiagnostics({ maxEntries = 20, now } = {}) {
+export function createHttpFailureDiagnostics({ maxEntries = 20, now, history } = {}) {
   const all = createResponseFailureDiagnostics({ maxEntries, now });
   const actionable = createResponseFailureDiagnostics({ maxEntries, now });
   const protocol = createResponseFailureDiagnostics({ maxEntries: 8, now });
@@ -165,6 +165,7 @@ export function createHttpFailureDiagnostics({ maxEntries = 20, now } = {}) {
         : details.route === "image_mcp" && details.http_status === 405 ? "protocol"
           : details.route === "not_found" ? "route" : "other";
       counts[category]++;
+      if (category === "inference") history?.record(details);
       if (probe) { discovery.record(details);return; }
       if ((category === "inference" || category === "other") && !accessNotice) actionable.record(details);
       if (category === "capability") {
@@ -205,6 +206,7 @@ export function buildHttpFailureDetails({ statusCode, route, requestId, model, c
   }
   const message = (Object.hasOwn(reasons, reason) ? reasons[reason] : null) || (route === "messages_count_tokens" && statusCode === 404 ? "The source's token-count endpoint returned HTTP 404. Message generation is separate."
     : code === "ccdx_api_network_unavailable" ? "Connection to the model source failed."
+      : code === "upstream_timeout" && attempt_timings?.length && attempt_timings.at(-1)?.headers_ms == null ? "Timed out waiting for the model source to respond."
       : origin === "privacy" ? "Local privacy processing failed. Review its error code and request timeline."
         : origin === "client_validation" ? "The request was rejected locally before an upstream call."
       : error_body === "empty" ? "Upstream returned no error details." : "HTTP request failed; original response was preserved.");

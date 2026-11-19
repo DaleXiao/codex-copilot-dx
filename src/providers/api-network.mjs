@@ -9,10 +9,11 @@ import { privateHelperEnvironment } from "../private-helper-environment.mjs";
 import { transportErrorDetails } from "../operation-error.mjs";
 import { apiTargetAllowed } from "../api-target.mjs";
 
-export async function createApiNetwork({ targets, env = process.env, platform = process.platform, signal,
+export async function createApiNetwork({ targets, geminiModelsUrl, env = process.env, platform = process.platform, signal,
   requestImpl = https.request, exec = promisify(execFile), startWindowsNetwork } = {}) {
   const urls = new Set(targets.map(raw => new URL(apiUrl(raw)).href));if (!urls.size || urls.size > 8) throw accessError("ccdx_api_url_invalid");
   const first = new URL([...urls][0]);
+  if (geminiModelsUrl && !urls.has(new URL(apiUrl(geminiModelsUrl)).href)) throw accessError("ccdx_api_url_invalid");
   let plan = resolveNetworkRoute({ env, checkApi: false }), worker;
   if (!networkProxyFor(first, plan) && !bypassNetworkProxy(first.hostname, first.port || 443, plan)) {
     if (platform === "darwin") {
@@ -20,7 +21,7 @@ export async function createApiNetwork({ targets, env = process.env, platform = 
       plan = resolveNetworkRoute({ env, systemProxy: stdout, checkApi: false });
     } else if (platform === "win32") {
       const start = startWindowsNetwork || (await import("../windows-http-network.mjs")).startWindowsHttpNetwork;
-      worker = await start({ target: "api", apiTargets: [...urls], env: privateHelperEnvironment(env), signal, timeoutMs: 120000 });
+      worker = await start({ target: "api", apiTargets: [...urls], geminiModelsUrl, env: privateHelperEnvironment(env), signal, timeoutMs: 120000 });
       requestImpl = worker.requestImpl;
     }
   }
@@ -31,7 +32,7 @@ export async function createApiNetwork({ targets, env = process.env, platform = 
     fetch(raw, init = {}) {
       return new Promise((resolve, reject) => {
         let url;try { url = new URL(raw); } catch { reject(accessError("ccdx_api_url_invalid"));return; }
-        if (closed || retiring || !apiTargetAllowed(url.href, [...urls], init.method || "GET") || !["GET", "POST"].includes(init.method || "GET")) { reject(accessError("ccdx_api_url_invalid"));return; }
+        if (closed || retiring || !apiTargetAllowed(url.href, [...urls], init.method || "GET", geminiModelsUrl) || !["GET", "POST"].includes(init.method || "GET")) { reject(accessError("ccdx_api_url_invalid"));return; }
         if (init.signal?.aborted) { reject(init.signal.reason);return; }
         active++;
         let req, incoming, socket, phase = "request", handedOff = false, released = false;

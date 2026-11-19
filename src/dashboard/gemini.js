@@ -1,6 +1,6 @@
 (() => {
   const el=id=>document.getElementById(id),language=globalThis.ccdxLanguage;
-  let busy=false,state=null,draft=null,defaultDraft,timeoutDraft,notice=null,pendingAction=null;
+  let busy=false,state=null,draft=null,defaultDraft,timeoutDraft,nativeDraft,notice=null,pendingAction=null;
   let sharedApplication=null,sharedPending=false,savedTimer,showSaved=false,savedModels=false;
   const words=(id,key)=>language.set(el(id),key);
   const clear=id=>{el(id).removeAttribute('data-i18n');el(id).removeAttribute('data-i18n-args');el(id).textContent='';el(id).title=''};
@@ -11,7 +11,8 @@
   const modelsDirty=()=>currentDefault()!==savedDefault()||draft!==null&&JSON.stringify([...draft].sort())!==JSON.stringify(selected().sort());
   const savedTimeout=()=>String(state?.copilot_timeout_seconds??'');
   const timeoutDirty=()=>timeoutDraft!==undefined&&timeoutDraft!==savedTimeout();
-  const dirty=()=>modelsDirty()||timeoutDirty();
+  const nativeDirty=()=>nativeDraft!==undefined&&nativeDraft!==(state?.native_source??null);
+  const dirty=()=>modelsDirty()||timeoutDirty()||nativeDirty();
   const syncSaveControls=()=>{
     el('gemini-save').disabled=busy||sharedPending||!dirty();
     el('gemini-cancel').disabled=busy||sharedPending||!dirty();
@@ -42,6 +43,13 @@
       if(timeout.value!==value)timeout.value=value;
       timeout.placeholder=language.format('gemini_timeout_default',{seconds:limit.default_ms/1000});
     }
+    const native=el('gemini-native-source'), sources=state.native_sources||[];
+    el('gemini-native-source-field').hidden=!sources.length&&!state.native_source;
+    native.disabled=busy||sharedPending;
+    const options=[{id:'',name:language.format('gemini_native_source_none')},...sources];
+    if(state.native_source&&!sources.some(source=>source.id===state.native_source))options.push({id:state.native_source,name:language.format('unknown'),disabled:true});
+    native.replaceChildren(...options.map(source=>{const option=document.createElement('option');option.value=source.id;option.textContent=source.name;option.disabled=source.disabled===true;return option}));
+    native.value=nativeDraft===undefined?state.native_source??'':nativeDraft??'';
     syncSaveControls();
     words('gemini-save',busy&&pendingAction==='models'?'api_saving':'api_save');if(busy&&pendingAction==='models')el('gemini-save').setAttribute('aria-busy','true');else el('gemini-save').removeAttribute('aria-busy');
     el('gemini-use-app-default').hidden=currentDefault()===null;
@@ -97,7 +105,7 @@
       const write=action&&action!=='summary',response=await fetch('/_ccdx/ui/gemini'+(action==='summary'?'?scope=summary':''),{method:write?'POST':'GET',headers:{'X-CCDX-Dashboard':'1',...(write?{'Content-Type':'application/json'}:{})},cache:'no-store',signal:AbortSignal.timeout(20000),...(write?{body:JSON.stringify({action,...(action==='enable'?{accept_background_copilot:true}:{}),...extra})}:{})});
       const value=await response.json();if(!response.ok)throw Error(value.error||'Antigravity setup failed');
       state=value;if(action==='models'){
-        draft=null;defaultDraft=undefined;timeoutDraft=undefined;showSaved=true;savedModels=extra.models!==undefined;clearTimeout(savedTimer);savedTimer=setTimeout(()=>{showSaved=false;render()},2200);
+        draft=null;defaultDraft=undefined;timeoutDraft=undefined;nativeDraft=undefined;showSaved=true;savedModels=extra.models!==undefined||extra.native_source!==undefined;clearTimeout(savedTimer);savedTimer=setTimeout(()=>{showSaved=false;render()},2200);
       }
       globalThis.ccdxGeminiStatus=state;
       if(action&&action!=='summary'){
@@ -106,17 +114,19 @@
       }
       return state;
     }catch(error){if(!report)throw error;notice='gemini_operation_failed';words('gemini-note',notice);el('gemini-note').title=error.message}
-    finally{busy=false;pendingAction=null;render();window.dispatchEvent(new CustomEvent('ccdx-gemini-state',{detail:{application:state?.application,needsCatalogReload:state?.enabled===true&&state.source_enabled!==false&&state.models_reload_required===true&&state.default_model_unavailable!==true}}))}
+    finally{busy=false;pendingAction=null;render();window.dispatchEvent(new CustomEvent('ccdx-gemini-state',{detail:{application:state?.application,needsCatalogReload:(state?.enabled===true&&state.source_enabled!==false||Boolean(state?.native_source))&&state.models_reload_required===true&&state.default_model_unavailable!==true}}))}
   }
   globalThis.ccdxAntigravity={get state(){return state},get pending(){return busy},refreshStatus:()=>load('summary'),setEnabled:enabled=>load(enabled?'enable':'disable',{},false)};
   el('gemini-enabled').addEventListener('change',event=>void load(event.target.checked?'enable':'disable'));
   el('gemini-model-form').addEventListener('submit',event=>{
     event.preventDefault();if(!dirty())return;
     void load('models',{...(modelsDirty()?{models:draft||selected(),...(defaultDraft!==undefined?{default_model:defaultDraft}:{})}:{}),
-      ...(timeoutDirty()?{copilot_timeout_seconds:timeoutDraft===''?null:Number(timeoutDraft)}:{})});
+      ...(timeoutDirty()?{copilot_timeout_seconds:timeoutDraft===''?null:Number(timeoutDraft)}:{}),
+      ...(nativeDirty()?{native_source:nativeDraft}:{})});
   });
   el('gemini-copilot-timeout').addEventListener('input',event=>{timeoutDraft=event.target.value;notice=null;clear('gemini-note');syncSaveControls()});
-  el('gemini-cancel').addEventListener('click',()=>{draft=null;defaultDraft=undefined;timeoutDraft=undefined;notice=null;clear('gemini-note');render()});
+  el('gemini-native-source').addEventListener('change',event=>{nativeDraft=event.target.value||null;notice=null;clear('gemini-note');syncSaveControls()});
+  el('gemini-cancel').addEventListener('click',()=>{draft=null;defaultDraft=undefined;timeoutDraft=undefined;nativeDraft=undefined;notice=null;clear('gemini-note');render()});
   el('gemini-use-app-default').addEventListener('click',()=>{defaultDraft=null;render();el('gemini-save').focus();});
   el('gemini-open').addEventListener('click',()=>{if(globalThis.ccdxApplicationControls)globalThis.ccdxApplicationControls.open('antigravity');else void load('open')});
   window.addEventListener('ccdx:application-state',event=>{if(event.detail?.id==='antigravity'){sharedApplication=event.detail.application;sharedPending=event.detail.pending;render()}});

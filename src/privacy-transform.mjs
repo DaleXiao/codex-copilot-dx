@@ -71,7 +71,17 @@ function requestTexts(body, protocol) {
     for (const [key, item] of Object.entries(value)) { if (key === "description" && typeof item === "string") add(value, key, item);else if (item && typeof item === "object") descriptions(item); }
   };
   descriptions(body.tools);
-  if (protocol === "messages" || protocol === "chat") {
+  if (protocol === "gemini") {
+    const request = body.request || {};
+    descriptions(request.tools);
+    for (const part of request.systemInstruction?.parts || []) if (typeof part?.text === "string") add(part, "text", part.text);
+    for (const content of request.contents || []) for (const part of content.parts || []) {
+      if (part?.thoughtSignature || part?.thought) continue;
+      if (typeof part?.text === "string") add(part, "text", part.text);
+      if (part?.functionCall?.args) leaves(part.functionCall.args, add, true);
+      if (part?.functionResponse?.response) leaves(part.functionResponse.response, add, true);
+    }
+  } else if (protocol === "messages" || protocol === "chat") {
     text(body, "system");
     for (const message of body.messages || []) {
       text(message, "content");
@@ -86,6 +96,9 @@ function requestTexts(body, protocol) {
     if (typeof body.input === "string") add(body, "input", body.input);
     else for (const item of body.input || []) {
       if (["additional_tools", "tool_search_output"].includes(item.type)) descriptions(item.tools);
+      else if (item.type === "mcp_list_tools" && Array.isArray(item.tools)) {
+        for (const tool of item.tools) if (typeof tool?.description === "string") add(tool, "description", tool.description);
+      }
       else if (item.type === "function_call") args(item, "arguments");
       else if (["function_call_output", "custom_tool_call_output"].includes(item.type)) text(item, "output");
       else if (item.type === "custom_tool_call") text(item, "input");
@@ -147,8 +160,13 @@ function modelSpanFits(text, start, end, label) {
     && /\b(?:function|class|const|let|var)\s+$/.test(text.slice(Math.max(0, start - 32), start))) return false;
   return true;
 }
+// JSON.rawJSON values are immutable and may hold exact tool numbers.
+function cloneGemini(value) {
+  if (!value || typeof value !== "object" || JSON.isRawJSON(value)) return value;
+  return Array.isArray(value) ? value.map(cloneGemini) : Object.fromEntries(Object.entries(value).map(([key, item]) => [key, cloneGemini(item)]));
+}
 export async function maskPrivacyRequest(body, { protocol, client = "api", personal = false, secret, find, signal, onPlan, rules = ruleSpans, seedMappings }) {
-  const copy = structuredClone(body), { items, nested } = requestTexts(copy, protocol), texts = items.map(item => item.text);
+  const copy = protocol === "gemini" ? cloneGemini(body) : structuredClone(body), { items, nested } = requestTexts(copy, protocol), texts = items.map(item => item.text);
   if (items.length > 8192 || texts.reduce((n, text) => n + Buffer.byteLength(text), 0) > 8 * 1024 * 1024) throw privacyFailure("request_too_large");
   const found = texts.length ? await find(texts, { signal, onPlan }) : [], values = new Map(seedMappings), kinds = {}, total = { count: 0, bytes: 0 };
   if (!Array.isArray(found) || found.length !== texts.length) throw privacyFailure("engine_invalid");
@@ -186,10 +204,10 @@ export async function maskPrivacyRequest(body, { protocol, client = "api", perso
     if (typeof value === "string") return restoreText(value);
     if (Array.isArray(value)) return value.map(item => restoreValue(item, inToolData));
     if (!value || typeof value !== "object" || JSON.isRawJSON(value)) return value;
-    if (!inToolData && (value.encrypted_content || ["thinking", "redacted_thinking", "reasoning"].includes(value.type))) return value;
+    if (!inToolData && (value.encrypted_content || ["thinking", "redacted_thinking", "reasoning"].includes(value.type) || protocol === "gemini" && (value.thoughtSignature || value.thought))) return value;
     return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, !inToolData && kept.has(key) ? item
       : !inToolData && key === "arguments" && typeof item === "string" && item ? restoreArguments(item)
-        : restoreValue(item, inToolData || key === "input" && ["tool_use", "server_tool_use", "mcp_tool_use"].includes(value.type))]));
+        : restoreValue(item, inToolData || key === "input" && ["tool_use", "server_tool_use", "mcp_tool_use"].includes(value.type) || protocol === "gemini" && key === "args")]));
   }
   function restoreArguments(text) {
     if (!text.includes(TOKEN_START) && !text.includes("\\u")) return text;

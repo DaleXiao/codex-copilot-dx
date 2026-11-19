@@ -283,7 +283,7 @@ export function createSourceAdmission({ now = Date.now, initialLimit = MAX_LIMIT
       if (!client || clients.has(client) || client[SOURCE_ADMISSION]?.scheduler === this) return clients.get(client) || client;
       const wrapped = { ...client };
       const sourceContext = { scheduler: this, descriptor };
-      for (const method of ["responses", "responsesCompact", "messages", "chatCompletions", "images"]) {
+      for (const method of ["responses", "responsesCompact", "messages", "chatCompletions", "images", "gemini"]) {
         if (typeof client[method] !== "function") continue;
         const perform = args => client[method](...args);
         wrapped[method] = (...args) => {

@@ -289,7 +289,10 @@ export async function runManagementCommand(command, options = {}) {
       const reviewId = client.auto_review_model || preference.auto_review_model || preference.model || null;
       const reviewModel = modelPlan?.models.find(model => [model.id, model.public_id, model.route_id].includes(reviewId));
       const details = { predictions: snapshot.client_integrations?.prediction || null, images: settings?.effective?.image_enabled || null,
-        auto_review: { model: reviewModel?.id || reviewId, source: reviewModel?.source || client.source, effort: client.auto_review_effort ?? preference.auto_review_effort ?? preference.reasoningEffort ?? "Follows client" }, memory_model: client.memory_model || { model: null } };
+        auto_review: { model: reviewModel?.id || reviewId, source: reviewModel?.source || client.source,
+          ...(preference.followModel ? { mode: "Follow conversation model" } : {}),
+          effort: client.auto_review_effort ?? preference.auto_review_effort ?? preference.reasoningEffort
+            ?? (preference.followModel && reviewModel?.capability?.values?.reasoning_efforts?.includes("low") ? "low if omitted" : "Follows client") }, memory_model: client.memory_model || { model: null } };
       if (feature) return print({ client: "Codex", feature, state: details[{ prediction: "predictions", image: "images", review: "auto_review" }[feature]] });
       const observed = retainedRequests(snapshot).filter(row => id === "codex" ? ["codex", "codex_app", "codex_cli"].includes(row.application) : row.application === id).at(-1);
       return print({ id: ids.app, access: client.enabled ? clientSetup(client) === "Paused" ? "Paused" : "Enabled" : "Disabled", setup: view.clients.find(row => row.id === id)?.setup || clientSetup(client),

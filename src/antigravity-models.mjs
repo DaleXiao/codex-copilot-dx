@@ -2,6 +2,7 @@ import {uniqueModelEntries} from "./model-catalog.mjs";
 import {modelDisplayName} from "./model-display.mjs";
 import {modelReasoningEfforts} from "./provider-metadata.mjs";
 export const ANTIGRAVITY_MODEL_PREFIX = "ccdx-copilot-";
+export const ANTIGRAVITY_NATIVE_PREFIX = "ccdx-gemini-";
 
 export function antigravityCopilotModels(catalog) {
   const data=Array.isArray(catalog)?catalog:catalog?.data;
@@ -29,9 +30,9 @@ export function hasAntigravityAgentDefault(catalog) {
   return typeof id==="string"&&!!catalog.models&&Object.hasOwn(catalog.models,id);
 }
 
-export function mergeAntigravityModels(googleCatalog,copilotCatalog,selection=null,defaultModel=null) {
+export function mergeAntigravityModels(googleCatalog,copilotCatalog,selection=null,defaultModel=null,nativeModels=[]) {
   if(!googleCatalog?.models||typeof googleCatalog.models!=="object"||Array.isArray(googleCatalog.models))throw new Error("Unrecognized Google model catalog");
-  const entries=antigravityCopilotModels(copilotCatalog).filter(model=>selection===null||selection.includes(model.id)),models={...googleCatalog.models};
+  const entries=[...antigravityCopilotModels(copilotCatalog).filter(model=>selection===null||selection.includes(model.id)),...nativeModels],models={...googleCatalog.models};
   if(!entries.length)return googleCatalog;
   const used=new Set(Object.values(models).map(model=>model?.model));let next=500;
   for(const entry of entries){

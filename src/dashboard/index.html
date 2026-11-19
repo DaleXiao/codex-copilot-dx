@@ -179,7 +179,8 @@
             <div class="panel-heading"><h2 data-i18n="cap_visible_model">Available models</h2><span id="gemini-draft-state" role="status" hidden></span></div>
             <form id="gemini-model-form">
               <div class="table-wrap"><table class="binding-table"><thead><tr><th data-i18n="model">Model</th><th data-i18n="source">Source</th><th data-i18n="cap_context">Context</th><th data-i18n="cap_reasoning">Reasoning</th><th data-i18n="gemini_new_chat_default">New chat default</th></tr></thead><tbody id="gemini-models"></tbody></table></div>
-              <div class="section-actions"><label><span data-i18n="gemini_copilot_timeout">Copilot response timeout (s)</span> <input id="gemini-copilot-timeout" type="number" min="1" max="600" step="1" inputmode="numeric" disabled></label><span id="gemini-timeout-lock" class="hint" data-i18n="controlled_by_environment" hidden>Set at startup</span></div>
+              <div class="section-actions"><label><span data-i18n="gemini_copilot_timeout">Copilot response timeout (s)</span> <input id="gemini-copilot-timeout" type="number" min="1" max="600" step="1" inputmode="numeric" disabled></label><span id="gemini-timeout-lock" class="hint" data-i18n="controlled_by_environment" hidden>Set at startup</span>
+                <label id="gemini-native-source-field" hidden><span data-i18n="gemini_native_source">Custom Gemini source</span> <select id="gemini-native-source" disabled></select></label></div>
               <div class="section-actions"><button id="gemini-save" type="submit" data-i18n="api_save" disabled>Save</button><button id="gemini-cancel" type="button" data-i18n="cap_discard_changes" disabled>Discard changes</button><button id="gemini-use-app-default" type="button" data-i18n="gemini_use_app_default" hidden>Use app default</button></div>
             </form>
             <p id="gemini-default-note" class="hint" role="status" hidden></p>
@@ -215,9 +216,9 @@
         <label><span data-i18n="api_base">API address</span><input id="connection-base" name="base" type="url" required autocomplete="off" spellcheck="false" placeholder="https://api.example.com/v1"></label>
         <label><span>API Key</span><input id="connection-key" name="key" type="password" autocomplete="off" spellcheck="false"><span class="hint" data-i18n="api_key_private">Stored separately. Never sent to clients.</span></label>
       </div>
-      <fieldset><legend data-i18n="api_protocols">Available APIs</legend><div class="connection-checks"><label><input type="checkbox" name="protocol" value="messages" checked>Messages</label><label><input type="checkbox" name="protocol" value="responses" checked>Responses</label><label><input type="checkbox" name="protocol" value="chat">Chat Completions</label></div></fieldset>
+      <fieldset><legend data-i18n="api_protocols">Available APIs</legend><div class="connection-checks"><label><input type="checkbox" name="protocol" value="messages" checked>Messages</label><label><input type="checkbox" name="protocol" value="responses" checked>Responses</label><label><input type="checkbox" name="protocol" value="chat">Chat Completions</label><label><input type="checkbox" name="protocol" value="gemini">Gemini</label></div></fieldset>
       <details class="tool-details"><summary data-i18n="api_endpoint_options">Addresses &amp; authentication</summary><div class="connection-fields">
-        <label>Messages<input name="messages_url" type="url"></label><label>Responses<input name="responses_url" type="url"></label><label>Chat Completions<input name="chat_url" type="url"></label>
+        <label>Messages<input name="messages_url" type="url"></label><label>Responses<input name="responses_url" type="url"></label><label>Chat Completions<input name="chat_url" type="url"></label><label>Gemini<input name="gemini_url" type="url"></label>
         <label><span data-i18n="api_messages_auth">Messages authentication</span><select name="auth_header"><option value="x-api-key">x-api-key</option><option value="bearer">Bearer token</option></select></label>
         <label><span data-i18n="api_key_env">Read key from environment</span><input name="key_env" type="text" autocomplete="off" spellcheck="false" placeholder="CCDX_COMPANY_API_KEY"><span class="hint" data-i18n="api_key_env_hint">Optional for servers without a credential service. Set before starting CCDX.</span></label>
       </div></details>
@@ -392,15 +393,14 @@
         <div data-view="requests" hidden>
         <section class="panel dashboard-section" id="request-flow" data-state="unknown">
           <div class="panel-heading"><h2 data-i18n="request_flow">REQUEST FLOW</h2><span id="flow-state" role="status" aria-live="polite" data-i18n="flow_status_unknown">Status unavailable</span></div>
-          <div id="flow-network" class="flow-network" role="group" data-i18n-label="request_flow" aria-label="Request flow">
+          <div class="flow-viewport"><div id="flow-network" class="flow-network" role="group" data-i18n-label="request_flow" aria-label="Request flow">
             <svg id="flow-wires" class="flow-wires" aria-hidden="true"></svg>
             <svg id="flow-active-wires" class="flow-wires flow-activity" aria-hidden="true" hidden></svg>
             <div class="flow-column"><p class="flow-column-title" data-i18n="clients">Apps</p><div id="flow-apps" class="flow-apps"></div></div>
             <div class="flow-hub-column"><button id="flow-hub" type="button" data-i18n-label="flow_show_all" aria-label="Show all requests"><b>CCDX</b></button></div>
             <div class="flow-column"><p class="flow-column-title" data-i18n="flow_sources_models">Sources / models</p><div id="flow-models"></div></div>
-          </div>
+          </div></div>
           <div class="flow-caption"><span id="flow-caption" data-i18n="flow_status_unknown">Status unavailable</span><button id="flow-clear" type="button" data-i18n="flow_show_all" hidden>Show all</button><button id="flow-more" type="button" hidden>More models</button></div>
-          <details id="flow-active" class="tool-details"><summary id="flow-active-title" data-i18n="flow_active_requests">Active requests</summary><div class="table-wrap"><table><thead><tr><th data-i18n="client">App</th><th data-i18n="source">Source</th><th data-i18n="model">Model</th><th data-i18n="state">State</th><th data-i18n="flow_elapsed">Elapsed</th><th data-i18n="attempts">Attempts</th></tr></thead><tbody id="flow-active-body"></tbody></table></div></details>
         </section>
         <section id="tool-activity" class="panel dashboard-section" aria-labelledby="tool-title" data-paused="true">
           <div class="panel-heading"><h2 id="tool-title" data-i18n="tool_heading">TOOL AND AGENT ACTIVITY</h2><label class="tool-style" for="tool-style"><span data-i18n="tool_style">Style</span><select id="tool-style"><option value="assembly" data-i18n="tool_style_assembly">Assembly line</option><option value="halo" data-i18n="tool_style_halo">Beam ring</option><option value="grid" data-i18n="tool_style_grid">Grid</option><option value="off" data-i18n="tool_style_off">Off</option></select></label></div>
@@ -409,6 +409,7 @@
             <div class="tool-content"><p id="tool-context" class="tool-context" hidden></p><div id="tool-list"></div><p id="tool-more" class="hint" hidden></p><details id="tool-details" class="tool-details tool-technical" hidden><summary data-i18n="tool_details">Call details</summary><div id="tool-technical"></div></details></div>
           </div>
         </section>
+        <details id="flow-active" class="panel dashboard-section"><summary id="flow-active-title" data-i18n="flow_active_requests">Active requests</summary><div class="table-wrap"><table><thead><tr><th data-i18n="client">App</th><th data-i18n="source">Source</th><th data-i18n="model">Model</th><th data-i18n="state">State</th><th data-i18n="flow_elapsed">Elapsed</th><th data-i18n="attempts">Attempts</th></tr></thead><tbody id="flow-active-body"></tbody></table></div></details>
         <details class="panel dashboard-section" id="source-requests" open>
           <summary data-i18n="requests_by_source">REQUESTS BY SOURCE</summary>
           <p class="hint" data-i18n="results_since_startup_partial_usage_is_marked_separately">Results since startup. Partial usage is marked separately.</p>
@@ -425,6 +426,7 @@
           <label for="failure-kind" class="sr-only" data-i18n="issue_category">Issue category</label>
           <select id="failure-kind"><option value="issues" data-i18n="issue_replies">Reply issues</option><option value="capability" data-i18n="issue_capabilities">Capability notices</option><option value="connection" data-i18n="issue_connections">Connections and paths</option><option value="discovery" data-i18n="issue_discovery">Service probes</option></select>
           <ol id="failures"><li class="empty" data-i18n="reading_874bf">Reading…</li></ol>
+          <details id="failure-history" class="tool-details" hidden><summary id="failure-history-title">Failures over 24 hours</summary><div class="table-wrap"><table><thead><tr><th data-i18n="client">App</th><th data-i18n="model">Model</th><th data-i18n="phase">Phase</th><th data-i18n="failed">Failed</th><th data-i18n="time">Time</th><th data-i18n="request_id">Request ID</th></tr></thead><tbody id="failure-history-body"></tbody></table></div></details>
         </details>
         </div>
         <div data-view="system" hidden>

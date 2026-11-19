@@ -181,6 +181,7 @@
   el("flow-hub").addEventListener("click", () => { selected = null;render(); });
   el("flow-more").addEventListener("click", () => { expanded = !expanded;render(); });
   el("flow-active").addEventListener("toggle", details);
+  el("flow-network").parentElement?.addEventListener("scroll", () => { positions = null;draw(); }, { passive: true });
   document.addEventListener("visibilitychange", visibilityChanged);
   globalThis.addEventListener("pagehide", () => { root.dataset.paused = "true"; });
   globalThis.addEventListener("pageshow", visibilityChanged);

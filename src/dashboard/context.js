@@ -20,7 +20,7 @@
     if (!points.some(point => valid(point.input_tokens))) { label(host, "context_no_input");return; }
     if (!entry.identified) { label(host, "context_unassigned");return; }
     const width = host.clientWidth;if (!width) return;
-    const height = 210, right = 12, top = 25, bottom = 35;
+    const height = 225, right = 12, top = 40, bottom = 35;
     const measured = Math.max(...points.map(point => valid(point.input_tokens) ? point.input_tokens : 0), 1);
     const maximum = Math.max(measured, latest(entry).context_window_tokens || 0);
     const svg = document.createElementNS(ns, "svg");svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
@@ -41,7 +41,7 @@
       shape("line", { x1: left, x2: width - right, y1: py, y2: py, class: "context-grid" });
       shape("text", { x: left - 8, y: py + 4, "text-anchor": "end" }, ticks[index]);
     }
-    shape("text", { x: left, y: 12 }, "tokens");
+    shape("text", { x: left, y: 12, class: "context-unit" }, "Token");
     let path = "", continuing = false;
     points.forEach((point, index) => {
       if (!valid(point.input_tokens)) { continuing = false;return; }
@@ -54,11 +54,21 @@
     for (const index of new Set([0, Math.floor((points.length - 1) / 2), points.length - 1])) {
       shape("text", { x: x(index), y: height - 14, "text-anchor": index === 0 ? "start" : "end" }, String(index + 1));
     }
-    for (const compact of entry.compactions) {
+    const marker = language.format("context_compact_event");
+    const measurement = shape("text", { visibility: "hidden" }, marker);
+    const markerWidth = measurement.getComputedTextLength();
+    measurement.remove();
+    let previousEnd = -Infinity;
+    for (const compact of [...entry.compactions].sort((a, b) => a.order - b.order)) {
       const index = points.findIndex(point => point.order >= compact.order);
       if (index < 0 || compact.outcome !== "completed") continue;
-      const px = x(index);shape("line", { x1: px, x2: px, y1: top, y2: height - bottom, class: "context-compact" });
-      shape("text", { x: Math.min(width - right - 35, Math.max(left + 35, px)), y: top - 8, "text-anchor": "middle" }, language.format("context_compact_event"));
+      const px = x(index), line = shape("line", { x1: px, x2: px, y1: top, y2: height - bottom, class: "context-compact" });
+      const title = document.createElementNS(ns, "title");title.textContent = marker;line.append(title);
+      if (width - right - left < markerWidth) continue;
+      const center = Math.min(width - right - markerWidth / 2, Math.max(left + markerWidth / 2, px));
+      if (center - markerWidth / 2 < previousEnd + 8) continue;
+      shape("text", { x: center, y: top - 8, "text-anchor": "middle", class: "context-compact-label" }, marker);
+      previousEnd = center + markerWidth / 2;
     }
   }
   function render() {

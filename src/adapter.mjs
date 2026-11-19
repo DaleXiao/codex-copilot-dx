@@ -27,6 +27,7 @@ import { createOptionalRoutes, isOptionalRoute, DASHBOARD_PATHS, DASHBOARD_API_P
 import { createResponsesCompactHandler, createResponsesHandler } from "./responses-handler.mjs";
 import { createResponsesImagePressureController } from "./responses-image-pressure.mjs";
 import { createResponseFailureDiagnostics, createHttpFailureDiagnostics, buildHttpFailureDetails, isDiscoveryRequest } from "./response-failures.mjs";
+import { createFailureHistory } from "./failure-history.mjs";
 import { ADAPTER_CACHE_PATH } from "./cache-control.mjs";
 import { loadRuntimeConfig, parsePositiveInteger } from "./runtime-config.mjs";
 import {
@@ -199,6 +200,8 @@ export function createAdapterHandler(options = {}) {
       antigravity = createAntigravityRuntime({ client: codexClient, models: () => codexModelRegistry?.models || [], privacy, compaction, acquireRequest,
         applicationControl: options.dashboardOptions?.serviceControl?.applicationControl,
         sourceAdmission: options.providerRuntime?.sourceAdmission,
+        nativeSources: () => options.providerRuntime?.antigravitySources?.() || [],
+        getSource: id => options.providerRuntime?.source?.(id),
         applicationEvidence: options.providerRuntime?.applicationEvidence,
         ...(options.providerRuntime?.dashboardCatalog?{refreshModels:async()=>{
           const result=await options.providerRuntime.dashboardCatalog({provider:"github"});
@@ -211,7 +214,8 @@ export function createAdapterHandler(options = {}) {
     })();
     return antigravityLoading;
   };
-  const httpErrors = createHttpFailureDiagnostics();
+  const failureHistory = createFailureHistory({ file: options.failureHistoryFile });
+  const httpErrors = createHttpFailureDiagnostics({ history: failureHistory });
   const nativeImages = createNativeImagesHandler({ client: codexClient, acquireRequest, privacy, env: options.env, home: options.dashboardOptions?.home,
     models: options.imageModels || (() => options.providerRuntime?.imageModels?.().models || imageModelCatalog(codexModelRegistry?.models)),
     selection: options.imageSelection || (options.providerRuntime?.imageModels ? () => options.providerRuntime.imageModels().selected_model : undefined),
@@ -268,7 +272,7 @@ export function createAdapterHandler(options = {}) {
       let gemini;
       try { const saved=readUserSettings({env:options.env,home:options.dashboardOptions?.home});gemini=antigravity?antigravity.snapshot():{configured:Object.hasOwn(saved,"gemini_antigravity_enabled"),enabled:saved.gemini_antigravity_enabled===true,route_observed:false}; }
       catch { gemini={enabled:false,error:"ccdx_antigravity_settings_invalid"}; }
-      return { ...snapshot, gemini, http_errors: httpErrors.snapshot(), ...(providers ? { providers } : {}) };
+      return { ...snapshot, gemini, http_errors: { ...httpErrors.snapshot(), history: failureHistory.snapshot() }, ...(providers ? { providers } : {}) };
     },
   });
   const responsesHandler = createResponsesHandler({
@@ -523,10 +527,12 @@ export function createAdapterHandler(options = {}) {
     const finishRequest = ({ statusCode = 0, aborted = false } = {}) => {
       if (requestFinished) return;
       requestFinished = true;
+      if (!aborted && statusCode >= 200 && statusCode < 300 && !httpEvidence.model_error)
+        try { context?.noteReviewModel?.(); } catch { /* Optional model observation must not affect request completion. */ }
       if (trackRequest && (statusCode >= 400 || httpEvidence.model_error === true)) {
         try { httpErrors.record(buildHttpFailureDetails({ ...httpEvidence, statusCode, route: routeName, requestId, model: context?.model || context?.requestedModel,
           method: ["GET", "HEAD", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"].includes(req.method) ? req.method : "OTHER",
-          target: ["/v1/images/generations", "/v1/images/edits", "/v1/responses", "/v1/responses/compact", "/v1/alpha/search", "/anthropic/v1/messages", "/anthropic/v1/messages/count_tokens", "/anthropic/v1/models", "/mcp/image", "/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp/image"].includes(pathname) ? pathname : "unrecognized_path",
+          target: routeName === "antigravity" || ["/v1/images/generations", "/v1/images/edits", "/v1/responses", "/v1/responses/compact", "/v1/alpha/search", "/anthropic/v1/messages", "/anthropic/v1/messages/count_tokens", "/anthropic/v1/models", "/mcp/image", "/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp/image"].includes(pathname) ? pathname : "unrecognized_path",
           request_options: context?.requestOptions, upstream_attempts: streamPerformance?.attemptCount?.() ?? context?.upstreamAttempts ?? 0,
           attempt_timings: streamPerformance?.attemptTimings?.(),
           requested_model: context?.requestedModel, provider: context?.provider, application: context?.application || requestApplication(req.headers),

@@ -32,6 +32,7 @@ public static class CCDXPredictionNetwork {
   static IntPtr session;
   static string target = "prediction";
   static HashSet<string> apiTargets = new HashSet<string>(StringComparer.Ordinal);
+  static Uri geminiModelsUrl;
   static int requestTimeout = 30000;
   class Work { public IntPtr handle; public ManualResetEventSlim ack = new ManualResetEventSlim(false); public BlockingCollection<byte[]> upload = new BlockingCollection<byte[]>(2); public bool cancelled; }
   static void Check(bool ok) { if(!ok) throw new IOException("winhttp_" + Marshal.GetLastWin32Error()); }
@@ -76,6 +77,15 @@ public static class CCDXPredictionNetwork {
   }
   static bool ApiTargetAllowed(Uri uri, string method) {
     if(apiTargets.Contains(uri.AbsoluteUri))return true;
+    if(geminiModelsUrl!=null && uri.Fragment.Length==0 && uri.GetLeftPart(UriPartial.Authority)==geminiModelsUrl.GetLeftPart(UriPartial.Authority)) {
+      string root=geminiModelsUrl.AbsolutePath;
+      if(method=="GET" && uri.AbsolutePath==root && uri.Query.StartsWith("?pageToken=",StringComparison.Ordinal) && uri.Query.IndexOf('&')<0)
+        return System.Text.RegularExpressions.Regex.IsMatch(Uri.UnescapeDataString(uri.Query.Substring(11).Replace("+"," ")),@"^[A-Za-z0-9_.%~+/=\-]{1,2048}$");
+      if(method=="POST" && uri.AbsolutePath.StartsWith(root+"/",StringComparison.Ordinal)) {
+        var call=System.Text.RegularExpressions.Regex.Match(uri.AbsolutePath.Substring(root.Length+1),@"^[A-Za-z0-9][A-Za-z0-9._\-]{0,139}:(generateContent|streamGenerateContent|countTokens)$");
+        if(call.Success)return call.Groups[1].Value=="streamGenerateContent" ? uri.Query=="?alt=sse" : uri.Query.Length==0;
+      }
+    }
     if(method!="GET" || !uri.AbsolutePath.EndsWith("/models",StringComparison.Ordinal) || !uri.Query.StartsWith("?after_id=",StringComparison.Ordinal) || uri.Query.IndexOf('&')>=0)return false;
     string cursor=Uri.UnescapeDataString(uri.Query.Substring(10));
     return System.Text.RegularExpressions.Regex.IsMatch(cursor,"^[A-Za-z0-9_][A-Za-z0-9_./:@+\\-]{0,159}$") && !cursor.Contains("..") && !cursor.Contains("//") && apiTargets.Contains(uri.GetLeftPart(UriPartial.Path));
@@ -138,6 +148,7 @@ public static class CCDXPredictionNetwork {
       if(initial.ContainsKey("target")) target=(string)initial["target"];
       if(target!="prediction"&&target!="m365"&&target!="api")throw new IOException("winhttp_target_invalid");
       if(target=="api") { if(initial["apiTargets"] is string)throw new IOException("winhttp_target_invalid");foreach(object raw in (System.Collections.IEnumerable)initial["apiTargets"]) { var uri=new Uri((string)raw);if(uri.Scheme!="https"||uri.UserInfo.Length!=0||uri.Query.Length!=0||uri.Fragment.Length!=0)throw new IOException("winhttp_target_invalid");apiTargets.Add(uri.AbsoluteUri);if(apiTargets.Count>8)throw new IOException("winhttp_target_invalid"); }if(apiTargets.Count<1)throw new IOException("winhttp_target_invalid"); }
+      if(target=="api" && initial.ContainsKey("geminiModelsUrl")) { geminiModelsUrl=new Uri((string)initial["geminiModelsUrl"]);if(!apiTargets.Contains(geminiModelsUrl.AbsoluteUri))throw new IOException("winhttp_target_invalid"); }
       if(target!="prediction" && initial.ContainsKey("timeoutMs")) requestTimeout=(int)Math.Max(1000,Math.Min(int.MaxValue,Convert.ToInt64(initial["timeoutMs"])));
       session=WinHttpOpen(target=="m365"?"CCDX Microsoft 365":target=="api"?"CCDX API":"CCDX native prediction",4,null,null,0);
       Check(session!=IntPtr.Zero);Check(WinHttpSetTimeouts(session,10000,10000,requestTimeout,requestTimeout));

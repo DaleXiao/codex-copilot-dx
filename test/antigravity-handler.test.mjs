@@ -293,6 +293,55 @@ test("the Copilot headers override does not extend the wait for the first stream
   assert.match(result.text, /"code":504/);
 });
 
+test("a completed one-shot send releases local input before headers, while compaction retains it", async () => {
+  for (const compacting of [false, true]) {
+    const gate = createRequestAdmission({ maxBytes: 4096 }), opened = Promise.withResolvers(), pending = Promise.withResolvers();
+    const f = fixture({ acquireRequest: gate, client: { chatCompletions: async (_, options) => {
+      opened.resolve(options.onBodySent);
+      return pending.promise;
+    } } });
+    const request = body(alias, compacting ? "summarization" : "agent");
+    const call = invoke(f.handler, request);
+    const sent = await bounded(opened.promise);
+    assert.ok(gate.diagnostics().activeBytes > 0);
+    if (compacting) assert.equal(sent, undefined);
+    else {
+      sent();sent();
+      assert.equal(gate.diagnostics().activeRequests, 0);
+      assert.equal(gate.diagnostics().activeBytes, 0);
+      assert.equal(call.res.headersSent, false);
+    }
+    pending.resolve(sse("fixture"));
+    assert.equal((await call.done).status, 200);
+    assert.equal(gate.diagnostics().activeBytes, 0);
+  }
+});
+
+test("an explicitly selected native Gemini alias preserves tool numbers and uses only that source", async () => {
+  const id = "ccdx-gemini-api_fixture-gemini-model", calls = [], guarded = [];
+  const selected = { id, model: "gemini-model", source: "api_fixture", maxTokens: 1000000, transport: {
+    profileId: () => "api-fixture-profile",
+    client: { gemini: async (value, options) => {
+      calls.push({ value, options });
+      if (options.countTokens) return Response.json({ totalTokens: 32 });
+      return new Response('data: {"candidates":[{"content":{"role":"model","parts":[{"functionCall":{"name":"lookup","args":{"key":9007199254740993}}}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":12,"candidatesTokenCount":2,"totalTokenCount":14}}\n\n',
+        { headers: { "content-type": "text/event-stream" } });
+    } },
+  } };
+  const f = fixture({ resolveNativeModel: model => model === id ? selected : null, guardSource: (_, source) => guarded.push(source) });
+  const result = await invoke(f.handler, body(id)).done;
+  assert.equal(result.status, 200);
+  assert.match(result.text, /"response":\{"candidates".*9007199254740993/);
+  assert.equal(calls[0].value.model, "gemini-model");
+  assert.equal(calls[0].options.stream, true);
+  assert.deepEqual(guarded, ["api_fixture"]);
+  assert.equal(f.records[0].provider, "api_fixture");
+  assert.equal(f.records[0].usage.total_tokens, 14);
+  assert.equal((await invoke(f.handler, body(id), { url: "/antigravity/v1internal:countTokens" }).done).text, '{"totalTokens":32}');
+  assert.equal((await invoke(f.handler, body(id + "-removed")).done).status, 503);
+  assert.equal(f.google.length + f.copilot.length, 0);
+});
+
 test("queued client cancellation is 499 and leaves no reservation or upstream call",async()=>{
   const gate=createRequestAdmission({maxBytes:4096,waitTimeoutMs:500}),held=await gate({headers:{}}),errors=[];
   const f=fixture({acquireRequest:gate});

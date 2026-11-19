@@ -193,14 +193,16 @@ export function createConnectionManagement({ binding, catalogRefresh, save, disc
         const c = binding("codex"),
           compiled = plan("codex");
         if (!c.enabled || input.provider !== c.source) throw accessError("ccdx_client_source_mismatch", 409);
-        const record = [...compiled.routes.values()].find(
+        const follow = input.model === "";
+        const record = follow ? compiled.routes.get(compiled.defaultModel) : [...compiled.routes.values()].find(
           record => record.source === input.provider && record.upstreamModel === input.model
         );
         if (!record) throw accessError("ccdx_api_model_unavailable");
         if (input.effort && !record.model.capability.values.reasoning_efforts?.includes(input.effort))
           throw accessError("ccdx_api_effort_unavailable");
         const next = editable();
-        next.clients.codex.auto_review_model = record.model.route_id;
+        if(follow)delete next.clients.codex.auto_review_model;
+        else next.clients.codex.auto_review_model = record.model.route_id;
         next.clients.codex.auto_review_effort = input.effort || null;
         save(next);
         return this.snapshot();

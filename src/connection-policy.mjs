@@ -198,10 +198,10 @@ export function createConnectionPolicy({ validObject, binding, catalogRefresh, s
           [...compiled.routes.values()].find(
             record => record.source === old.source && record.upstreamModel === old.auto_review_model
           );
-        if (c.default_model)
-          c.auto_review_model = review?.source === c.source ? review.model.route_id : c.default_model;
+        if (review?.source === c.source)
+          c.auto_review_model = review.model.route_id;
         else delete c.auto_review_model;
-        if (review?.source === c.source && old.auto_review_effort !== undefined)
+        if ((review?.source === c.source || !old.auto_review_model) && old.auto_review_effort !== undefined)
           c.auto_review_effort = old.auto_review_effort;
         else delete c.auto_review_effort;
       }

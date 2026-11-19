@@ -216,6 +216,7 @@ export function createConnectionView({ legacy, env, binding, plan, getSource, en
           (reviewId ? codex.deployments.find(item => deploymentModelId(item.source, item.model) === reviewId)?.model : null);
         if (model) githubPreference = {
           model, source: codex.auto_review_model ? "settings" : "default", reasoningEffort: codex.auto_review_effort,
+          ...(!codex.auto_review_model ? { followModel: true } : {}),
         };
       }
       const performance = legacy.claudePerformance.snapshot(),

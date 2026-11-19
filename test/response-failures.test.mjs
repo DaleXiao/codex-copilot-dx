@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { createFailureHistory } from "../src/failure-history.mjs";
 import {
   createResponseFailureDiagnostics,
   formatResponseFailureLog,
@@ -9,6 +13,34 @@ import {
   requestOptionsEvidence,
   createHttpFailureDiagnostics,
 } from "../src/response-failures.mjs";
+
+test("hourly inference failure evidence survives restart without storing messages or count-token failures", async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "ccdx-failure-history-"));
+  t.after(() => fs.rm(dir, { recursive: true, force: true, maxRetries: 3 }));
+  const file = path.join(dir, "history.json");
+  let at = Date.parse("2026-11-20T01:00:00Z");
+  const create = () => createFailureHistory({ file, now: () => at });
+  const history = create(), d = createHttpFailureDiagnostics({ history });
+  for (let i = 0; i < 25; i++) d.record({ application: "gemini_app", route: "antigravity", model: "gemini-4-carbon",
+    http_status: 504, upstream_attempts: 1, code: "upstream_timeout", attempt_timings: [{ body_sent_ms: 10, headers_ms: null }],
+    message: "private diagnostic value" });
+  d.record({ application: "claude_app", route: "messages_count_tokens", http_status: 404, upstream_attempts: 0 });
+  await history.flush();
+  assert.doesNotMatch(await fs.readFile(file, "utf8"), /private diagnostic value|messages_count_tokens/);
+  const readback = create().snapshot();
+  assert.equal(readback.total, 25);
+  assert.equal(readback.groups[0].phase, "headers");
+  assert.equal(readback.groups[0].count, 25);
+  at += 24 * 3600000;
+  assert.equal(create().snapshot().total, 0);
+});
+
+test("a local response-header timeout describes the missing upstream response", () => {
+  const error = buildHttpFailureDetails({ route: "antigravity", statusCode: 504, code: "upstream_timeout",
+    origin: "transport", upstream_attempts: 1, attempt_timings: [{ headers_ms: null, body_sent_ms: 22 }] });
+  assert.match(error.message, /waiting for the model source/);
+  assert.doesNotMatch(error.message, /preserved/);
+});
 
 test("only known local GET/HEAD discovery replies are separated from failures", () => {
   const d = createHttpFailureDiagnostics();

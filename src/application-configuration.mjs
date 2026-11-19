@@ -33,7 +33,8 @@ export async function inspectApplicationConfiguration(id, { port = 2026, host = 
     } else {
       let settings;try { settings = await read(userSettingsPath(options)); } catch (error) { if (error.code !== "ENOENT") throw error;settings = {}; }
       value = { enabled: settings.gemini_antigravity_enabled === true, models: settings.gemini_antigravity_models || null, defaultModel: settings.gemini_antigravity_default_model ?? null, port, host };
-      state = value.enabled ? "configured" : "native";
+      if (settings.gemini_antigravity_native_source) value.nativeSource = settings.gemini_antigravity_native_source;
+      state = value.enabled || value.nativeSource ? "configured" : "native";
     }
     const reload = { ...value };delete reload.key;
     return { state, revision: digest(value), reloadRevision: digest(reload) };

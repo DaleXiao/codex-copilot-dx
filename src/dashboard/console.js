@@ -95,16 +95,18 @@
   const selectedSource = () => providerEntries.find(source => source.id === el("source-provider").value);
   const sourceReady = () => Boolean(selectedSource()) && (!selectedSource().selection.models_required || Boolean(modelsSource === selectedSource().id && el("source-model").value && el("source-review").value));
   const reviewLocked = () => selectedSource()?.id === "github" && settings?.providers?.github?.preference?.source === "environment";
+  const reviewCanFollow = () => selectedSource()?.id === "github" && settings?.providers?.codex_provider === "github" &&
+    Array.isArray(settings?.providers?.connections?.clients?.find(client => client.id === "codex")?.deployments);
   function syncReviewButton() {
     const sameSource = selectedSource()?.id === settings?.providers?.codex_provider;
-    el("save-review").disabled = settingsPending || !sameSource || reviewLocked() || modelsSource !== selectedSource()?.id || !el("source-review").value;
+    el("save-review").disabled = settingsPending || !sameSource || reviewLocked() || modelsSource !== selectedSource()?.id || !el("source-review").value && !reviewCanFollow();
     el("source-review").disabled = settingsPending || reviewLocked() || !sourceModels.length;
     el("source-review-effort").disabled = el("source-review").disabled;
     if (reviewLocked()) label(el("review-control-note"), "review_environment_override");
     else if (!sameSource) label(el("review-control-note"), "review_save_source_first");
   }
   function syncEfforts(chosen) {
-    const model = sourceModels.find(model => model.id === el("source-review").value);
+    const model = sourceModels.find(model => model.id === (el("source-review").value || settings?.providers?.github?.preference?.model));
     const efforts = model?.auto_review_efforts || model?.reasoning_efforts || [];
     const follow = document.createElement("option");follow.value = "";label(follow, "follow_client");
     el("source-review-effort").replaceChildren(follow, ...efforts.map(effort => { const option = document.createElement("option");option.value = effort;option.textContent = effort;return option; }));
@@ -301,9 +303,12 @@
       const preference = settings?.providers?.[source.id]?.preference;
       for (const [id, key] of [["source-model", "model"], ["source-review", "auto_review_model"]]) {
         el(id).replaceChildren(...models.map(model => { const option = document.createElement("option");option.value = model.id;option.textContent = model.id;return option; }));
-        const saved = key === "auto_review_model" && source.id === "github" ? preference?.model : preference?.[key];
-        const chosen = unsaved?.[key] || saved;
+        const follow = key === "auto_review_model" && reviewCanFollow();
+        if (follow) { const option = document.createElement("option");option.value = "";label(option, "review_follow_model");el(id).prepend(option); }
+        const saved = key === "auto_review_model" && source.id === "github" ? (follow && preference?.followModel ? "" : preference?.model) : preference?.[key];
+        const chosen = unsaved?.[key] ?? saved;
         if (chosen && models.some(model => model.id === chosen)) el(id).value = chosen;
+        else if (follow && chosen === "") el(id).value = "";
       }
       modelsSource = source.id;modelsPreference = JSON.stringify(preference);
       const savedEffort = source.id === "github" ? preference?.reasoningEffort : preference?.auto_review_effort === undefined ? "low" : preference.auto_review_effort;

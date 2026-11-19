@@ -76,7 +76,7 @@
         const gemini=data.gemini || globalThis.ccdxGeminiStatus;
         const setup=gemini.enabled&&gemini.source_enabled!==false?"configured":gemini.configured?"access_paused":"not_configured";
         const service=gemini.configured===true?"running":gemini.configured===false?"unavailable":"unknown";
-        const row=tableRow(["Antigravity",gemini.enabled&&gemini.source_enabled!==false?"Google + GitHub Copilot":"Google",setup,service,"—"],{labels:[2,3]});
+        const row=tableRow(["Antigravity",gemini.model_source||(gemini.enabled&&gemini.source_enabled!==false?"Google + GitHub Copilot":"Google"),setup,service,"—"],{labels:[2,3]});
         if(globalThis.ccdxIcons){
           globalThis.ccdxIcons.set(row.children[2],setup,globalThis.ccdxIcons.kind(setup==="access_paused"?"paused":setup));
           globalThis.ccdxIcons.set(row.children[3],service,globalThis.ccdxIcons.kind(service));
@@ -215,7 +215,7 @@
           const label = document.createElement("dt");
           const content = document.createElement("dd");
           localize(label, key);
-          const rawValue = String(value).slice(0, 500);
+          const rawValue = (typeof value?.key === "string" ? globalThis.ccdxLanguage.format(value.key, value.values) : String(value)).slice(0, 500);
           if (key === "retry" || (key === "message" && failure.local_message)) localize(content, rawValue);
           else content.textContent = rawValue;
           diagnostic.append(label, content);
@@ -351,6 +351,19 @@
       issueRequests = recentRequests;
       const kind = element("failure-kind")?.value || "issues";
       renderFailures(issueGroups[kind] || [], kind === "issues" ? recentRequests : []);
+      const history = data.http_errors?.history, historyPanel = element("failure-history");
+      if (historyPanel) {
+        historyPanel.hidden = !history?.total;
+        if (history?.total) {
+          text("failure-history-title", "failure_history_count", { count: number(history.total) });
+          element("failure-history-body").replaceChildren(...history.groups.map(group => {
+            const row = tableRow([phrase(`flow_app_${group.application}`), group.model, phrase(group.phase === "unknown" ? "unknown" : `failure_phase_${group.phase}`),
+              number(group.count), time(group.last.at, { date: true }), group.last.request_id || "—"]);
+            if (group.last.client_request_id) row.lastElementChild.title = group.last.client_request_id;
+            return row;
+          }));
+        }
+      }
       renderContext({ ...data.stream_performance, recent_requests: recentRequests });
     }
     function renderActivity(data) {

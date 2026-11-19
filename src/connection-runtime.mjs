@@ -86,6 +86,10 @@ export function createConnectionRuntime({
   const catalogRefresh = createApiCatalogRefresh({
     config: id => settings.apis.find(api => api.id === id),
     source: getSource,
+    antigravitySources() {
+      return settings.apis.filter(api => api.enabled && api.endpoints.gemini && api.models.some(model => model.protocols.includes("gemini")))
+        .map(api => ({ id: api.id, name: api.name, models: getSource(api.id)?.models("gemini") || [] }));
+    },
     track,
     complete: api => modelDisplay.has(api.id, deploymentRevision(api, env)),
     revision: api => deploymentRevision(api, env),

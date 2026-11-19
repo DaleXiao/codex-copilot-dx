@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-export const MODEL_PROTOCOLS = Object.freeze(["messages", "responses", "chat"]);
+export const MODEL_PROTOCOLS = Object.freeze(["messages", "responses", "chat", "gemini"]);
 export const REASONING_EFFORTS = Object.freeze(["none", "minimal", "low", "medium", "high", "xhigh", "max"]);
 const limits = ["context_window", "max_input_tokens", "max_output_tokens", "reasoning_budget_min", "reasoning_budget_max", "max_tool_definitions"];
 export const MODEL_PARAMETERS = Object.freeze(["max_tokens", "max_output_tokens", "max_completion_tokens", "temperature", "top_p", "tools", "tool_choice", "parallel_tool_calls", "thinking", "output_config", "reasoning", "reasoning_effort", "response_format", "text", "stop", "stop_sequences", "stream", "stream_options"]);

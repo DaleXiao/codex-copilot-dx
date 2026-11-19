@@ -28,7 +28,8 @@ import { redactDiagnosticText } from "../diagnostic-text.mjs";
 import { createProviderCooldown, confirmedNetworkFailure } from "../provider-cooldown.mjs";
 import { SOURCE_LIMIT_EVIDENCE, sourceLimitFeedback } from "../source-admission.mjs";
 
-const paths = { messages: "/v1/messages", responses: "/v1/responses", chat: "/v1/chat/completions" };
+const paths = { messages: "/v1/messages", responses: "/v1/responses", chat: "/v1/chat/completions", gemini: "/v1beta/models:generateContent" };
+const geminiModelId = id => typeof id === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,139}$/.test(id) && !id.includes("..");
 export function apiCatalog(config, env = process.env) {
   const revision = deploymentRevision(config, env);
   return config.models.map(model => { const protocol_capabilities = Object.fromEntries(model.protocols.map(protocol => [protocol, resolveModelCapabilities(model, { revision, protocol })]));
@@ -37,15 +38,16 @@ export function apiCatalog(config, env = process.env) {
     capability, protocol_capabilities }); });
 }
 export function createApiProvider({ config, secrets, env = process.env, platform = process.platform, networkFactory = createApiNetwork, modelDisplay = () => ({}), now = Date.now, errorCapture } = {}) {
-  const cooldowns = Object.fromEntries(["messages", "responses", "chat"].map(protocol => [protocol, createProviderCooldown({ now })]));
+  const cooldowns = Object.fromEntries(Object.keys(paths).map(protocol => [protocol, createProviderCooldown({ now })]));
   const catalog = apiCatalog(config, env);
   const fingerprint = config.key_env ? createHash("sha256").update(env[config.key_env] || "").digest("hex") : "";
   const generation = parseInt(createHash("sha256").update(JSON.stringify(config) + fingerprint).digest("hex").slice(0, 8), 16);
-  const profiles = Object.fromEntries(["messages", "responses", "chat"].map(protocol => [protocol, `api:${config.id}:${createHash("sha256").update(JSON.stringify({
-    endpoint: config.endpoints[protocol] ? new URL(config.endpoints[protocol]).href : null, key: config.secret_ref || fingerprint, auth: protocol === "messages" ? config.auth_header : "bearer",
+  const profiles = Object.fromEntries(Object.keys(paths).map(protocol => [protocol, `api:${config.id}:${createHash("sha256").update(JSON.stringify({
+    endpoint: config.endpoints[protocol] ? new URL(config.endpoints[protocol]).href : null, key: config.secret_ref || fingerprint, auth: protocol === "messages" ? config.auth_header : protocol === "gemini" ? "x-goog-api-key" : "bearer",
   })).digest("hex").slice(0, 24)}`]));
   const profile = profiles.responses;
-  const modelsUrl = config.base_url.replace(/\/+$/, "") + "/models", targets = [...Object.values(config.endpoints), modelsUrl];
+  const modelsUrl = config.base_url.replace(/\/+$/, "") + "/models", geminiModelsUrl = config.endpoints.gemini && new URL(config.endpoints.gemini).href;
+  const targets = [...Object.values(config.endpoints), modelsUrl];
   if (config.endpoints.messages) targets.push(config.endpoints.messages.replace(/\/+$/, "") + "/count_tokens");
   if (config.endpoints.responses) targets.push(config.endpoints.responses.replace(/\/+$/, "") + "/compact");
   let network, closed = false;
@@ -60,7 +62,7 @@ export function createApiProvider({ config, secrets, env = process.env, platform
       retiring.add(previous);
       void Promise.resolve(previous.retire()).then(() => retiring.delete(previous), () => { previous.close();retiring.delete(previous); });
     } else previous?.close();
-    return initialization.run("network", sharedSignal => networkFactory({ targets, env, platform, signal: AbortSignal.any([sharedSignal, lifetime.signal]) })
+    return initialization.run("network", sharedSignal => networkFactory({ targets, geminiModelsUrl, env, platform, signal: AbortSignal.any([sharedSignal, lifetime.signal]) })
       .then(value => { if (closed || sharedSignal.aborted) { value.close();throw accessError("ccdx_api_closed", 503); }network = value;return value; }), { signal });
   };
   let messageAliases;
@@ -74,15 +76,19 @@ export function createApiProvider({ config, secrets, env = process.env, platform
     if (config.key_env && !env[config.key_env]) throw accessError("ccdx_api_environment_key_missing", 503);
     const key = config.key_env ? checkedApiKey(env[config.key_env]) : await initialization.run("credential", () => secrets.get(config.secret_ref),
       { signal: options.signal ? AbortSignal.any([options.signal, lifetime.signal]) : lifetime.signal });
-    const headers = { "Content-Type": "application/json", Accept: body?.stream ? "text/event-stream" : "application/json" };
-    headers[api === "messages" && config.auth_header === "x-api-key" ? "x-api-key" : "Authorization"] = api === "messages" && config.auth_header === "x-api-key" ? key : `Bearer ${key}`;
+    const stream = api === "gemini" ? options.geminiStream === true : body?.stream === true;
+    const requestModel = api === "gemini" ? options.geminiModel : body?.model;
+    const headers = { "Content-Type": "application/json", Accept: stream ? "text/event-stream" : "application/json" };
+    if (api === "gemini") headers["x-goog-api-key"] = key;
+    else if (api === "messages" && config.auth_header === "x-api-key") headers["x-api-key"] = key;
+    else headers.Authorization = `Bearer ${key}`;
     if (api === "messages") {
       headers["anthropic-version"] = "2023-06-01";
       for (const name of ["anthropic-version", "anthropic-beta"]) { const value = options.headers?.[name];if (typeof value === "string" && value.length < 8192 && !/[\r\n]/.test(value)) headers[name] = value; }
     }
     if (body && !options.countTokens) {
-      const capability = catalog.find(model => model.id === body.model)?.protocol_capabilities[api];
-      const constrained = constrainModelRequest(body, capability, api);
+      const capability = catalog.find(model => model.id === requestModel)?.protocol_capabilities[api];
+      const constrained = api === "gemini" ? { body, applied: [] } : constrainModelRequest(body, capability, api);
       if (constrained.body !== body) { body = constrained.body;options = { ...options, bodyText: undefined }; }
       markRequestObservation({ capability_revision: capability?.revision, capability_constraints: constrained.applied.join(",") || "none" });
       markRequestObservation({ context_window_tokens: capability?.values.context_window });
@@ -94,7 +100,7 @@ export function createApiProvider({ config, secrets, env = process.env, platform
     try {
       const transport = !closed && network && (network.healthy?.() ?? true) ? network : await getNetwork(options.signal);
       const result = await sourceTransport(options, { send: transport.fetch, receiver: transport, args: [url, { method: body ? "POST" : "GET", headers, body: serialized, signal: options.signal }],
-        model: body?.model, bodyText: serialized, stream: body?.stream === true, observe: Boolean(body && options.observeUpstream !== false),
+        model: requestModel, bodyText: serialized, stream, observe: Boolean(body && options.observeUpstream !== false),
         evidence: body && !options.countTokens ? { max_output_tokens_sent: api === "messages" ? body.max_tokens : api === "chat" ? body.max_completion_tokens : body.max_output_tokens,
           reasoning_effort_sent: api === "messages" ? body.output_config?.effort : api === "chat" ? body.reasoning_effort : body.reasoning?.effort } : undefined });
       const temporary = result.status === 502 || result.status === 503 || result.status === 504;
@@ -164,6 +170,38 @@ export function createApiProvider({ config, secrets, env = process.env, platform
       throw failure;
     }
   }
+  async function discoverGemini({ signal }) {
+    const models = new Map(), cursors = new Set(), checked_at = new Date().toISOString();
+    const deployment = deploymentRevision(config, env);
+    let url = geminiModelsUrl, bytes = 0, entries = 0;
+    for (let page = 0; page < 25; page++) {
+      const response = await request(url, undefined, { signal }, "gemini");
+      if (!response.ok) {
+        await cancelSourceResponse(response).catch(() => {});
+        throw accessError(`ccdx_api_catalog_http_${response.status}`, response.status === 401 || response.status === 403 ? response.status : 502);
+      }
+      const text = await readBoundedResponseText(response, { maxBytes: MAX_UPSTREAM_MODEL_CATALOG_BYTES - bytes, label: "Gemini model catalog", signal });
+      bytes += Buffer.byteLength(text);
+      let value;try { value = JSON.parse(text); } catch { throw accessError("ccdx_api_catalog_invalid", 502); }
+      if (!Array.isArray(value?.models) || (entries += value.models.length) > 500) throw accessError("ccdx_api_catalog_invalid", 502);
+      for (const model of value.models) {
+        const id = typeof model?.name === "string" && model.name.startsWith("models/") ? model.name.slice(7) : null;
+        if (!geminiModelId(id) || !Array.isArray(model.supportedGenerationMethods)) throw accessError("ccdx_api_catalog_invalid", 502);
+        if (!model.supportedGenerationMethods.includes("generateContent") || models.has(id)) continue;
+        const capabilities = {};
+        if (Number.isSafeInteger(model.inputTokenLimit) && model.inputTokenLimit > 0) capabilities.context_window = model.inputTokenLimit;
+        if (Number.isSafeInteger(model.outputTokenLimit) && model.outputTokenLimit > 0) capabilities.max_output_tokens = model.outputTokenLimit;
+        models.set(id, { id, display: apiModelDisplay({ ...model, id, display_name: model.displayName }), protocols: ["gemini"],
+          metadata: { values: {}, protocols: { gemini: capabilities }, state: "reported", checked_at, deployment } });
+      }
+      const token = value.nextPageToken;
+      if (token === undefined || token === "") return [...models.values()];
+      if (typeof token !== "string" || !/^[\w.%~+/=-]{1,2048}$/.test(token) || cursors.has(token) || bytes >= MAX_UPSTREAM_MODEL_CATALOG_BYTES) throw accessError("ccdx_api_catalog_invalid", 502);
+      cursors.add(token);
+      const next = new URL(geminiModelsUrl);next.searchParams.set("pageToken", token);url = next.href;
+    }
+    throw accessError("ccdx_api_catalog_limit", 502);
+  }
   const counter = createApiTokenCounter({ request: (body, options) => request(config.endpoints.messages.replace(/\/+$/, "") + "/count_tokens", body, options, "messages") });
   const client = {
     [SOURCE_HTTP_CLIENT]: true,
@@ -184,11 +222,22 @@ export function createApiProvider({ config, secrets, env = process.env, platform
       const outgoing = model.id === body.model ? body : { ...body, model: model.id };
       return options.countTokens ? counter.count(outgoing, options) : request(config.endpoints.messages, outgoing, options, "messages");
     },
+    gemini(body, options = {}) {
+      const model = selected(body.model, "gemini");
+      if (!geminiModelId(model.id)) throw accessError("ccdx_api_model_unavailable");
+      const operation = options.countTokens ? "countTokens" : options.stream ? "streamGenerateContent" : "generateContent";
+      const url = `${geminiModelsUrl}/${model.id}:${operation}${operation === "streamGenerateContent" ? "?alt=sse" : ""}`;
+      if (!Array.isArray(body.request?.contents)) throw accessError("ccdx_api_config_invalid");
+      const requestFields = ["contents", "systemInstruction", "tools", "toolConfig", "generationConfig", "safetySettings", "cachedContent"];
+      const nativeRequest = Object.fromEntries(requestFields.filter(key => Object.hasOwn(body.request, key)).map(key => [key, body.request[key]]));
+      const payload = options.countTokens ? { generateContentRequest: { ...nativeRequest, model: "models/" + model.id } } : nativeRequest;
+      return request(url, payload, { ...options, geminiModel: model.id, geminiStream: operation === "streamGenerateContent" }, "gemini");
+    },
   };
   return {
     id: config.id, name: config.name, client, registry, configuredModels: true, defaultReviewEffort: null, profileId: (protocol = "responses") => profiles[protocol] || profile,
-    models: family => catalog.filter(model => model.supported_endpoints.includes(family === "claude" ? paths.messages : paths.responses))
-      .map(model => ({ ...model, ...modelDisplay(model.id), capability: model.protocol_capabilities[family === "claude" ? "messages" : "responses"] })),
+    models: family => catalog.filter(model => model.supported_endpoints.includes(family === "claude" ? paths.messages : family === "gemini" ? paths.gemini : paths.responses))
+      .map(model => ({ ...model, ...modelDisplay(model.id), capability: model.protocol_capabilities[family === "claude" ? "messages" : family === "gemini" ? "gemini" : "responses"] })),
     catalog: () => catalog,
     health: () => Object.fromEntries(Object.entries(cooldowns).filter(([protocol]) => config.endpoints[protocol]).map(([protocol, cooldown]) => [protocol, cooldown.snapshot()])),
     publicCatalog(allowed = []) { return { source: "configured", checkedAt: config.checked_at || null, upstreamHost: new URL(config.base_url).hostname,
@@ -197,6 +246,8 @@ export function createApiProvider({ config, secrets, env = process.env, platform
         clients: model => allowed.filter(id => model.supported_endpoints.includes(id === "codex" ? paths.responses : paths.messages)) }).map(model => ({ ...model,
           capability: catalog.find(entry => entry.id === model.id)?.capability, auto_review_efforts: [...(catalog.find(entry => entry.id === model.id)?.protocol_capabilities.responses?.values.reasoning_efforts || [])] })) }; },
     async discover({ signal } = {}) {
+      const gemini = geminiModelsUrl ? await discoverGemini({ signal }) : [];
+      if (geminiModelsUrl && !config.endpoints.responses && !config.endpoints.messages && !config.endpoints.chat) return gemini;
       const models = [], cursors = new Set(), checked_at = new Date().toISOString();let url = modelsUrl, bytes = 0;
       for (let page = 0; page < 25; page++) {
       const response = await request(url, undefined, { signal }, config.endpoints.responses ? "responses" : "messages");
@@ -211,8 +262,21 @@ export function createApiProvider({ config, secrets, env = process.env, platform
       for (const model of value.data) { if (!model || typeof model.id !== "string" || !/^[\w][\w./:@+-]{0,159}$/.test(model.id) || model.id.includes("..") || model.id.includes("//")) throw accessError("ccdx_api_catalog_invalid", 502); }
       // A catalog listing is not evidence that every model supports every API.
       models.push(...value.data);
-      if (value.has_more !== true) return uniqueModelEntries(models).map(model => ({ id: model.id, display: apiModelDisplay(model), metadata: apiModelMetadata(model, { checked_at, deployment: deploymentRevision(config, env) }), protocols: Array.isArray(model.supported_endpoints)
-        ? Object.entries(paths).filter(([, endpoint]) => model.supported_endpoints.includes(endpoint) || model.supported_endpoints.includes(endpoint.slice(3))).map(([api]) => api).filter(api => config.endpoints[api]) : [] }));
+      if (value.has_more !== true) {
+        const byId = new Map(uniqueModelEntries(models).map(model => [model.id, { id: model.id, display: apiModelDisplay(model),
+          metadata: apiModelMetadata(model, { checked_at, deployment: deploymentRevision(config, env) }), protocols: Array.isArray(model.supported_endpoints)
+            ? Object.entries(paths).filter(([, endpoint]) => model.supported_endpoints.includes(endpoint) || model.supported_endpoints.includes(endpoint.slice(3))).map(([api]) => api).filter(api => config.endpoints[api]) : [] }]));
+        for (const model of gemini) {
+          const previous = byId.get(model.id);
+          if (!previous) byId.set(model.id, model);
+          else {
+            previous.protocols = [...new Set([...previous.protocols, ...model.protocols])];
+            previous.metadata.protocols = { ...previous.metadata.protocols, ...model.metadata.protocols };
+          }
+        }
+        if (byId.size > 500) throw accessError("ccdx_api_catalog_limit", 502);
+        return [...byId.values()];
+      }
       // Follow only the native cursor on the configured origin, never an
       // upstream next-page URL that could disclose this source's credential.
       if (!value.data.length || value.last_id !== value.data.at(-1).id || cursors.has(value.last_id) || bytes >= MAX_UPSTREAM_MODEL_CATALOG_BYTES) throw accessError("ccdx_api_catalog_invalid", 502);

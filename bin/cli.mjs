@@ -279,6 +279,7 @@ const { startAdapter } = await import("../src/adapter.mjs");
 const { defaultCopilotClient, refreshVSCodeVersion } = await import("../src/copilot.mjs");
 const { configureLogging } = await import("../src/log.mjs");
 const { flushUsageWrites } = await import("../src/usage.mjs");
+const { failureHistoryPath } = await import("../src/failure-history.mjs");
 const { runDoctor } = await import("../src/doctor.mjs");
 const { adapterBaseUrl, checkRunningAdapter } = await import("../src/running-adapter.mjs");
 const { assertSafeAdapterHost, isLoopbackHost } = await import("../src/security.mjs");
@@ -533,6 +534,7 @@ try {
   const codexModelCatalog = createCodexModelCatalog();
   activeServer = await startAdapter(serviceWorker?.warming ? 0 : ADAPTER_PORT, serviceWorker?.warming ? "127.0.0.1" : ADAPTER_HOST, {
     log: startupLogger("Service"),
+    failureHistoryFile: process.env.CCDX_DISABLE_USAGE === "1" ? undefined : failureHistoryPath(),
     autoReviewModelResolver: () => autoReviewPreference(),
     codexClient: providerRuntime.source("github").client,
     codexModelCatalog,

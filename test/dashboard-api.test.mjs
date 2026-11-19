@@ -28,6 +28,31 @@ test("usage source, model and calendar filters agree across summary and analytic
   for(const query of ["days=0","days=366","from=2026-02-30","time_zone=invalid"]){assert.equal((await invoke(handler,{url:"/_ccdx/ui/usage?"+query})).status,400)}
   assert.equal(reads,before,"Invalid filters do not read logs");
 });
+
+test("the on-disk usage query filters totals and trends by request purpose", async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-dashboard-usage-"));
+  const previous = process.env.CCDX_USAGE_PATH, file = path.join(dir, "usage.jsonl");
+  process.env.CCDX_USAGE_PATH = file;
+  t.after(() => {
+    if (previous === undefined) delete process.env.CCDX_USAGE_PATH;
+    else process.env.CCDX_USAGE_PATH = previous;
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+  const records = ["conversation", "compaction"].map((purpose, i) => ({
+    provider: "github", model: "fixture", ts: new Date().toISOString(), purpose,
+    usage: { input_tokens: (i + 1) * 10, output_tokens: 2 },
+  }));
+  fs.writeFileSync(file, records.map(row => JSON.stringify(row) + "\n").join(""));
+  const handler = createAdapterHandler();
+  t.after(() => handler.cleanup());
+  for (const analytics of ["", "&analytics=1"]) {
+    const result = await invoke(handler, { url: "/_ccdx/ui/usage?purpose=compaction" + analytics });
+    assert.equal(result.status, 200);
+    assert.equal(result.body.total.requests, 1);
+    assert.equal(result.body.total.input_tokens, 20);
+    if (analytics) assert.equal(result.body.analytics.days.at(-1).input_tokens, 20);
+  }
+});
 import { authStatus } from "../src/cli-auth.mjs";
 import { githubTokenPath, githubTokenMetadataPath } from "../src/auth.mjs";
 import { githubTokenFingerprint } from "../src/github-identity.mjs";

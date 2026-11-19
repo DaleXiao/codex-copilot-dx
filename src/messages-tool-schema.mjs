@@ -111,7 +111,7 @@ function makeGuard(validators, maxBytes) {
       const state = pending.get(event?.index);
       if (state && event.type === "content_block_delta") {
         if (event.delta?.type !== "input_json_delta" || typeof event.delta.partial_json !== "string") throw invalidToolInput();
-        state.parts.push(event.delta.partial_json);
+        if (event.delta.partial_json) state.parts.push(event.delta.partial_json);
       }
       if (state && event.type === "content_block_stop") {
         let value = state.initial, unsafe = state.unsafe;

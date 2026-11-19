@@ -108,6 +108,19 @@ test("Messages buffers adapted tool frames until the complete input is validated
   }
 });
 
+test("an empty Messages input delta keeps the original tool input and its validation", async () => {
+  for (const valid of [true, false]) {
+    const { guard } = await adaptMessagesToolSchemas({ tools: [tool] });
+    const start = { type: "content_block_start", index: 0, content_block: message({ code: valid ? "run" : 42 }).content[0] };
+    const delta = { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: "" } };
+    const stop = { type: "content_block_stop", index: 0 };
+    const accept = value => guard.frame(value, event(value), JSON.stringify(value));
+    assert.deepEqual(accept(start), []);assert.deepEqual(accept(delta), []);
+    if (valid) assert.deepEqual(accept(stop).map(frame => frame.chunk), [start, delta, stop].map(event));
+    else assert.throws(() => accept(stop), { code: "ccdx_tool_input_invalid" });
+  }
+});
+
 test("adapted Messages keep SSE bytes and validate tool input across fragmented line endings", async t => {
   for (const ending of ["\n", "\r\n", "\r"]) {
     for (const valid of [true, false]) {

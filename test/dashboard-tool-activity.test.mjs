@@ -13,7 +13,7 @@ function fixture(saved) {
     closest() { return null; }, replaceChildren() { this.children = []; }, append(...items) { this.children.push(...items); },
     setAttribute(key, value) { this[key] = value; }, addEventListener(key, fn) { this.listeners.set(key, fn); } });
   const el = id => { if (!elements.has(id)) elements.set(id, node());return elements.get(id); };
-  const ctx = { setTransform() {}, clearRect() { draws++; }, beginPath() {}, arc() {}, stroke() {}, fillRect() {}, moveTo() {}, lineTo() {}, quadraticCurveTo() {} };
+  const ctx = { setTransform() {}, clearRect() { draws++; }, beginPath() {}, arc() {}, stroke() {}, fill() {}, closePath() {}, strokeRect() {}, fillRect() {}, moveTo() {}, lineTo() {}, quadraticCurveTo() {} };
   const canvas = el("tool-canvas");canvas.getContext = () => ctx;canvas.parentElement = node();canvas.getBoundingClientRect = () => ({ width: 250, height: 190 });
   const document = { visibilityState: "visible", documentElement: node(), getElementById: el, createElement: node, addEventListener: (key, fn) => listeners.set(key, fn) };
   const motion = { matches: false, addEventListener: (key, fn) => listeners.set("motion", fn) };
@@ -36,10 +36,10 @@ const data = (requests = [], items = []) => ({ stream_performance: { active_requ
 const tool = state => ({ id: "tool-one", application: "claude_app", provider: "api_work", model: "tool-model", name: "read_file", state, expires_in_ms: 15000 });
 
 test("motion defaults and removed preferences migrate while valid choices remain", () => {
-  for (const saved of [undefined, "orbit", "weave", "invalid"]) assert.equal(fixture(saved).el("tool-style").value, "halo");
-  for (const saved of ["grid", "halo", "busy", "speed", "assembly", "off"]) assert.equal(fixture(saved).el("tool-style").value, saved);
+  for (const saved of [undefined, "orbit", "weave", "busy", "speed", "invalid"]) assert.equal(fixture(saved).el("tool-style").value, "assembly");
+  for (const saved of ["grid", "halo", "assembly", "off"]) assert.equal(fixture(saved).el("tool-style").value, saved);
   const f = fixture();f.api.update(data([], [tool("waiting")]), { live: true });
-  for (const style of ["halo", "grid", "busy", "speed", "assembly"]) {
+  for (const style of ["halo", "grid", "assembly"]) {
     f.style(style);const before = f.draws;f.advance(50);assert.ok(f.draws > before);assert.equal(f.saved, style);
     assert.equal(f.el("tool-state").textContent, "tool_waiting:1");
   }
@@ -65,7 +65,7 @@ test("pending calls take precedence and actual returned results hand back to an 
 });
 test("hidden, offscreen and reduced motion pause every style without changing its state text", () => {
   const f = fixture();f.api.update(data([request()]), { live: true });
-  for (const style of ["halo", "grid", "busy", "speed", "assembly"]) {
+  for (const style of ["halo", "grid", "assembly"]) {
     f.style(style);f.motion.matches = true;f.listeners.get("motion")();assert.equal(f.frames.size, 0);
     f.motion.matches = false;f.listeners.get("motion")();assert.ok(f.frames.size);
     f.intersect(false);assert.equal(f.frames.size, 0);f.intersect(true);assert.ok(f.frames.size);

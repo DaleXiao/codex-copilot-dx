@@ -412,7 +412,8 @@ export async function handleDashboardApi(req, res, pathname, {
         return selection.matches(record);
       };
       const analysis = (analytics || filtered) && !usageSummaryFn
-        ? await analyzeUsageLogs(undefined, { provider, model: selection.filters.model, from: selection.filters.from, to: selection.filters.to, timeZone: selection.filters.time_zone, signal: abort.signal }) : null;
+        ? await analyzeUsageLogs(undefined, { provider, model: selection.filters.model, purpose: selection.filters.purpose,
+          from: selection.filters.from, to: selection.filters.to, timeZone: selection.filters.time_zone, signal: abort.signal }) : null;
       const summary = analysis?.summary || await (usageSummaryFn || (options => summarizeUsageLogs(undefined, { ...options, signal: abort.signal })))({ provider,
         ...(filtered ? { recordFilter } : {}), ...(analytics ? { onRecord: analytics.record } : {}) });
       const availableModels = analysis?.analytics.models || (observedModels.size ? [...observedModels].sort() : Object.keys(provider ? summary.byModel : summary.bySourceModel || summary.byModel).sort().slice(0, 100));

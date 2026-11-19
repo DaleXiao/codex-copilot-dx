@@ -1,20 +1,78 @@
 (() => {
   const root = document.getElementById("tool-activity");if (!root) return;
   const el = id => document.getElementById(id), canvas = el("tool-canvas"), ctx = canvas.getContext?.("2d");
-  const styles = new Set(["halo", "grid", "busy", "speed", "assembly", "off"]), storageKey = "ccdx.dashboard.toolMotionStyle";
+  const styles = new Set(["halo", "grid", "assembly", "off"]), storageKey = "ccdx.dashboard.toolMotionStyle";
   const pending = state => ["preparing", "waiting"].includes(state);
   const phrase = (key, values = {}) => globalThis.ccdxLanguage.format(key, values);
   const text = (id, key, values) => globalThis.ccdxLanguage.set(el(id), key, values);
-  const state = { scene: "idle", style: "halo", intensity: .8, reduce: false };
+  const state = { scene: "idle", style: "assembly", intensity: .8, reduce: false };
   try { const saved = localStorage.getItem(storageKey);if (styles.has(saved)) state.style = saved; } catch {}
   const motion = globalThis.matchMedia?.("(prefers-reduced-motion: reduce)") || { matches: false, addEventListener() {} };
   let records = [], fresh = false, supported = false, visible = true, raf = 0, last = 0, start = performance.now(), expiry = null;
-  let signature = "", box = { width: 0, height: 0 }, color = "", omitted = 0, requests = [], requestDeadline = 0;
+  let signature = "", box = { width: 0, height: 0 }, color = "", surface = "", omitted = 0, requests = [], requestDeadline = 0;
   const animating = () => ["calling", "parallel", "waiting", "processing", "responding"].includes(state.scene);
   const shown = () => document.visibilityState === "visible" && !root.closest("[hidden]") && visible;
   function measure() {
-    box = canvas.getBoundingClientRect();color = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim();
+    box = canvas.getBoundingClientRect();
+    const theme = getComputedStyle(document.documentElement);
+    color = theme.getPropertyValue("--accent").trim();surface = theme.getPropertyValue("--surface").trim();
     refreshAnimation();
+  }
+  function drawAssembly(dpr,w,h,t,active,waiting,returned,reduced) {
+    const scale=Math.min((w-12)/264,(h-12)/118);
+    if(scale<=0)return;
+    ctx.setTransform(scale*dpr,0,0,scale*dpr,(w-264*scale)*dpr/2,(h-118*scale)*dpr/2);
+    const running=active||waiting;
+    const phase=reduced?.42:(t*(waiting?.7:1.04))%2.1/2.1;
+    const press=running?Math.max(0,1-Math.abs(phase-.5)/.14):0;
+    const workX=returned?132+91*Math.min(1,t/.85):
+      phase<.34?29+103*phase/.34:phase<.66?132:132+91*(phase-.66)/.34;
+    const moving=running&&(phase<.34||phase>=.66)||returned;
+    const shift=moving?(reduced?0:t*78)%14:0;
+    const assembled=returned||phase>=.5;
+    function path(points,closed=false){
+      ctx.beginPath();ctx.moveTo(points[0],points[1]);
+      for(let i=2;i<points.length;i+=2)ctx.lineTo(points[i],points[i+1]);
+      if(closed)ctx.closePath();
+    }
+    // Floor, braced stands and the rear uprights of the press.
+    ctx.lineWidth=1.2;ctx.globalAlpha=.22;
+    path([18,108,246,108]);ctx.stroke();
+    ctx.globalAlpha=.52;
+    path([35,88,35,108,55,108,55,88,35,106,55,90]);ctx.stroke();
+    path([209,88,209,108,229,108,229,88,209,106,229,90]);ctx.stroke();
+    ctx.fillRect(99,22,5,45);ctx.fillRect(160,22,5,45);
+    ctx.strokeRect(93,11,78,13);
+    ctx.globalAlpha=.23;
+    ctx.fillRect(93,11,78,13);
+    ctx.globalAlpha=.65;
+    ctx.beginPath();
+    for(let i=98;i<168;i+=8){ctx.moveTo(i,21);ctx.lineTo(i+4,14);}
+    ctx.stroke();
+    // Belt deck and rollers, with the drive drums in the front housing.
+    ctx.globalAlpha=.18;path([13,77,239,77,252,65,26,65],true);ctx.fill();
+    ctx.globalAlpha=.64;ctx.stroke();
+    ctx.beginPath();
+    for(let i=30;i<235;i+=14){ctx.moveTo(i+shift,75);ctx.lineTo(i+shift+9,67);}
+    ctx.stroke();
+    ctx.globalAlpha=.16;ctx.fillRect(13,77,226,13);
+    ctx.globalAlpha=.72;ctx.strokeRect(13,77,226,13);
+    for(const x of [22,230]){ctx.beginPath();ctx.arc(x,83.5,3.8,0,Math.PI*2);ctx.stroke();}
+    // Cylinder, piston and platen travel together.
+    const piston=press*9;
+    ctx.globalAlpha=.82;ctx.strokeRect(123,24,18,13);ctx.fillRect(130,37,4,5+piston);
+    ctx.fillRect(120,42+piston,24,3);
+    if(running||returned){
+      const x=workX-11,y=assembled?57:60;
+      ctx.globalAlpha=1;ctx.fillStyle=surface;
+      path([x,75,x,y,x+6,y-5,x+27,y-5,x+27,70,x+21,75],true);ctx.fill();
+      ctx.fillStyle=color;ctx.globalAlpha=.24;ctx.fill();
+      ctx.globalAlpha=.86;ctx.stroke();
+      path([x,y,x+21,y,x+27,y-5]);ctx.stroke();
+      path([x+21,y,x+21,75]);ctx.stroke();
+      if(assembled){ctx.globalAlpha=.62;ctx.fillRect(x+6,y+5,9,3);}
+    }
+    ctx.globalAlpha=1;
   }
     function draw(now=performance.now()){
       if(!ctx||!box.width||!box.height)return;
@@ -36,38 +94,8 @@
         }
         ctx.globalAlpha=1;return;
       }
-      if(state.style==='busy'){
-        const n=7,bw=12,gap=11,left=cx-(n*bw+(n-1)*gap)/2;
-        for(let i=0;i<n;i++){
-          const wave=active||waiting?(Math.sin(t*(waiting?6:11)-i*.8)+1)/2:.2;
-          const bh=quiet?12:returned?22:14+wave*54;
-          ctx.globalAlpha=quiet?.15:returned?.55:.18+wave*power;ctx.fillRect(left+i*(bw+gap),cy-bh/2,bw,bh);
-        }
-        ctx.globalAlpha=1;return;
-      }
-      if(state.style==='speed'){
-        const span=Math.min(w-36,220),left=cx-span/2;
-        for(let i=0;i<7;i++){
-          const phase=(t*(waiting?1.5:3.3)+i*.173)%1,len=20+(i%3)*16,y=cy+(i-3)*13;
-          const x=active||waiting?left+phase*(span+len)-len:left+span*.43;
-          ctx.globalAlpha=quiet?.12:returned?.5:Math.sin(phase*Math.PI)*power;
-          ctx.lineWidth=i===3?3:1.5;ctx.beginPath();ctx.moveTo(Math.max(left,x),y);ctx.lineTo(Math.min(left+span,x+len),y);ctx.stroke();
-        }
-        ctx.globalAlpha=1;return;
-      }
       if(state.style==='assembly'){
-        const span=Math.min(w-32,218),left=cx-span/2,rail=cy+23;
-        ctx.globalAlpha=quiet?.12:.26;ctx.lineWidth=1;
-        ctx.beginPath();ctx.moveTo(left,rail);ctx.lineTo(left+span,rail);ctx.moveTo(left,rail+8);ctx.lineTo(left+span,rail+8);ctx.stroke();
-        for(let i=0;i<3;i++){
-          const x=left+span*(i+.5)/3,phase=(t*(waiting?1.5:3.2)-i/3+9)%1,press=active||waiting?Math.max(0,1-Math.abs(phase-.5)*5):0;
-          ctx.globalAlpha=quiet?.16:.58;ctx.fillRect(x-14,cy-36,28,8);ctx.fillRect(x-2,cy-28,4,16+press*16);ctx.fillRect(x-9,cy-14+press*16,18,4);
-        }
-        for(let i=0;i<5;i++){
-          const phase=active||waiting?(t*(waiting?.7:1.6)+i/5)%1:(i+.5)/5,x=left+phase*span;
-          ctx.globalAlpha=quiet?.12:returned?.55:.2+Math.sin(phase*Math.PI)*power;ctx.fillRect(x-5,rail-12,10,10);
-        }
-        ctx.globalAlpha=1;return;
+        drawAssembly(dpr,w,h,t,active,waiting,returned,reduced);return;
       }
       arc(r,0,Math.PI*2,.25);arc(r*.85,0,Math.PI*2,.13);arc(r*1.12,0,Math.PI*2,.1);
       const spin=active?t*1.6:waiting?t*.9:0;

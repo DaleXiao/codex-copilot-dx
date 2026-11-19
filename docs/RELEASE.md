@@ -1,15 +1,17 @@
-# CCDX 1.4.10
+# CCDX 1.4.11
 
 ## English
 
-- The WebUI uses compact tables and shorter labels for request statistics, errors, and settings. Open request details keep their reading position and keyboard focus when new records arrive.
-- Codex can send WorkIQ tools to Copilot Carbon Chat without the schema rejection caused by nullable tool branches. Tool validation and conversation history are preserved.
+- Assembly line is the default for tool activity. It shows a workpiece moving through a conveyor and press. Saved Beam ring, Grid and Off choices stay in place. Busy pulse and Fast streaks have been removed.
+- The full-year usage chart keeps bars visible on narrow screens. The calendar no longer scrolls vertically, and the request purpose filter applies to both totals and charts.
+- Claude tool calls keep valid arguments supplied at the start of a stream when the source sends only empty argument updates.
 
-Not verified: live WorkIQ on this build or the cause of the earlier Carbon 504s.
+Not verified: live Claude tool calls on this build.
 
 ## 简体中文
 
-- WebUI 用紧凑表格和简洁文案呈现请求统计、错误和设置。新记录到达时，已展开的请求详情保留阅读位置和键盘焦点。
-- Codex 经 Copilot Carbon Chat 使用 WorkIQ 工具时，兼容含空值分支的工具 Schema。保留原校验约束和会话历史。
+- 工具活动默认使用装配线，显示工件输送、压合和出站。已保存的光束圆环、格子进度条和关闭选项保持不变。移除了忙碌脉冲和疾速流光。
+- 全年用量柱状图在窄屏上也能显示。日历不再出现内层竖滚动条，请求用途筛选会同时应用于用量合计和图表。
+- 当来源只发送空的参数增量时，Claude 工具调用会保留流开头已收到的有效参数。
 
-未验证：本版本的真实 WorkIQ 请求、此前 Carbon 504 的根因。
+未验证：本版本的真实 Claude 工具调用。

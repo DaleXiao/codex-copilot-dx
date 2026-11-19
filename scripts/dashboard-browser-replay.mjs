@@ -842,6 +842,15 @@ try {
         assert.equal(await page.locator("#analytics-view").inputValue(), "bars");
         await page.locator("#daily-bars").scrollIntoViewIfNeeded();
         await page.waitForFunction(() => chartMotions.some(motion => motion.frames[0].transform === "scaleY(0)"));
+        assert.ok(await page.locator("#daily-bars").evaluate(chart => {
+          const within = chart.getBoundingClientRect();
+          const bars = [...chart.querySelectorAll(".bar-input")].filter(bar => parseFloat(bar.style.height) > 0);
+          return bars.length > 0 && bars.every(bar => {
+            const box = bar.getBoundingClientRect();
+            return box.width > 0 && box.left >= within.left - 1 && box.right <= within.right + 1;
+          });
+        }), "Usage bars remain visible in the full-year view");
+        assert.equal(await page.locator(".calendar-scroll").evaluate(node => node.scrollHeight - node.clientHeight), 0, "The calendar does not scroll vertically");
         const readsBeforeView = summaries;
         await page.locator("#analytics-view").selectOption("line");
         await page.waitForFunction(() => document.querySelectorAll("#daily-bars .daily-curve").length === 2);

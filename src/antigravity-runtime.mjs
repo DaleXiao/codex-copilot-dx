@@ -19,6 +19,7 @@ import {withFileLock,withFileLockSync} from "./lock.mjs";
 import {readBoundedFile} from "./bounded-file.mjs";
 import {redactDiagnosticText} from "./diagnostic-text.mjs";
 import {httpError} from "./http-errors.mjs";
+import {parseTimerMs} from "./runtime-config.mjs";
 import {antigravityCopilotModels,ANTIGRAVITY_MODEL_PREFIX,ANTIGRAVITY_NATIVE_PREFIX} from "./antigravity-models.mjs";
 
 const execute=promisify(execFile),key="gemini_antigravity_enabled",modelKey="gemini_antigravity_models",defaultKey="gemini_antigravity_default_model";
@@ -58,7 +59,8 @@ export function createAntigravityRuntime({client,models=()=>[],refreshModels,pri
     return {configured:Object.hasOwn(saved,key),enabled:saved[key]===true,selected_models:saved[modelKey]??null,default_model:saved[defaultKey]??null,
       copilot_timeout_seconds:validTimeout(saved[timeoutKey])?saved[timeoutKey]:null,native_source:typeof saved[nativeSourceKey]==="string"?saved[nativeSourceKey]:null};
   };
-  const configuredTimeout=saved=>copilotTimeoutMs??(saved.copilot_timeout_seconds===null?undefined:saved.copilot_timeout_seconds*1000);
+  const defaultCopilotTimeoutMs=parseTimerMs(env.CCDX_UPSTREAM_TIMEOUT_MS,180000);
+  const effectiveCopilotTimeoutMs=saved=>copilotTimeoutMs??(saved.copilot_timeout_seconds===null?defaultCopilotTimeoutMs:saved.copilot_timeout_seconds*1000);
   const available=(saved=settings())=>saved.enabled&&readAccessSettings(options).providers.github?models():[];
   const nativeModels=(sourceId=settings().native_source)=>{
     if(!sourceId)return [];
@@ -133,7 +135,7 @@ export function createAntigravityRuntime({client,models=()=>[],refreshModels,pri
       if(model)return{source:selected,model:model.id};
       throw httpError("The conversation belongs to another model source",409);
     },fetchGoogle:googleFetch,acquireRequest,upstreamTimeoutMs,...timeouts,generationSettings(saved){
-      return { selection:saved.selected_models, copilotTimeoutMs:configuredTimeout(saved), preferred:saved.default_model };
+      return { selection:saved.selected_models, copilotTimeoutMs:effectiveCopilotTimeoutMs(saved), preferred:saved.default_model };
     }});
   function snapshot(){
     const config=settings(),sourceEnabled=readAccessSettings(options).providers.github,activity=handler.snapshot(config);
@@ -151,7 +153,7 @@ export function createAntigravityRuntime({client,models=()=>[],refreshModels,pri
     const defaultUnavailable=config.default_model!==null&&(!desiredDefault||activity.catalog_default_supported===false);
     const current=applicationControl?.snapshot().antigravity;
     const visibleApp=current?{status:current.status,version:current.version||null,pids:current.pid?[current.pid]:[]}:app;
-    return {source:"gemini_antigravity",...config,native_sources:sources.map(({id,name})=>({id,name})),copilot_timeout:{effective_ms:configuredTimeout(config)??upstreamTimeoutMs,default_ms:upstreamTimeoutMs,locked:copilotTimeoutMs!==undefined},
+    return {source:"gemini_antigravity",...config,native_sources:sources.map(({id,name})=>({id,name})),copilot_timeout:{effective_ms:effectiveCopilotTimeoutMs(config),default_ms:defaultCopilotTimeoutMs,locked:copilotTimeoutMs!==undefined},
       source_enabled:sourceEnabled,default_model_unavailable:defaultUnavailable,models_reload_required:reload,app:visibleApp,application:current||null,route_observed:activity.observed,
       model_source:["Google",...(config.enabled&&sourceEnabled?["GitHub Copilot"]:[]),...(selectedNative?[selectedNative.name]:[])].join(" + "),background_source:"GitHub Copilot",ordinary_chat_source:"Google (unchanged)",
       compaction_source:"Observed conversation source; existing background policy when unassigned",

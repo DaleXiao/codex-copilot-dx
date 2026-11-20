@@ -232,5 +232,5 @@ test('known access refusals remain notices even when their separate notice entry
  const document={getElementById(id){if(!nodes.has(id))nodes.set(id,createNode());return nodes.get(id);},createElement:createNode};
  const render=runInNewContext(`${renderScript}\nrender;`,{document,ccdxLanguage:dashboardLanguage});
  render({stream_performance:{recent_requests:[{request_id:'blocked',at:'2026-10-26T01:00:00Z',model:'configured-but-disabled',failed:true,outcome:'unknown',origin:'client_validation',http_status:400,rejection_reason:'ccdx_model_not_selected'}]},http_errors:{actionable_recent:[],capability_recent:[]}});
- assert.match(nodes.get('failures').children[0].textContent,/No recent issues recorded/);
+ assert.match(nodes.get('failures').children[0].children[0].textContent,/No recent issues recorded/);
 });

@@ -71,7 +71,11 @@ test("actual CLI processes use the protected loopback API without starting apps 
   assert.deepEqual(fs.readFileSync(auth), authBytes);assert.doesNotMatch(fs.readFileSync(config, "utf8"), /^model_provider\s*=/m);
   const failure = await fetch(`http://127.0.0.1:${port}/v1/responses`, { method: "POST", headers: { "content-type": "application/json", originator: "Codex Desktop" }, body: JSON.stringify({ model: "not-selected", input: "synthetic", stream: false }) });
   assert.equal(failure.status, 400);
-  const requests = await run(["requests", "--failed", "--format", "json"]);assert.equal(requests.code, 0, requests.stderr);assert.ok(JSON.parse(requests.stdout).length > 0);
+  const requests = await run(["requests", "--failed", "--format", "json"]);
+  assert.equal(requests.code, 0, requests.stderr);assert.deepEqual(JSON.parse(requests.stdout), []);
+  const notices = await run(["requests", "--format", "json"]);
+  assert.equal(notices.code, 0, notices.stderr);
+  assert.ok(JSON.parse(notices.stdout).some(row => row.failure_category === "capability" && row.reason === "ccdx_model_not_selected"));
   const bindings = runtime.connections().clients.map(client => ({ source: client.source, deployments: client.deployments }));
   for (const args of [["config", "set", "terminal_color_theme", "pink", "--yes"], ["config", "reset", "--yes"], ["config", "restore", "--yes"]]) {
     const result = await run(args);assert.equal(result.code, 0, result.stderr);

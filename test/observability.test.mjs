@@ -158,13 +158,16 @@ test("dashboard assets serve on loopback without initializing image tools or aff
   assert.match(page.headers["Content-Security-Policy"], /default-src 'none'/);
   assert.match(page.body, /CCDX Dashboard/);
   assert.match(page.body, /id="theme-toggle"/);
-  assert.match(page.body, /UPDATES WHILE VISIBLE/);
+  assert.match(page.body, /data-i18n-title="activity_updates_live"/);
   for (const [url, type] of [["/ui.css", "text/css"], ["/theme.js", "text/javascript"], ["/language.js", "text/javascript"], ["/refresh.js", "text/javascript"], ["/status.js", "text/javascript"], ["/usage.js", "text/javascript"], ["/ui.js", "text/javascript"]]) {
     const asset = await invoke(handler, { url, ...request });
     assert.equal(asset.statusCode, 200);
     assert.match(asset.headers["Content-Type"], new RegExp(`^${type}`));
     assert.ok(asset.body.length > 0);
   }
+  const dashboard = await invoke(handler, { url: "/dashboard.js", ...request });
+  assert.equal(dashboard.statusCode, 200);
+  assert.match(dashboard.body, /ccdxToolMachines/);
   const head = await invoke(handler, { method: "HEAD", url: "/", ...request });
   assert.equal(head.statusCode, 200);
   assert.equal(head.body, "");

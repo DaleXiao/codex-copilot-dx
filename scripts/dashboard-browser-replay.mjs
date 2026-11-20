@@ -1101,8 +1101,14 @@ try {
           await page.locator("#inflight-body-limit-default").click();
           await page.waitForFunction(() => !document.getElementById("inflight-body-limit-default").hasAttribute("aria-busy"));
           assert.equal(serviceControl.snapshot().inflight_body.bytes, 32 * 1048576);
-          const beforeUpdate = manualUpdates;await page.locator("#install-update").click();await page.locator("#action-confirm-apply").click();
-          await page.waitForFunction(() => !document.getElementById("install-update").hasAttribute("aria-busy"));assert.equal(manualUpdates, beforeUpdate + 1);
+          const beforeUpdate = manualUpdates;
+          await page.locator("#install-update").click();
+          const updateResponse = page.waitForResponse(response => response.url().endsWith("/_ccdx/ui/settings")
+            && response.request().method() === "POST" && response.request().postDataJSON()?.action === "update");
+          await page.locator("#action-confirm-apply").click();
+          assert.ok((await updateResponse).ok());
+          await page.waitForFunction(() => !document.getElementById("install-update").hasAttribute("aria-busy"));
+          assert.equal(manualUpdates, beforeUpdate + 1);
         }
         assert.equal(await page.locator('[data-route="gemini"] span').innerText(),"Antigravity");
         await page.locator('[data-route="gemini"]').click();

@@ -144,9 +144,9 @@ export async function runManagementCommand(command, options = {}) {
     if (ids.request) {
       const found = rows.find(row => row.request_id === ids.request);if (!found) throw new Error("Request not retained. No full-history lookup is available.");return print(found);
     }
-    rows = rows.filter(row => (!flags.active || row.active) && (!flags.failed || row.state !== "cancelled" && (row.state === "failed" || row.error))
+    rows = rows.filter(row => (!flags.active || row.active) && (!flags.failed || row.state !== "cancelled" && row.failure_category !== "capability" && (row.state === "failed" || row.error))
       && (!flags.purpose || (row.purpose || "unknown") === flags.purpose) && (!flags.source || row.provider === flags.source) && (!flags.app || (flags.app === "codex" ? ["codex", "codex_app", "codex_cli"].includes(row.application) : row.application === (flags.app === "antigravity" ? "gemini_app" : CLI_CLIENTS[flags.app])))).slice(-(flags.limit || 20));
-    return print(flags.format === "json" ? rows : rows.map(row => ({ ...row, state_label: terminalRequestState(row) })), [["request_id", "Request"], ["application", "Client"], ["provider", "Source"], ["model", "Model"], ["route", "Route"], ["state_label", "State"]]);
+    return print(flags.format === "json" ? rows : rows.map(row => ({ ...row, state_label: terminalRequestState(row) })), [["request_id", "Request"], ["application", "Client"], ["provider", "Source"], ["model", "Model"], ["state_label", "State"], ["upstream_attempts", "Attempts"]]);
   }
   if (group === "usage") {
     if (flags.scope === "run") {
@@ -286,13 +286,15 @@ export async function runManagementCommand(command, options = {}) {
     if (feature || action === "status") {
       const settings = id === "codex" && (flags.details || feature) ? await request({ path: "settings" }) : null;
       const preference = settings?.providers?.[client.source || "github"]?.preference || {};
-      const reviewId = client.auto_review_model || preference.auto_review_model || preference.model || null;
+      const locked = preference.source === "environment";
+      const reviewId = (locked ? preference.model : client.auto_review_model || preference.auto_review_model || preference.model) || null;
       const reviewModel = modelPlan?.models.find(model => [model.id, model.public_id, model.route_id].includes(reviewId));
       const details = { predictions: snapshot.client_integrations?.prediction || null, images: settings?.effective?.image_enabled || null,
         auto_review: { model: reviewModel?.id || reviewId, source: reviewModel?.source || client.source,
-          ...(preference.followModel ? { mode: "Follow conversation model" } : {}),
-          effort: client.auto_review_effort ?? preference.auto_review_effort ?? preference.reasoningEffort
-            ?? (preference.followModel && reviewModel?.capability?.values?.reasoning_efforts?.includes("low") ? "low if omitted" : "Follows client") }, memory_model: client.memory_model || { model: null } };
+          ...(locked ? { mode: "Startup override" } : preference.followModel ? { mode: "Follow conversation model" } : {}),
+          effort: (locked && client.auto_review_model !== reviewModel?.route_id ? undefined : client.auto_review_effort)
+            ?? (locked ? undefined : preference.auto_review_effort ?? preference.reasoningEffort)
+            ?? (reviewModel?.capability?.values?.reasoning_efforts?.includes("low") ? "low if omitted" : "Follows client") }, memory_model: client.memory_model || { model: null } };
       if (feature) return print({ client: "Codex", feature, state: details[{ prediction: "predictions", image: "images", review: "auto_review" }[feature]] });
       const observed = retainedRequests(snapshot).filter(row => id === "codex" ? ["codex", "codex_app", "codex_cli"].includes(row.application) : row.application === id).at(-1);
       return print({ id: ids.app, access: client.enabled ? clientSetup(client) === "Paused" ? "Paused" : "Enabled" : "Disabled", setup: view.clients.find(row => row.id === id)?.setup || clientSetup(client),

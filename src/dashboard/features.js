@@ -83,8 +83,8 @@
     inflightField.addEventListener("keydown", event => {
       if (event.key === "Enter") { event.preventDefault();void saveInflight(false); }
     });
-    el("install-update").addEventListener("click", () => {
-      if (window.confirm(globalThis.ccdxLanguage.format("update_install_confirm"))) void change({ action: "update", confirmed: true }, el("install-update"));
+    el("install-update").addEventListener("click", async () => {
+      if (await globalThis.ccdxConfirmAction("update_install_now", "update_install_confirm")) void change({ action: "update", confirmed: true }, el("install-update"));
     });
     function render(data, { notes = true } = {}) {
       if (!data) return;

@@ -58,10 +58,10 @@ Model availability depends on your account and service. Microsoft 365 also requi
 | Preview client setup | `ccdx app claude-app sync --preview` |
 | Set up Antigravity | `ccdx app antigravity status` / `enable` / `open` |
 | Inspect compression | `ccdx compact status` / `ccdx compact enable` / `ccdx compact disable` |
-| Inspect failures | `ccdx requests --failed` |
+| Inspect failures | `ccdx requests --failed` / `ccdx requests show ID --format json` |
 | Inspect observed tool calls | `ccdx requests tools` / `ccdx requests tools --active` |
 | Inspect active model requests | `ccdx requests --active` |
-| Capture one upstream error | `ccdx requests diagnose --source api_work --model model-id --yes` |
+| Capture one upstream Messages 400/422 | `ccdx requests diagnose --source api_work --model model-id --yes` |
 | Read usage | `ccdx usage` / `ccdx usage --provider google --days 7` / `ccdx usage --purpose diagnostic` / `ccdx usage --scope run` |
 | Inspect preferences | `ccdx config show --effective` |
 | Inspect local masking | `ccdx config privacy status` |
@@ -80,7 +80,7 @@ Use the Web UI for accounts, APIs, models, client access, input suggestions, nat
 - **Input suggestions:** new integrations attempt setup by default when Codex is closed. Saved off choices are retained. The Web UI can enable, disable, finish setup, open Codex and repair the bridge. Setup synchronizes Show predictions, adds App-profile trust and locally decrypts the prediction hosts' HTTPS traffic. App/thread eligibility still applies. [Details](docs/REFERENCE.md#optional-native-predictions).
 - **Images:** Codex native host tools use the selected GitHub image model, with GPT Image 2.5 Flare as the default. Images start enabled; saved off choices are retained. On macOS with Codex 0.166+, fully quit a running App that lacks the host, start Codex through CCDX, and use a new chat. ChatGPT sign-in and Apps are retained. The Web UI provides model selection without an extra API key, MCP or CCDX image skill. [Details](docs/REFERENCE.md#native-image-generation).
 - **Updates:** Settings → Install update downloads and verifies a stable release, then switches the installed service when idle. Busy work postpones the switch. Unmanaged launches require the installer or an installed command. [Details](docs/REFERENCE.md#installation-and-updates).
-- **App updates:** Checks & repairs and `ccdx doctor` show observed installed Codex and Claude versions. A version change does not by itself verify the running App or its integrations. [Details](docs/REFERENCE.md#checks-and-troubleshooting).
+- **App updates:** Checks & repairs and `ccdx doctor` show observed installed Codex, Claude and Antigravity versions. A version change does not by itself verify the running App or its integrations. [Details](docs/REFERENCE.md#checks-and-troubleshooting).
 
 Web UI activity updates through server push; the terminal uses the same in-process activity feed. Reconnecting restores current state and bounded recent records.
 

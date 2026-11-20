@@ -295,7 +295,7 @@ const extras = {
   config:
     "Only service and terminal preferences are in scope. Browser appearance stays in WebUI.\nReset keeps accounts, keys, model plans and chats and stores a pre-reset backup.\nSaved and effective values can differ; restart requirements remain explicit.",
   requests:
-    "Only retained records are available. Use requests tools to inspect observed tool metadata without model calls. Unknown clients are not guessed from an API route.\nApp filters: codex, claude-app, claude-code, antigravity.\n--failed filters failed model outcomes and structured HTTP/model errors.\nUsage records, HTTP calls and model outcomes are distinct counters.",
+    "Only retained records are available. Use requests tools to inspect observed tool metadata without model calls. Unknown clients are not guessed from an API route.\nApp filters: codex, claude-app, claude-code, antigravity.\n--failed filters failed model outcomes and request errors. Token-count and access notices stay in the unfiltered list.\nUsage records, HTTP calls and model outcomes are distinct counters.",
   status:
     "Default interactive status is brief; --details retains the complete diagnostic view.\nThe installed package version can differ from the running service.\nA listening gateway does not prove upstream model access.",
   usage:

@@ -8,7 +8,10 @@ export function terminalRequestState(row) {
   if (row.terminal_outcome) return "Finishing";
   if (row.first_output_ms != null) return "Responding";
   if (row.phase === "admission") return "Queued";
-  if (row.upstream_attempts > 1) return "Retrying";
+  const attempt = row.attempts?.at(-1);
+  if (attempt?.headers_ms != null || ["upstream_response", "upstream_stream"].includes(row.phase)) return "Reading response";
+  if (attempt?.body_sent_ms != null) return "Waiting for response headers";
+  if (attempt?.body_written_bytes != null) return "Sending request";
   return row.upstream_attempts ? "Waiting upstream" : "Processing input";
 }
 const labels = { configured: "Configured", paused: "Paused", disabled: "Disabled", not_configured: "Not configured", not_installed: "Not installed",
@@ -72,7 +75,10 @@ export function retainedRequests(data = {}) {
   }
   for (const record of data.http_errors?.recent || data.http_errors?.actionable_recent || []) if (record.request_id) {
     const existing = rows.get(record.request_id);
-    rows.set(record.request_id, { ...existing, ...record, error: true, active: existing?.active === true, state: ["cancelled", "incomplete"].includes(existing?.state) ? existing.state : "failed" });
+    const capability = record.route === "messages_count_tokens" || ["ccdx_model_not_selected", "ccdx_client_source_disabled"].includes(record.reason);
+    rows.set(record.request_id, { ...existing, ...record, error: true, active: existing?.active === true,
+      ...(capability ? { failure_category: "capability" } : {}),
+      state: capability ? "capability" : ["cancelled", "incomplete"].includes(existing?.state) ? existing.state : "failed" });
   }
   const time = row => { const value = Date.parse(row.at || row.time || "");return Number.isFinite(value) ? value : 0; };
   return [...rows.values()].sort((a, b) => Number(a.active) - Number(b.active) || time(a) - time(b));

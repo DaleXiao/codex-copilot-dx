@@ -132,9 +132,9 @@
   el("github-check").addEventListener("click", () => void accountAction({ action: "check" }));
   el("github-cancel").addEventListener("click", () => { if (account?.operation) void accountAction({ action: "cancel", id: account.operation.id }); });
   el("github-copy-code").addEventListener("click", () => void copyCode());
-  el("github-authorize").addEventListener("click", event => { if (pending || !userCode()) { event.preventDefault();return; }void copyCode(); });
+  el("github-authorize").addEventListener("click", event => { if (pending || !userCode()) event.preventDefault(); });
   window.addEventListener("pagehide", finishCodeCopy);
-  el("github-logout").addEventListener("click", () => { if (window.confirm(language.format("tools_logout_confirm"))) void accountAction({ action: "logout", confirmed: true }); });
+  el("github-logout").addEventListener("click", async () => { if (await globalThis.ccdxConfirmAction("tools_logout", "tools_logout_confirm")) void accountAction({ action: "logout", confirmed: true }); });
   async function loadAccount() { const generation = accountGeneration;try { const data = await api("account");if (generation === accountGeneration && !pending) renderAccount(data); } catch { if (generation === accountGeneration) text("github-account-note", "tools_read_failed"); } }
   function renderChecks(data) {
     if (Object.hasOwn(data, "client_versions")) globalThis.ccdxClientVersions?.render(data.client_versions);
@@ -184,10 +184,9 @@
   for (const [id, action] of [["check-local", "check"], ["check-network", "network"], ["export-report", "report"], ["preview-config-repair", "preview"]]) {
     el(id).addEventListener("click", () => void localAction({ action }, el(id)));
   }
-  el("check-compatibility")?.addEventListener("click", () => { if (window.confirm(language.format("compatibility_scope"))) void localAction({ action: "compatibility", confirmed: true }, el("check-compatibility")); });
+  el("check-compatibility")?.addEventListener("click", async () => { if (await globalThis.ccdxConfirmAction("compatibility_test", "compatibility_scope")) void localAction({ action: "compatibility", confirmed: true }, el("check-compatibility")); });
   el("apply-config-repair").addEventListener("click", () => { if (repairPreview) void localAction({ action: "repair", revision: repairPreview.revision }, el("apply-config-repair")); });
   el("cancel-config-repair").addEventListener("click", () => { repairPreview = null;el("config-repair-preview").hidden = true; });
-  el("check-account-link").addEventListener("click", () => { chooseProvider("github");location.hash = "models"; });
   async function navigate() {
     syncSource();
     if (location.hash === "#models") await loadAccount();

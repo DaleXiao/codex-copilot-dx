@@ -112,7 +112,15 @@
       body.replaceChildren();
       if (total.requests > 0) {
         for (const [index, row] of [total, ...rows].entries()) {
-          const entry = tableRow(usageValues(row), { total: index === 0 });
+          const values = usageValues(row), entry = tableRow(values, { total: index === 0 });
+          const mobile = document.createElement("details"), summary = document.createElement("summary"), stats = document.createElement("dl");
+          mobile.className = "usage-row-details";stats.className = "usage-row-stats";
+          localize(summary, "tools_details");
+          for (const [column, key] of [[1, "usage_records"], [2, "input"], [3, "cache_read"], [4, "cache_write"], [5, "output"], [7, "cache_hit"]]) {
+            const field = document.createElement("div"), name = document.createElement("dt"), value = document.createElement("dd");
+            localize(name, key);value.textContent = values[column];field.append(name, value);stats.append(field);
+          }
+          mobile.append(summary, stats);entry.children[0].append(mobile);
           localize(entry.children[7], "usage_cache_coverage", { known: number(row.cache_hit_known_requests), unknown: number(row.cache_hit_unknown_requests) }, "title");body.append(entry);
         }
       } else { emptyTable("usage-body", 8, usageData.filters ? "usage_empty_selection" : "no_usage_records"); }

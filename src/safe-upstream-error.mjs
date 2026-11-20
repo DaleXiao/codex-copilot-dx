@@ -27,9 +27,9 @@ const reasons = new Map([
 const MAX_ACTIVE_READS = 4;
 let activeReads = 0;
 
-export function safeUpstreamReason(code, status) {
+export function safeUpstreamReason(code, status, { stream = false } = {}) {
   const reason = typeof code === "string" ? reasons.get(code) : null;
-  return reason?.statuses.includes(status) ? { code, message: reason.message } : null;
+  return reason && (stream || reason.statuses.includes(status)) ? { code, message: reason.message } : null;
 }
 
 export function safeUpstreamParameter(value){

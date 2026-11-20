@@ -167,7 +167,33 @@ export function chatFunctionPart(call, originalNames) {
   return { functionCall: { id: call.id, name, args } };
 }
 
-export function chatToAntigravity(response, originalNames) {
+const validCount = value => Number.isSafeInteger(value) && value >= 0;
+export function mergeChatUsage(previous, value) {
+  if (!value || typeof value !== "object") return previous;
+  let next = previous;
+  for (const key of ["prompt_tokens", "completion_tokens", "total_tokens"]) {
+    if (validCount(value[key])) (next ||= {})[key] = value[key];
+  }
+  for (const [key, field] of [["prompt_tokens_details", "cached_tokens"], ["completion_tokens_details", "reasoning_tokens"]]) {
+    if (validCount(value[key]?.[field])) (next ||= {})[key] = { [field]: value[key][field] };
+  }
+  return next;
+}
+
+function geminiUsage(usage) {
+  if (!usage) return {};
+  const result = {}, reasoning = usage.completion_tokens_details?.reasoning_tokens;
+  const separateThinking = reasoning !== undefined && usage.completion_tokens !== undefined && reasoning <= usage.completion_tokens;
+  const candidates = separateThinking ? usage.completion_tokens - reasoning : usage.completion_tokens;
+  for (const [key, value] of [["promptTokenCount", usage.prompt_tokens], ["candidatesTokenCount", candidates],
+    ["totalTokenCount", usage.total_tokens], ["cachedContentTokenCount", usage.prompt_tokens_details?.cached_tokens],
+    ["thoughtsTokenCount", separateThinking ? reasoning : undefined]]) {
+    if (value !== undefined) result[key] = value;
+  }
+  return { usageMetadata: result };
+}
+
+export function chatToAntigravity(response, originalNames, usage = mergeChatUsage(null, response?.usage)) {
   const choice = response?.choices?.[0], message = choice?.message;
   if (!object(message)) throw invalid("Invalid upstream Chat response", 502);
   const parts = [];
@@ -176,12 +202,11 @@ export function chatToAntigravity(response, originalNames) {
   if (Array.isArray(message.tool_calls)) for (const call of message.tool_calls) parts.push(chatFunctionPart(call, originalNames));
   const finish = { stop: "STOP", tool_calls: "STOP", length: "MAX_TOKENS", content_filter: "SAFETY" }[choice.finish_reason];
   if (!finish || finish === "STOP" && !parts.some(part => !part.thought)) throw invalid("Upstream Chat response did not complete", 502);
-  const usage = response.usage;
   return { candidates: [{ content: { role: "model", parts }, finishReason: finish, index: 0 }],
-    ...(usage ? { usageMetadata: { promptTokenCount: usage.prompt_tokens || 0, candidatesTokenCount: usage.completion_tokens || 0, totalTokenCount: usage.total_tokens || 0 } } : {}) };
+    ...geminiUsage(usage) };
 }
 
-export async function* chatStreamToAntigravity(response, originalNames, { onChunk, onUsage } = {}) {
+export async function* chatStreamToAntigravity(response, originalNames, { onChunk, onUsage, onError } = {}) {
   if (!response?.body) throw invalid("Upstream Chat stream has no body", 502);
   const calls = new Map(), data = [], guard = new ToolArgumentDeltaGuard();let done = false, finish = null, usage = null, bytes = 0, visible = false;
   const frame = async function* () {
@@ -189,9 +214,14 @@ export async function* chatStreamToAntigravity(response, originalNames, { onChun
     const raw = data.join("\n");data.length = 0;
     if (raw === "[DONE]") { done = true;return; }
     let event;try { event = JSON.parse(raw); } catch { throw invalid("Invalid upstream Chat stream event", 502); }
-    const upstreamError = upstreamChatStreamError(event);if (upstreamError) { observeSourceStreamFailure(response, event.error);throw upstreamError; }
-    if (event?.usage) usage = event.usage;
-    if (event?.usage || event?.copilot_usage) onUsage?.(event);
+    if (event?.usage) usage = mergeChatUsage(usage, event.usage);
+    if (event?.usage || event?.copilot_usage) onUsage?.(event, usage);
+    const upstreamError = upstreamChatStreamError(event);
+    if (upstreamError) {
+      observeSourceStreamFailure(response, event.error);
+      onError?.(upstreamError, event.error);
+      throw upstreamError;
+    }
     const choice = event?.choices?.[0];
     if (!choice) return;
     if (choice.finish_reason) { finish = choice.finish_reason;sourceResponseAccepted(response); }
@@ -240,5 +270,5 @@ export async function* chatStreamToAntigravity(response, originalNames, { onChun
     yield { response: { candidates: [{ index: 0, content: { role: "model", parts: [chatFunctionPart(call, originalNames)] } }] } };
   }
   yield { response: { candidates: [{ index: 0, finishReason }],
-    ...(usage ? { usageMetadata: { promptTokenCount: usage.prompt_tokens || 0, candidatesTokenCount: usage.completion_tokens || 0, totalTokenCount: usage.total_tokens || 0 } } : {}) } };
+    ...geminiUsage(usage) } };
 }

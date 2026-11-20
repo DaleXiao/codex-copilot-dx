@@ -1,14 +1,16 @@
 (() => {
   const root = document.getElementById("tool-activity");if (!root) return;
   const el = id => document.getElementById(id), canvas = el("tool-canvas"), ctx = canvas.getContext?.("2d");
-  const styles = new Set(["halo", "grid", "assembly", "off"]), storageKey = "ccdx.dashboard.toolMotionStyle";
+  const styles = new Set(["assembly", "sorter", "gantry", "rotary", "off"]), storageKey = "ccdx.dashboard.toolMotionStyle";
   const pending = state => ["preparing", "waiting"].includes(state);
   const phrase = (key, values = {}) => globalThis.ccdxLanguage.format(key, values);
   const text = (id, key, values) => globalThis.ccdxLanguage.set(el(id), key, values);
-  const state = { scene: "idle", style: "assembly", intensity: .8, reduce: false };
+  const state = { scene: "idle", style: "assembly" };
+  const drawMachine = ctx && globalThis.ccdxToolMachines(ctx);
   try { const saved = localStorage.getItem(storageKey);if (styles.has(saved)) state.style = saved; } catch {}
   const motion = globalThis.matchMedia?.("(prefers-reduced-motion: reduce)") || { matches: false, addEventListener() {} };
   let records = [], fresh = false, supported = false, visible = true, raf = 0, last = 0, start = performance.now(), expiry = null;
+  let drawnTime = null;
   let signature = "", box = { width: 0, height: 0 }, color = "", surface = "", omitted = 0, requests = [], requestDeadline = 0;
   const animating = () => ["calling", "parallel", "waiting", "processing", "responding"].includes(state.scene);
   const shown = () => document.visibilityState === "visible" && !root.closest("[hidden]") && visible;
@@ -18,120 +20,27 @@
     color = theme.getPropertyValue("--accent").trim();surface = theme.getPropertyValue("--surface").trim();
     refreshAnimation();
   }
-  function drawAssembly(dpr,w,h,t,active,waiting,returned,reduced) {
-    const scale=Math.min((w-12)/264,(h-12)/118);
-    if(scale<=0)return;
-    ctx.setTransform(scale*dpr,0,0,scale*dpr,(w-264*scale)*dpr/2,(h-118*scale)*dpr/2);
-    const running=active||waiting;
-    const phase=reduced?.42:(t*(waiting?.7:1.04))%2.1/2.1;
-    const press=running?Math.max(0,1-Math.abs(phase-.5)/.14):0;
-    const travel=value=>value*(.7+.3*value);
-    const workX=returned?132+91*travel(Math.min(1,t/.85)):
-      phase<.34?29+103*travel(phase/.34):phase<.66?132:132+91*travel((phase-.66)/.34);
-    const shift=running||returned?(workX-29)%14:0;
-    const assembled=returned||phase>=.5;
-    function path(points,closed=false){
-      ctx.beginPath();ctx.moveTo(points[0],points[1]);
-      for(let i=2;i<points.length;i+=2)ctx.lineTo(points[i],points[i+1]);
-      if(closed)ctx.closePath();
-    }
-    // Floor, braced stands and the rear uprights of the press.
-    ctx.lineWidth=1.2;ctx.globalAlpha=.22;
-    path([18,108,246,108]);ctx.stroke();
-    ctx.globalAlpha=.52;
-    path([35,88,35,108,55,108,55,88,35,106,55,90]);ctx.stroke();
-    path([209,88,209,108,229,108,229,88,209,106,229,90]);ctx.stroke();
-    ctx.fillRect(99,22,5,45);ctx.fillRect(160,22,5,45);
-    ctx.strokeRect(93,11,78,13);
-    ctx.globalAlpha=.23;
-    ctx.fillRect(93,11,78,13);
-    ctx.globalAlpha=.65;
-    ctx.beginPath();
-    for(let i=98;i<168;i+=8){ctx.moveTo(i,21);ctx.lineTo(i+4,14);}
-    ctx.stroke();
-    // Belt deck and rollers, with the drive drums in the front housing.
-    ctx.globalAlpha=.18;path([13,77,239,77,252,65,26,65],true);ctx.fill();
-    ctx.globalAlpha=.64;ctx.stroke();
-    ctx.beginPath();
-    for(let i=30;i<235;i+=14){ctx.moveTo(i+shift,75);ctx.lineTo(i+shift+9,67);}
-    ctx.stroke();
-    ctx.globalAlpha=.16;ctx.fillRect(13,77,226,13);
-    ctx.globalAlpha=.72;ctx.strokeRect(13,77,226,13);
-    for(const x of [22,230]){ctx.beginPath();ctx.arc(x,83.5,3.8,0,Math.PI*2);ctx.stroke();}
-    // Cylinder, piston and platen travel together.
-    const piston=press*9;
-    ctx.globalAlpha=.82;ctx.strokeRect(123,24,18,13);ctx.fillRect(130,37,4,5+piston);
-    ctx.fillRect(120,42+piston,24,3);
-    if(running||returned){
-      const x=workX-11,y=assembled?57:60;
-      ctx.globalAlpha=1;ctx.fillStyle=surface;
-      path([x,75,x,y,x+6,y-5,x+27,y-5,x+27,70,x+21,75],true);ctx.fill();
-      ctx.fillStyle=color;ctx.globalAlpha=.24;ctx.fill();
-      ctx.globalAlpha=.86;ctx.stroke();
-      path([x,y,x+21,y,x+27,y-5]);ctx.stroke();
-      path([x+21,y,x+21,75]);ctx.stroke();
-      if(assembled){ctx.globalAlpha=.62;ctx.fillRect(x+6,y+5,9,3);}
-    }
-    ctx.globalAlpha=1;
+  function draw(now = performance.now()) {
+    if (!drawMachine || !box.width || !box.height) return;
+    const dpr = Math.min(devicePixelRatio || 1, 1.5), width = box.width, height = box.height;
+    const w = Math.round(width * dpr), h = Math.round(height * dpr);
+    if (canvas.width !== w || canvas.height !== h) { canvas.width = w;canvas.height = h; }
+    ctx.setTransform(1, 0, 0, 1, 0, 0);ctx.clearRect(0, 0, w, h);
+    if (animating() && !motion.matches) drawnTime = (now - start) / 1000;
+    drawMachine(state.style, { time: drawnTime ?? 0, running: drawnTime !== null, reduced: motion.matches, width, height, dpr, ink: color, surface });
   }
-    function draw(now=performance.now()){
-      if(!ctx||!box.width||!box.height)return;
-      const dpr=Math.min(devicePixelRatio||1,1.5),w=box.width,h=box.height;
-      if(canvas.width!==Math.round(w*dpr)||canvas.height!==Math.round(h*dpr)){canvas.width=Math.round(w*dpr);canvas.height=Math.round(h*dpr);}
-      ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,w,h);
-      const cx=w/2,cy=h/2,r=Math.min(w,h)*.31;
-      const reduced=motion.matches||state.reduce,t=reduced?0:(now-start)/1000,active=['calling','parallel','processing','responding'].includes(state.scene),waiting=state.scene==='waiting',returned=state.scene==='returned';
-      const quiet=!active&&!waiting&&!returned,power=quiet?.12:waiting?.5:returned?.5:state.intensity;
-      ctx.strokeStyle=color;ctx.fillStyle=color;ctx.lineWidth=.8;
-      function arc(radius,a,b,alpha){ctx.globalAlpha=alpha;ctx.beginPath();ctx.arc(cx,cy,radius,a,b);ctx.stroke();}
-      if(state.style==='grid'){
-        const cols=12,rows=3,gap=5,size=Math.min(13,(w-32)/cols-gap),left=cx-(cols*size+(cols-1)*gap)/2,top=cy-(rows*size+(rows-1)*gap)/2;
-        const head=active||waiting?(t*(waiting?11:19))%(cols*rows):-8;
-        for(let row=0;row<rows;row++)for(let col=0;col<cols;col++){
-          const index=row*cols+(row%2?cols-col-1:col),distance=(head-index+cols*rows)%(cols*rows),wave=Math.max(0,1-distance/8);
-          ctx.globalAlpha=quiet?.1:returned?.16+Math.max(0,1-(now-start)/900)*.42:.1+wave*power;
-          ctx.fillRect(left+col*(size+gap),top+row*(size+gap),size,size);
-        }
-        ctx.globalAlpha=1;return;
-      }
-      if(state.style==='assembly'){
-        drawAssembly(dpr,w,h,t,active,waiting,returned,reduced);return;
-      }
-      arc(r,0,Math.PI*2,.25);arc(r*.85,0,Math.PI*2,.13);arc(r*1.12,0,Math.PI*2,.1);
-      const spin=active?t*1.6:waiting?t*.9:0;
-      if(state.style==='halo'){
-        for(let i=0;i<64;i++){
-          const a=i/64*Math.PI*2+spin,pulse=active||waiting?(Math.sin(t*7+i*.7)*.5+.5):returned?.6:.05;
-          const length=3+(i%4===0?8:3)+pulse*(active?20:waiting?9:2)*state.intensity;
-          ctx.globalAlpha=(.16+pulse*.55)*power;ctx.lineWidth=i%8===0?1.4:.75;
-          ctx.beginPath();ctx.moveTo(cx+Math.cos(a)*r*1.17,cy+Math.sin(a)*r*1.17);ctx.lineTo(cx+Math.cos(a)*(r*1.17+length),cy+Math.sin(a)*(r*1.17+length));ctx.stroke();
-        }
-      }
-      if(state.style==='halo'){
-        ctx.lineWidth=.65;const strands=28;
-        for(let i=0;i<strands;i++){
-          const a=i/strands*Math.PI*2+spin*.6,b=a+2.35+Math.sin(i*.68+t*1.7)*.48,inner=r*.68;
-          ctx.globalAlpha=(.1+power*.2)*(quiet?.45:1);ctx.beginPath();ctx.moveTo(cx+Math.cos(a)*inner,cy+Math.sin(a)*inner);ctx.quadraticCurveTo(cx+Math.sin(t*1.3+i)*r*.35,cy+Math.cos(i*.5+t*.7)*r*.3,cx+Math.cos(b)*inner,cy+Math.sin(b)*inner);ctx.stroke();
-        }
-      }
-      for(let i=0;i<3;i++){
-        const a=spin*(i%2?-1:1)+i*2.08,track=r*(.89+i*.06);
-        ctx.lineWidth=1.3;arc(track,a,a+(active?1.25:waiting?.75:.18),quiet?.15:.75);
-      }
-      if(active||waiting){for(let i=0;i<3;i++){const q=(t*.85+i/3)%1;arc(r*(.55+q*.5),0,Math.PI*2,(1-q)*.12*power);}}
-      if(returned&&!reduced){const q=Math.min((now-start)/850,1);arc(r*(1+q*.32),0,Math.PI*2,(1-q)*.5);}
-      ctx.globalAlpha=1;
-    }
 
   function animate(now) {
     raf = 0;
-    if (!shown() || motion.matches || state.style === "off" || !animating() && !(state.scene === "returned" && now - start < 900)) return;
-    if (now - last >= 1000 / 30) { last = now;draw(now); }raf = requestAnimationFrame(animate);
+    if (!shown() || motion.matches || state.style === "off" || !animating()) return;
+    if (now - last >= 1000 / 30) { last = now;draw(now); }
+    raf = requestAnimationFrame(animate);
   }
   function refreshAnimation() {
-    cancelAnimationFrame(raf);raf = 0;root.dataset.paused = String(!shown() || motion.matches);
+    cancelAnimationFrame(raf);raf = 0;
+    root.dataset.paused = String(!shown() || motion.matches || !animating() || state.style === "off");
     if (!shown() || state.style === "off") return;
-    draw();if (!motion.matches && (animating() || state.scene === "returned" && performance.now() - start < 900)) raf = requestAnimationFrame(animate);
+    draw();if (!motion.matches && animating()) raf = requestAnimationFrame(animate);
   }
   function category(name) {
     const value = String(name || "").toLowerCase().split(/__|\./).at(-1);
@@ -163,7 +72,8 @@
     const scene = !fresh ? "idle" : active.length ? preparing ? active.length > 1 ? "parallel" : "calling" : "waiting"
       : agents.length ? responding ? "responding" : "processing"
       : rows.some(row => row.state === "returned") && !rows.some(row => ["failed", "cancelled", "unknown"].includes(row.state)) ? "returned" : "idle";
-    if (scene !== state.scene) start = performance.now();state.scene = scene;
+    const wasAnimating = animating();state.scene = scene;
+    if (animating() && !wasAnimating) { start = performance.now();drawnTime = null; }
     const key = !supported || !fresh ? "flow_status_unknown" : active.length ? preparing ? active.length > 1 ? "tool_preparing_many" : "tool_preparing" : "tool_waiting"
       : agents.length ? agents.length > 1 ? "tool_requests_many" : responding ? "tool_responding" : "tool_processing"
       : rows.some(row => row.state === "failed") ? "tool_failed" : rows.some(row => row.state === "cancelled") ? "tool_cancelled"
@@ -189,11 +99,10 @@
     el("tool-details").hidden = !rows.length;
     el("tool-technical").replaceChildren();
     for (const row of rows) {
-      const line = document.createElement("dl");line.className = "tool-record-fields";
-      for (const [label, value] of [["client", appName(row.application)], ["source", sourceName(row.provider)],
-        ["model", row.model], ["tool_heading", row.name || phrase("tool_action_generic")], ["outcome", phrase(`tool_row_${row.state}`)]]) {
-        const term = document.createElement("dt"), detail = document.createElement("dd");
-        term.textContent = phrase(label);detail.textContent = value;line.append(term, detail);
+      const line = document.createElement("tr");
+      for (const value of [appName(row.application), sourceName(row.provider), row.model,
+        row.name || phrase("tool_action_generic"), phrase(`tool_row_${row.state}`)]) {
+        const cell = document.createElement("td");cell.textContent = value;line.append(cell);
       }
       el("tool-technical").append(line);
     }

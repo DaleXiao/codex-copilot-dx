@@ -22,10 +22,10 @@ export function summaryRequest(body, protocol, text) {
   throw fail("The compression interface is unsupported.");
 }
 
-export function compactionSummarizer(body, protocol, call) {
+export function compactionSummarizer(body, protocol, call, { requireChatDone = false } = {}) {
   return async (text, options) => {
     const response = await call(summaryRequest(body, protocol, text), { ...options, sourceBodyManaged: true, bodyText: undefined, payloadPrepared: false, currentInputStart: 0, countTokens: false, retryOptions: { ...options.retryOptions, retries: 0 } });
-    return readCompactionSummary(response, protocol, { signal: options.signal, onActivity: options.onActivity, onUsage: options.onUsage });
+    return readCompactionSummary(response, protocol, { signal: options.signal, onActivity: options.onActivity, onUsage: options.onUsage, requireChatDone });
   };
 }
 
@@ -44,7 +44,7 @@ function safeResponse(response, signal) {
   return { body, headers: response.headers };
 }
 
-export async function readCompactionSummary(response, protocol, { signal, onActivity = () => {}, onUsage = () => {} } = {}) {
+export async function readCompactionSummary(response, protocol, { signal, onActivity = () => {}, onUsage = () => {}, requireChatDone = false } = {}) {
   if (!response.ok) {
     try { void cancelSourceResponse(response).catch(() => {}); } catch {}
     throw Object.assign(new Error("The source rejected an internal compression request."), { code: "ccdx_compaction_upstream_error", statusCode: response.status });
@@ -115,9 +115,9 @@ export async function readCompactionSummary(response, protocol, { signal, onActi
     onActivity();const raw = await readBoundedResponseText(incoming, { maxBytes: MAX_WIRE, label: "Compression response", signal });
     let value;try { value = JSON.parse(raw); } catch { throw fail("The compression response is not valid JSON."); }accept(value);
   } else {
-    let data = [], frameBytes = 0;
+    let data = [], frameBytes = 0, chatDone = false;
     const flush = () => {
-      if (!data.length) return;const raw = data.join("\n");data = [];frameBytes = 0;if (raw === "[DONE]") return;
+      if (!data.length) return;const raw = data.join("\n");data = [];frameBytes = 0;if (raw === "[DONE]") { chatDone = true;return; }
       let value;try { value = JSON.parse(raw); } catch { throw fail("The compression stream contains invalid JSON."); }accept(value);
     };
     for await (const line of webStreamLines(incoming, { maxBufferBytes: MAX_TEXT, onChunk(chunk) {
@@ -129,7 +129,7 @@ export async function readCompactionSummary(response, protocol, { signal, onActi
       const value = line.slice(5).replace(/^ /, "");frameBytes += Buffer.byteLength(value);if (frameBytes > MAX_TEXT) throw fail("The compression event exceeds its budget.");data.push(value);
     }
     flush();
-    if (protocol === "messages" && !messageStopped) complete = false;
+    if (protocol === "messages" && !messageStopped || protocol === "chat" && requireChatDone && !chatDone) complete = false;
   }
   if (protocol === "messages" && parts.size) { reset();for (const [, part] of [...parts].sort(([a], [b]) => a - b)) for (const fragment of part.fragments) append(fragment); }
   const text = fragments.join("");

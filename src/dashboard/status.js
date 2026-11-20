@@ -139,15 +139,11 @@
       failures.reverse();
       text("failure-count", "count_retained_requests_events", { count: failures.length });
       if (!failures.length) {
-        const item = document.createElement("li");
-        item.className = "empty";
-        localize(item, "no_recent_request_failures_recorded");
-        list.append(item);
+        emptyTable("failures", 4, "no_recent_request_failures_recorded");
         return;
       }
       for (const failure of failures) {
         const notModelRequest = ["not_found", "image_mcp", "models", "claude_models"].includes(failure.route);
-        const item = document.createElement("li");
         const details = document.createElement("details");
         details.dataset.key = `${failure.at}/${failure.request_id || failure.response_id}/${failure.code}`;
         details.open = expanded.has(details.dataset.key);
@@ -167,25 +163,16 @@
                   : failure.http_status === 504 && failure.code === "upstream_timeout"
                     ? Number.isFinite(attempt?.body_sent_ms) && attempt.headers_ms === null ? "issue_after_send_timeout" : "issue_upstream_timeout"
                   : failure.http_status === 401 || failure.http_status === 403 ? "issue_access_denied" : "issue_request_failed";
-        const summary = {
-          detail: phrase("issue_brief", {
-            time: failure.at ? time(failure.at, { date: true }) : phrase("unknown_time"),
-            model: notModelRequest ? phrase("not_applicable") : failure.model ? String(failure.model).slice(0, 80) : phrase("unknown_model"),
-            cause: failure.http_status === 429 && failure.origin === "upstream_http" && seconds ? phrase("issue_source_rate_wait", { seconds: number(seconds) }) : phrase(cause),
-          }),
-          retry: phrase(failure.upstream_attempts === 0 ? "no_upstream_call" : failure.retried ? "retry_attempted" : "no_retry"),
-        };
-        localize(title, "detail_retry", summary);
-        if (failure.occurrences > 1) {
-          summary.detail = phrase("repeated_issue", { detail: summary.detail, count: failure.occurrences });
-          localize(title, "detail_retry", summary);
-        }
+        const at = failure.at ? time(failure.at, { date: true }) : phrase("unknown_time");
+        const app = failure.application || timeline?.application;
+        const row = tableRow([at, "", notModelRequest ? "" : failure.model || "", ""]);
+        localize(row.children[1], app ? `flow_app_${app}` : "unknown");
+        if (notModelRequest || !failure.model) localize(row.children[2], notModelRequest ? "not_applicable" : "unknown_model");
+        const retryWait = seconds && cause === "issue_source_rate";
+        const causeKey = retryWait ? "issue_source_rate_wait" : cause, causeArgs = retryWait ? { seconds: number(seconds) } : {};
+        if (failure.occurrences > 1) localize(title, "repeated_issue", { detail: phrase(causeKey, causeArgs), count: failure.occurrences });
+        else localize(title, causeKey, causeArgs);
         const provider = failure.provider || timeline?.provider;
-        if (provider) {
-          const source = sourceLabel(provider);
-          const original = phrase("detail_retry", summary);
-          localize(title, "source_failure_summary", { source, detail: original });
-        }
         const timings = timeline?.timings_ms || {};
         const timingText = ["admission", "body", "history", "images", "serialization", "upstream_start", "upstream_headers", "first_output", "last_activity", "terminal", "finished"]
           .filter((key) => finite(timings[key])).map((key) => `${key}=${Number(timings[key]).toFixed(1)}`).join(" / ");
@@ -204,7 +191,7 @@
           request_options: failure.request_options ? JSON.stringify(failure.request_options) : undefined,
           transport: failure.transport ? JSON.stringify(failure.transport) : undefined,
           output_requested: timeline?.context?.max_output_tokens_requested, output_sent: timeline?.context?.max_output_tokens_sent,
-          output_used: timeline?.context?.output_tokens, stop_reason: timeline?.stop_reason, requested_model: failure.requested_model, request_kind: failure.request_kind === "unknown" ? undefined : failure.request_kind, provider: failure.provider || timeline?.provider,
+          output_used: timeline?.context?.output_tokens, stop_reason: timeline?.stop_reason, requested_model: failure.requested_model, request_kind: failure.request_kind === "unknown" ? undefined : failure.request_kind, provider,
           attempt_timings: failure.attempt_timings || timeline?.attempts ? JSON.stringify(failure.attempt_timings || timeline.attempts) : undefined,
           timings_ms: timingText };
         const diagnostic = document.createElement("dl");
@@ -232,9 +219,10 @@
         });
         const privacy = document.createElement("p");privacy.className = "hint";
         localize(privacy, "upstream_messages_may_contain_sensitive_text");
-        details.append(title, diagnostic, privacy, copy);
-        item.append(details);
-        list.append(item);
+        details.append(title, diagnostic);
+        if (failure.diagnostic_message) details.append(privacy);
+        details.append(copy);
+        row.children[3].append(details);list.append(row);
       }
     }
     
@@ -457,7 +445,9 @@
         const attempt = request.attempts?.at(-1);
         for (const [key, value] of [["request_id", request.request_id || "—"], ["http_status", number(request.http_status)], ["attempts", number(request.upstream_attempts)], ["model_outcome", globalThis.ccdxLanguage?.format(outcome.toLowerCase()) || outcome],
           ["time", Number.isFinite(at) ? time(at, { date: true }) : "—"],
-          ["source", String(sourceLabel(request.provider) || "—").slice(0, 80)], ["input_tokens", number(context.input_tokens)],
+          ["client", request.application ? phrase(`flow_app_${request.application}`) : phrase("unknown")],
+          ...(Number.isFinite(request.timings_ms?.finished) ? [["request_total_time", requestTime(request.timings_ms.finished)]] : []),
+          ["source", String(sourceLabel(request.provider) || "—")], ["input_tokens", number(context.input_tokens)],
           ...(Number.isSafeInteger(queue?.wait_ms) && queue.wait_ms > 0 ? [["body_queue_wait", phrase("body_queue_detail", {
             ms: number(queue.wait_ms), result: phrase(queueResult), reason: phrase(queueReason),
             reserved: mib(queue.requested_bytes), occupied: mib(queue.active_bytes), limit: mib(queue.limit_bytes),
@@ -474,6 +464,8 @@
           ["wire_mib", finite(context.payload_bytes) ? `${(Number(context.payload_bytes) / 1048576).toFixed(2)} MiB` : "—"],
           ["images", number(context.images)], ["model_window", number(context.context_window_tokens)], ["input_window", ratio],
           ["output_requested", number(context.max_output_tokens_requested)], ["output_sent", number(context.max_output_tokens_sent)], ["output_used", number(context.output_tokens)], ["stop_reason", request.stop_reason || "—"],
+          ...(["conversation_model", "background_default", "background_available"].includes(context.routing_reason)
+            ? [["routing_reason", phrase(`routing_${context.routing_reason}`)]] : []),
           ...(context.requested_model && context.requested_model !== request.model ? [["requested_model", context.requested_model]] : []),
           ...(["reported", "partial", "missing", "unavailable"].includes(context.usage_state) ? [["request_usage_state", globalThis.ccdxLanguage?.format("request_usage_" + context.usage_state) || context.usage_state]] : []),
           ...(context.client_tool_errors_received > 0 ? [["client_tool_errors_received", number(context.client_tool_errors_received)]] : [])]) {

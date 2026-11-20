@@ -150,7 +150,7 @@ test("tool argument values are masked, ids and structure survive, and JSON-escap
   assert.deepEqual(JSON.parse(session.restoreValue({ arguments: session.body.input[0].arguments }).arguments), { name: key, items: [key] });
 });
 test("tool data keeps its own field meanings while protocol signatures and identities remain opaque", async () => {
-  const data = { type: "thinking", id: key, name: key, signature: key, encrypted_content: key, data: key, nested: [{ arguments: JSON.stringify({ value: key }), enabled: true, count: 2, absent: null }] };
+  const data = { type: "thinking", id: key, _id: "application-record", _meta: { original: key }, name: key, signature: key, encrypted_content: key, data: key, nested: [{ arguments: JSON.stringify({ value: key }), enabled: true, count: 2, absent: null }] };
   const input = body(key);
   input.messages.push({ role: "assistant", content: [{ type: "tool_use", id: "tool_protocol", name: "fixture", input: data }] });
   const session = await maskPrivacyRequest(input, options), masked = session.body.messages[1].content[0].input;

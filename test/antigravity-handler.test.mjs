@@ -555,7 +555,10 @@ test("native forwarding stops at downstream backpressure and cancellation keeps 
 
 test("sparse usage frames retain the last reported fields and invalid usage stays missing",async()=>{
   const data='data: {"usage":{"prompt_tokens":9,"prompt_tokens_details":{"cached_tokens":0}},"choices":[]}\n\ndata: {"usage":{"completion_tokens":2},"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: {"usage":{},"copilot_usage":{"token_details":{}},"choices":[]}\n\ndata: [DONE]\n\n';
-  const f=fixture({client:{chatCompletions:async()=>new Response(data)}});await invoke(f.handler,body()).done;
+  const f=fixture({client:{chatCompletions:async()=>new Response(data)}});
+  const reply=await invoke(f.handler,body()).done;
+  assert.match(reply.text,/"usageMetadata":\{"promptTokenCount":9,"candidatesTokenCount":2,"cachedContentTokenCount":0\}/);
+  assert.doesNotMatch(reply.text,/"totalTokenCount":0/);
   assert.equal(f.records.length,1);assert.equal(f.records[0].usage.input_tokens,9);assert.equal(f.records[0].usage.output_tokens,2);assert.equal(f.records[0].usage.cached_input_tokens,0);
   const metrics=createStreamPerformanceMetrics({routeNames:["antigravity"]}),tracker=metrics.begin("antigravity",{requestId:"invalid-usage",application:"gemini_app"});
   const bad=fixture({client:{chatCompletions:async()=>Response.json({usage:{prompt_tokens:-1,completion_tokens:"3"},choices:[{finish_reason:"stop",message:{content:"ok"}}]})}});
@@ -584,4 +587,46 @@ test("a bare Google JSON error after a finish frame preserves bytes but fails th
   assert.equal(result.status,200);assert.equal(result.text,frames.join(""));assert.equal(f.records.length,1);
   assert.equal(f.records[0].outcome,"failed");assert.equal(f.records[0].partial,true);
   const row=metrics.snapshot().recent_requests[0];assert.equal(row.outcome,"failed");assert.equal(row.origin,"upstream_event");
+});
+
+test("equal saved and default response-header budgets both switch to stream idle on headers",async t=>{
+  t.mock.timers.enable({apis:["setTimeout"]});
+  for(const copilotTimeoutMs of [undefined,30]){
+    let controller, signal;
+    const f=fixture({upstreamTimeoutMs:30,copilotTimeoutMs,streamIdleTimeoutMs:120,client:{async chatCompletions(_,{signal:requestSignal,onUpstreamStart}){
+      signal=requestSignal;onUpstreamStart();
+      return new Response(new ReadableStream({start(value){
+        controller=value;signal.addEventListener("abort",()=>controller.error(signal.reason),{once:true});
+      }}),{headers:{"Content-Type":"text/event-stream"}});
+    }}});
+    const call=invoke(f.handler,body());
+    for(let i=0;i<8&&!call.res.headersSent;i++)await new Promise(setImmediate);
+    assert.equal(call.res.headersSent,true);
+    t.mock.timers.tick(60);
+    assert.equal(signal.aborted,false);
+    controller.enqueue(Buffer.from('data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n'));
+    controller.close();
+    assert.match((await call.done).text,/"finishReason":"STOP"/);
+  }
+});
+
+test("an unbound background task can use an eligible model when Carbon is absent",async()=>{
+  const models=()=>({data:catalog.data.filter(model=>model.id==="gemini-4-argon")});
+  const f=fixture({models});
+  for(const type of ["title","summarization"]){
+    const reply=await invoke(f.handler,body("ccdx-copilot-gemini-4-argon-high",type)).done;
+    assert.equal(reply.status,200);
+  }
+  assert.deepEqual(f.copilot.map(call=>[call.value.model,call.value.reasoning_effort]),[["gemini-4-argon","low"],["gemini-4-argon","low"]]);
+});
+
+test("a structured SSE rate rejection records safe upstream evidence without replay",async()=>{
+  let calls=0;const observed=[];
+  const f=fixture({client:{chatCompletions:async()=>{
+    calls++;
+    return new Response('data: {"choices":[{"delta":{"content":"partial"}}]}\n\ndata: {"error":{"code":"rate_limit_exceeded","message":"private fixture text"}}\n\n',{headers:{"Retry-After":"5","X-Request-Id":"fixture-id"}});
+  }}});
+  const result=await runWithRequestContext({onHttpError:value=>observed.push(value)},()=>invoke(f.handler,body()).done);
+  assert.equal(result.status,200);assert.equal(calls,1);assert.match(result.text,/partial/);assert.doesNotMatch(result.text,/private fixture text|finishReason/);
+  assert.equal(observed[0].origin,"upstream_event");assert.equal(observed[0].upstream_code,"rate_limit_exceeded");assert.equal(observed[0].headers.get("retry-after"),"5");
 });

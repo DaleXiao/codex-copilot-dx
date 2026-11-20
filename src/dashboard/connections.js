@@ -109,7 +109,7 @@
         toggle.addEventListener("change", () => { toggle.checked = true;disableSource(provider); });const hit = node("label", undefined, "switch-hit");hit.append(toggle);actions.append(hit);
       } else actions.append(button("api_restore", () => void change({ operation: "provider", id: provider.id, enabled: true })));
       if (!provider.builtin && !provider.enabled) {
-        const remove = button("api_remove_source", () => { if (window.confirm(format("api_remove_source_confirm"))) void change({ operation: "remove_api", id: provider.id, impact_revision: data.source_impacts?.[provider.id]?.revision }); });
+        const remove = button("api_remove_source", async () => { if (await globalThis.ccdxConfirmAction("api_remove_source", "api_remove_source_confirm")) void change({ operation: "remove_api", id: provider.id, impact_revision: data.source_impacts?.[provider.id]?.revision }); });
         remove.disabled = data.clients.some(c => c.source === provider.id || c.deployments?.some(item => item.source === provider.id));actions.append(remove);
       }
       row.dataset.source = provider.id;row.append(info, actions);if (!provider.enabled) disabledSources.append(row);else if (provider.id === selectedProvider) providerList.append(row);
@@ -323,7 +323,7 @@
     for (const input of apiForm.querySelectorAll('[name="protocol"]')) input.checked = provider ? Boolean(provider.endpoints?.[input.value]) : ["messages", "responses"].includes(input.value);
     setEndpoints(provider?.base_url || "", provider?.endpoints);
     el("connection-model-detail").hidden = true;
-    models = structuredClone(provider?.models || []);selectedModels = new Set(models.map(model => model.id));modelRows();el("connection-manual-model").open = false;el("connection-discover").disabled = !editing;el("connection-model-id").value = "";apiForm.elements.name.focus();
+    models = structuredClone(provider?.models || []);selectedModels = new Set(models.map(model => model.id));modelRows();el("connection-manual-model").open = false;el("connection-discover").disabled = !editing;el("connection-discover-note").hidden = editing;el("connection-model-id").value = "";apiForm.elements.name.focus();
     words(apiForm.querySelector('button[type="submit"]'), provider ? "api_save" : "api_save_read");
   }
   apiForm.elements.base.addEventListener("change", () => setEndpoints(apiForm.elements.base.value));
@@ -507,7 +507,17 @@
   function editClient(c) { location.hash = c.id === "codex" ? "codex" : "claude";if (c.id !== "codex") claudeClient = c.id;mountClient(true); }
   for (const segment of document.querySelectorAll("[data-claude-client]")) segment.addEventListener("click", () => {
     rememberDraft();claudeClient = segment.dataset.claudeClient;
-    for (const button of document.querySelectorAll("[data-claude-client]")) button.setAttribute("aria-pressed", String(button === segment));mountClient(true);
+    for (const button of document.querySelectorAll("[data-claude-client]")) {
+      button.setAttribute("aria-selected", String(button === segment));button.tabIndex = button === segment ? 0 : -1;
+    }
+    el("claude-model-management").setAttribute("aria-labelledby", segment.id);mountClient(true);
+  });
+  const claudeTabs = [...document.querySelectorAll("[data-claude-client]")];
+  for (const [index, tab] of claudeTabs.entries()) tab.addEventListener("keydown", event => {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const next = claudeTabs[event.key === "Home" ? 0 : event.key === "End" ? claudeTabs.length - 1 : 1 - index];
+    next.click();next.focus();
   });
   el("connection-auto-sync").addEventListener("change", () => { bindingDirty = true;rememberDraft();el("connection-client-cancel").disabled = false;words(el("connection-draft-state"), "cap_unsaved");words(clientForm.querySelector('button[type="submit"]'), el("connection-auto-sync").checked ? "cap_save_sync" : "api_save"); });
   el("connection-client-cancel").addEventListener("click", () => { drafts.delete(editingClient);bindingDirty = false;mountClient(true); });

@@ -24,7 +24,7 @@ function fixture(saved) {
     setTimeout(fn, ms) { timers.set(++sequence, { fn, at: now + ms });return sequence; }, clearTimeout: id => timers.delete(id),
     ResizeObserver: class { observe() {} }, MutationObserver: class { observe() {} },
     IntersectionObserver: class { constructor(fn) { intersection = fn; } observe() {} },
-    ccdxLanguage: { format: (key, values = {}) => key === "model_action_label" ? dashboardLanguage.format(key, values) : `${key}:${values.count ?? ""}`, set: (target, key, values) => { target.textContent = context.ccdxLanguage.format(key, values); } } };
+    ccdxToolMachines: () => () => {}, ccdxLanguage: { format: (key, values = {}) => key === "model_action_label" ? dashboardLanguage.format(key, values) : `${key}:${values.count ?? ""}`, set: (target, key, values) => { target.textContent = context.ccdxLanguage.format(key, values); } } };
   runInNewContext(script, context);
   return { api: context.ccdxToolActivity, el, motion, document, frames, listeners, get draws() { return draws; }, get saved() { return saved; },
     style(value) { el("tool-style").value = value;el("tool-style").listeners.get("change")(); },
@@ -36,10 +36,10 @@ const data = (requests = [], items = []) => ({ stream_performance: { active_requ
 const tool = state => ({ id: "tool-one", application: "claude_app", provider: "api_work", model: "tool-model", name: "read_file", state, expires_in_ms: 15000 });
 
 test("motion defaults and removed preferences migrate while valid choices remain", () => {
-  for (const saved of [undefined, "orbit", "weave", "busy", "speed", "invalid"]) assert.equal(fixture(saved).el("tool-style").value, "assembly");
-  for (const saved of ["grid", "halo", "assembly", "off"]) assert.equal(fixture(saved).el("tool-style").value, saved);
+  for (const saved of [undefined, "orbit", "weave", "busy", "speed", "halo", "grid", "invalid"]) assert.equal(fixture(saved).el("tool-style").value, "assembly");
+  for (const saved of ["assembly", "sorter", "gantry", "rotary", "off"]) assert.equal(fixture(saved).el("tool-style").value, saved);
   const f = fixture();f.api.update(data([], [tool("waiting")]), { live: true });
-  for (const style of ["halo", "grid", "assembly"]) {
+  for (const style of ["assembly", "sorter", "gantry", "rotary"]) {
     f.style(style);const before = f.draws;f.advance(50);assert.ok(f.draws > before);assert.equal(f.saved, style);
     assert.equal(f.el("tool-state").textContent, "tool_waiting:1");
   }
@@ -60,12 +60,12 @@ test("pending calls take precedence and actual returned results hand back to an 
   f.api.update(data([request({ first_output_ms: 100 })], [tool("returned")]), { live: true });
   assert.equal(f.el("tool-state").textContent, "tool_responding:1");assert.match(f.el("tool-context").textContent, /test-model/);
   for (const state of ["returned", "failed", "cancelled", "unknown"]) {
-    f.api.update(data([], [tool(state)]), { live: true });f.advance(950);assert.equal(f.frames.size, 0);assert.equal(f.el("tool-cursor").hidden, true);
+    f.api.update(data([], [tool(state)]), { live: true });assert.equal(f.frames.size, 0);assert.equal(f.el("tool-cursor").hidden, true);
   }
 });
 test("hidden, offscreen and reduced motion pause every style without changing its state text", () => {
   const f = fixture();f.api.update(data([request()]), { live: true });
-  for (const style of ["halo", "grid", "assembly"]) {
+  for (const style of ["assembly", "sorter", "gantry", "rotary"]) {
     f.style(style);f.motion.matches = true;f.listeners.get("motion")();assert.equal(f.frames.size, 0);
     f.motion.matches = false;f.listeners.get("motion")();assert.ok(f.frames.size);
     f.intersect(false);assert.equal(f.frames.size, 0);f.intersect(true);assert.ok(f.frames.size);

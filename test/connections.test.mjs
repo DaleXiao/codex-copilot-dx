@@ -199,6 +199,11 @@ test("managed GitHub review preferences are read back from disk after restart", 
   assert.deepEqual(restarted.runtime.snapshot().github.preference, { model: review, source: "settings", reasoningEffort: "high" });
   const locked = runtime(t, { home: s.home, githubRegistry, env: { ...s.env, CCDX_AUTO_REVIEW_MODEL: primary } });
   assert.equal(locked.runtime.snapshot().github.preference.source, "environment");
+  const request = { model: "codex-auto-review" };
+  locked.runtime.resolveCodex(request, { headers: {} });
+  assert.deepEqual(request, { model: primary, reasoning: { effort: "low" } });
+  await assert.rejects(locked.runtime.action({ action: "auto-review", provider: "github", model: review, effort: "low" }),
+    { code: "ccdx_review_environment_override" });
 });
 test("managed auto review uses only the confirmed session model and defaults to supported low", async t => {
   const primary = "gpt-6.1-sol", alternate = "gpt-5.5";

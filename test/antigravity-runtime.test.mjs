@@ -209,3 +209,18 @@ test("dashboard refresh uses the existing GitHub catalog runtime and leaves sett
   assert.equal(response.status,200);assert.deepEqual(calls,[{provider:"github"}]);assert.equal(JSON.parse(response.text).model_groups.length,2);
   assert.equal(fs.readFileSync(f.file,"utf8"),before);
 });
+
+test("a reconstructed gateway keeps a known Copilot conversation's compression model and effort",async t=>{
+  const f=fixture(t),sent=[];
+  await f.runtime.action({action:"enable",accept_background_copilot:true},"http://127.0.0.1:2026");
+  const environment={env:{},dashboardOptions:{home:f.home},codexModelRegistry:{models:catalog},codexClient:{async chatCompletions(value){
+    sent.push([value.model,value.reasoning_effort]);
+    return Response.json({choices:[{finish_reason:"stop",message:{content:"ok"}}]});
+  }}};
+  const request={requestType:"agent",model:"ccdx-copilot-gemini-4-carbon-high",request:{labels:{root_cascade_id:"fixture-compression-session"},contents:[{role:"user",parts:[{text:"private fixture"}]}]}};
+  const call=body=>invokeAdapter(environment,{url:"/antigravity/v1internal:generateContent",headers:{host:"127.0.0.1:2026"},body});
+  assert.equal((await call(request)).status,200);
+  assert.equal((await call({...request,requestType:"summarization",model:"discovery-model"})).status,200);
+  assert.deepEqual(sent,[["gemini-4-carbon","high"],["gemini-4-carbon","high"]]);
+  assert.doesNotMatch(fs.readFileSync(path.join(path.dirname(f.file),"antigravity-conversations.json"),"utf8"),/fixture-compression-session|private fixture/);
+});

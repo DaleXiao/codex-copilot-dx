@@ -193,3 +193,10 @@ test("a failed terminal still exposes returned partial usage to the compression 
   await assert.rejects(readCompactionSummary(response, "responses", { onUsage: value => samples.push(value) }), { code: "ccdx_compaction_result_invalid" });
   assert.equal(samples.at(-1).input_tokens, 17);assert.equal(samples.at(-1).output_tokens, 4);
 });
+
+test("Copilot Chat compression requires its complete SSE terminator",async()=>{
+  const frame='data: {"choices":[{"delta":{"content":"summary"},"finish_reason":"stop"}]}\n\n';
+  const reply=body=>new Response(body,{headers:{"Content-Type":"text/event-stream"}});
+  await assert.rejects(readCompactionSummary(reply(frame),"chat",{requireChatDone:true}),{code:"ccdx_compaction_result_invalid"});
+  assert.equal((await readCompactionSummary(reply(frame+"data: [DONE]\n\n"),"chat",{requireChatDone:true})).text,"summary");
+});

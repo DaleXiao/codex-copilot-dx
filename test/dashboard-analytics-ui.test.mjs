@@ -199,7 +199,7 @@ test("language switch preserves unsaved animation, chart nodes/selection and exp
   h.nodes.get("daily-bars").children.at(-1).listeners.click();
   await flush();
   h.api.renderFailures([{ at: "time", model: "test", code: "response.failed", message: "<script>raw source</script>", retried: true }]);
-  const failure = h.nodes.get("failures").children[0].children[0];
+  const failure = h.nodes.get("failures").children[0].children[3].children[0];
   failure.open = true;
   const calendar = [...h.nodes.get("activity-calendar").children];
   const requests = h.requests.length;
@@ -277,9 +277,9 @@ test("English copy and Chinese failures keep raw values, missing states and diag
   h.api.renderFailures([{ at: "time", model: "Comet", code: "response.failed", message: "DEFAULT {input}", retried: false }, {}]);
   h.nodes.get("language-toggle").listeners.click();
   const rows = h.nodes.get("failures").children;
-  assert.ok(rows.some((row) => /模型未知/.test(row.children[0].children[0].textContent)));
-  const literal = rows.find((row) => /Comet/.test(row.children[0].children[0].textContent)).children[0];
-  assert.match(literal.children[0].textContent, /Comet.*请求未完成/);
+  assert.ok(rows.some((row) => /模型未知/.test(row.children[2].textContent)));
+  const literal = rows.find((row) => /Comet/.test(row.children[2].textContent)).children[3].children[0];
+  assert.match(literal.children[0].textContent, /请求未完成/);
   await literal.children.at(-1).listeners.click();
   assert.match(copied, /model: Comet/);
   assert.match(copied, /code: response.failed/);
@@ -530,18 +530,17 @@ test("failure details are text-only, preserve expansion and copy only existing d
   h.api.renderFailures(failures);
   const list = h.nodes.get("failures");
   assert.equal(list.children.length, 10);
-  const details = list.children[0].children[0];
+  const details = list.children[0].children[3].children[0];
   details.open = true;
-  assert.match(details.children[0].textContent, /retried/);
   await details.children.at(-1).listeners.click();
   assert.match(copied, /<script>alert\(1\)<\/script>/);
   assert.match(copied, /outcome not recorded here/);
   assert.doesNotMatch(copied, /excluded/);
   h.api.renderFailures(failures);
-  assert.equal(list.children[0].children[0].open, true);
+  assert.equal(list.children[0].children[3].children[0].open, true);
   details.dataset.disclosureClosing = "true";
   h.api.renderFailures(failures.map(failure => ({ ...failure, message: "Updated while closing" })));
-  assert.equal(list.children[0].children[0].open, false, "A background refresh preserves the closing intent");
+  assert.equal(list.children[0].children[3].children[0].open, false, "A background refresh preserves the closing intent");
 });
 
 test("background, auto-off and collapsed groups do not poll; a visible stale page catches up once", async () => {
@@ -637,7 +636,7 @@ test("failure timelines correlate recovered events and include transport failure
   h.api.renderFailures(failures, requests);
   const list = h.nodes.get("failures");
   assert.equal(list.children.length, 2);
-  const detail = list.children[0].children[0];
+  const detail = list.children[0].children[3].children[0];
   detail.open = true;
   await detail.children.at(-1).listeners.click();
   assert.match(copied, /request_id: local-2/);
@@ -646,8 +645,8 @@ test("failure timelines correlate recovered events and include transport failure
   assert.match(copied, /http_status: 200/);
   assert.doesNotMatch(copied, /excluded/);
   h.api.renderFailures(failures, requests);
-  assert.equal(list.children[0].children[0].open, true);
-  await list.children[1].children[0].children.at(-1).listeners.click();
+  assert.equal(list.children[0].children[3].children[0].open, true);
+  await list.children[1].children[3].children[0].children.at(-1).listeners.click();
   assert.match(copied, /outcome: completed/);
   assert.match(copied, /upstream_attempts: 2/);
   assert.match(copied, /upstream \{input\}/);

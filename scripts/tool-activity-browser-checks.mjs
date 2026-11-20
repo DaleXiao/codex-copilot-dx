@@ -13,7 +13,7 @@ export async function checkToolActivity({ page, codex, metrics, performanceCheck
     });
   });
   assert.equal(await page.locator("#tool-style").inputValue(), "assembly");
-  assert.deepEqual(await page.locator("#tool-style option").evaluateAll(options => options.map(option => option.value)), ["assembly", "halo", "grid", "off"]);
+  assert.deepEqual(await page.locator("#tool-style option").evaluateAll(options => options.map(option => option.value)), ["assembly", "sorter", "gantry", "rotary", "off"]);
   const tracker = codex.begin("responses", { requestId: "tool-browser", application: "codex_app" });
   const complete = metrics.begin("responses");tracker.setProvider("github");tracker.setModel("tool-model");tracker.observeSession("d".repeat(64));
   tracker.upstreamStarted();tracker.firstOutput();tracker.observeToolOutput({ output: ["read_file", "search_files", "run_command"].map((name, i) => ({ type: "function_call", call_id: `tool-${i}`, name })) }, "responses");
@@ -24,7 +24,7 @@ export async function checkToolActivity({ page, codex, metrics, performanceCheck
   const before = await page.evaluate(() => window.__toolFrameCount);await page.waitForTimeout(120);
   assert.ok(await page.evaluate(() => window.__toolFrameCount) > before, "Waiting activity animates without new model events");
   const subscriptionRequests = await page.evaluate(() => performance.getEntriesByType("resource").filter(row => row.name.includes("/_ccdx/activity")).length);
-  for (const style of ["halo", "assembly", "grid"]) {
+  for (const style of ["assembly", "sorter", "gantry", "rotary"]) {
     await page.selectOption("#tool-style", style);
     assert.equal(await page.locator("#tool-state").textContent(), "Waiting for tool results");
     assert.equal(await page.locator("#tool-stage").getAttribute("data-style"), style);
@@ -65,9 +65,8 @@ export async function checkToolActivity({ page, codex, metrics, performanceCheck
   next.observeToolInput({ input: [0, 1, 2].map(i => ({ type: "function_call_output", call_id: `tool-${i}`, output: "not retained" })) }, "responses");next.terminal("completed");next.finish({ statusCode: 200 });
   await page.waitForFunction(() => document.querySelector("#tool-state").textContent === "工具结果已返回");
   assert.equal(await page.locator("#tool-cursor").isVisible(), false);
-  await page.waitForTimeout(1050);
   const stopped = await page.evaluate(() => window.__toolFrameCount);await page.waitForTimeout(150);
-  assert.equal(await page.evaluate(() => window.__toolFrameCount), stopped, "Completed tools stop drawing after their bounded finish");
+  assert.equal(await page.evaluate(() => window.__toolFrameCount), stopped, "Completed tools stop drawing as soon as they complete");
   const expiring = codex.begin("responses", { requestId: "tool-expiring", application: "codex_app" });
   expiring.setProvider("github");expiring.setModel("tool-model");expiring.observeSession("e".repeat(64));
   expiring.observeToolOutput({ type: "function_call", call_id: "expiring-call", name: "read_file" }, "responses");expiring.terminal("completed");expiring.finish({ statusCode: 200 });
@@ -78,7 +77,7 @@ export async function checkToolActivity({ page, codex, metrics, performanceCheck
   assert.equal(await page.evaluate(() => window.__toolFrameCount), stale, 'Expired evidence does not remain animated');
   await page.setViewportSize({ width: 320, height: 900 });
   assert.ok(await page.locator("#tool-activity").evaluate(el => el.scrollWidth <= el.clientWidth));
-  for (const style of ["halo", "assembly", "grid"]) {
+  for (const style of ["assembly", "sorter", "gantry", "rotary"]) {
     await page.selectOption("#tool-style", style);
     assert.ok(await page.locator("#tool-activity").evaluate(el => el.scrollWidth <= el.clientWidth));
   }
@@ -87,18 +86,18 @@ export async function checkToolActivity({ page, codex, metrics, performanceCheck
   await page.waitForFunction(() => document.querySelector('#tool-state').textContent === '正在处理请求');
   agent.upstreamStarted();agent.firstOutput();
   await page.waitForFunction(() => document.querySelector('#tool-state').textContent === '正在生成回复');
-  for (const style of ["halo", "assembly", "grid"]) {
+  for (const style of ["assembly", "sorter", "gantry", "rotary"]) {
     await page.selectOption("#tool-style", style);const before = await page.evaluate(() => window.__toolFrameCount);await page.waitForTimeout(100);
     assert.ok(await page.evaluate(() => window.__toolFrameCount) > before);
   }
   await page.selectOption("#tool-style", "off");assert.equal(await page.locator("#tool-state").isVisible(), true);
   const disabled = await page.evaluate(() => window.__toolFrameCount);await page.waitForTimeout(100);assert.equal(await page.evaluate(() => window.__toolFrameCount), disabled);
   agent.terminal("cancelled");agent.finish({ aborted: true });await page.waitForFunction(() => document.querySelector('#tool-state').textContent === '状态待更新');
-  for (const style of ["halo", "assembly", "grid"]) {
+  for (const style of ["assembly", "sorter", "gantry", "rotary"]) {
     await page.selectOption("#tool-style", style);const before = await page.evaluate(() => window.__toolFrameCount);await page.waitForTimeout(100);
     assert.equal(await page.evaluate(() => window.__toolFrameCount), before, 'Terminal requests leave no continuing animation');
   }
-  await page.locator("#language-toggle").click();await page.selectOption("#tool-style", "grid");
+  await page.locator("#language-toggle").click();await page.selectOption("#tool-style", "sorter");
   assert.equal(await page.evaluate(() => performance.getEntriesByType("resource").filter(row => row.name.includes("/_ccdx/activity")).length), subscriptionRequests, "Styles reuse the existing activity subscription");
-  return { styles: 3, agent_phases: true, parallel_tools: 3, genuine_results: true, stopped: true, reduced_motion: true, small_screen: true, ...performanceReceipt };
+  return { styles: 4, agent_phases: true, parallel_tools: 3, genuine_results: true, stopped: true, reduced_motion: true, small_screen: true, ...performanceReceipt };
 }

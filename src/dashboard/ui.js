@@ -1,4 +1,18 @@
 const element = (id) => document.getElementById(id);
+globalThis.ccdxConfirmAction = (title, detail) => {
+  const dialog = element("action-confirm");
+  if (!dialog?.showModal) return Promise.resolve(window.confirm(globalThis.ccdxLanguage?.format(detail) || english(detail)));
+  if (dialog.open) return Promise.resolve(false);
+  localize(element("action-confirm-title"), title);
+  localize(element("action-confirm-detail"), detail);
+  localize(element("action-confirm-apply"), title);
+  dialog.returnValue = "";
+  return new Promise(resolve => {
+    dialog.addEventListener("close", () => resolve(dialog.returnValue === "confirm"), { once: true });
+    dialog.showModal();
+  });
+};
+
 const phrase = (key, values = {}) => ({ key, values });
 const english = (key, values = {}) => String(key).replace(/\{(\w+)\}/g, (match, name) => {
   if (!Object.hasOwn(values, name)) return match;

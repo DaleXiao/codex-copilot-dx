@@ -489,7 +489,7 @@ input[role="switch"]:disabled { opacity: .5; cursor: wait; }
 .checks-table th:first-child { width:23%; }
 .checks-table th:nth-child(2) { width:21%; }
 .checks-table details p { margin:8px 0; }
-@media(max-width:640px) { .account-fields { grid-template-columns:100px minmax(0,1fr); gap:10px; } .checks-table { min-width:530px; } }
+@media(max-width:640px) { .account-fields { grid-template-columns:100px minmax(0,1fr); gap:10px; } }
 
 .account-summary { margin: 20px 0 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 20px; }
 .account-summary div { min-width: 0; }
@@ -666,7 +666,7 @@ input[role="switch"]:disabled { opacity: .5; cursor: wait; }
 .context-tabs { display:flex;gap:8px;margin-bottom:18px; }
 .context-tabs button { min-width:80px;text-align:center; }
 .context-tabs button[aria-selected="true"], .context-session[aria-pressed="true"] { color:var(--surface);background:var(--accent);border-color:var(--accent); }
-.context-sessions { table-layout:fixed;min-width:420px; }
+.context-sessions { table-layout:fixed; }
 .context-sessions th:first-child { width:27%; }
 .context-sessions th:nth-child(2) { width:23%; }
 .context-sessions th:nth-child(3) { width:32%; }
@@ -697,7 +697,6 @@ input[role="switch"]:disabled { opacity: .5; cursor: wait; }
 .tool-visual,.tool-content { min-width:0; }
 .tool-orbit { width:100%;height:190px;position:relative; }
 .tool-orbit canvas { display:block;width:100%;height:100%; }
-.tool-stage[data-style="grid"] .tool-orbit { max-height:140px; }
 .tool-stage[data-style="off"] { grid-template-columns:1fr;min-height:110px; }
 .tool-stage[data-style="off"] .tool-orbit { display:none; }
 .tool-stage[data-style="off"] .tool-narration { text-align:left; }
@@ -743,3 +742,25 @@ input[role="switch"]:disabled { opacity: .5; cursor: wait; }
 [data-view="system"] .setting-row { gap: 10px; padding-block: 8px; }
 [data-view="overview"] .card { min-height: 0; padding-block: 12px; }
 [data-view="overview"] .card strong { margin-top: 6px; }
+
+/* Fit long identifiers without widening the dashboard. */
+.dense-table { table-layout: fixed; }
+.dense-table :is(th,td) { white-space: normal; overflow-wrap: anywhere; vertical-align: top; }
+.usage-table th:first-child { width: 26%; }
+.failure-table th:last-child { width: 38%; }
+.failure-table td :is(dt,dd) { overflow-wrap: anywhere; }
+.failure-table details > :is(dl,p) { contain: none; }
+.failure-table .failure-detail { grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); }
+.usage-row-details { display: none; margin-block-start: 4px; }
+.usage-row-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px 8px; margin: 6px 0; }
+.usage-row-stats dt { color: var(--muted); }
+.usage-row-stats dd { margin: 0; }
+@media (max-width: 700px) {
+  .usage-table :is(th,td):not(:first-child):not(:nth-child(7)):not([colspan]) { display: none; }
+  .usage-table th:first-child { width: 70%; }
+  .usage-row-details { display: block; }
+  .recent-requests-table :is(th,td):is(:nth-child(1),:nth-child(2),:nth-child(5)):not([colspan]) { display: none; }
+  .recent-requests-table th:nth-child(3) { width: 40%; }
+  .failure-table th:last-child { width: 40%; }
+}
+#action-confirm-apply { background:var(--accent); color:var(--page); border-color:var(--accent); }

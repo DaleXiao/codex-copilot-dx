@@ -49,6 +49,12 @@ conversation labels feed the existing source guard before main-answer dispatch.
 Unsupported input fails explicitly, without Google or OpenAI inference fallback.
 No independent WebKit client or private WebKit SPI is included.
 
+Antigravity reads one request settings snapshot for model selection and its Copilot header-wait budget, and reads source access at route selection. Response headers end the Copilot header-wait deadline. Streaming then uses its independent idle budget whether the header limit was saved explicitly or inherited. The Chat bridge aggregates reported usage fields once and feeds the same numeric fields to the client and ledger. Structured stream errors retain the actual HTTP status, safe failure type and validated retry guidance. No opened stream is replayed.
+
+Antigravity keeps a bounded local conversation route table with keyed session hashes, hashed owners and model aliases. Compression consults the existing conversation owner guard before using the retained model. Unbound background tasks prefer Carbon Low and may use a compatible selected model from the same authorized source if it is unavailable. Copilot Chat recovery summaries require both a successful stop reason and the Chat stream terminator. The other protocols retain their own terminal contracts.
+
+For managed GitHub Codex model plans, Auto Review resolves an explicit startup override within the authorized deployments before consulting saved or observed session routing. The saved effort is associated with its selected review route. A different override uses the app's requested effort, or Low when omitted and supported.
+
 ## Composition and lifecycle
 
 ### Application control and shared source admission

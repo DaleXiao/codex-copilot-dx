@@ -103,7 +103,7 @@
         </section>
         <section class="panel dashboard-section" aria-labelledby="review-heading">
           <h2 id="review-heading" data-i18n="auto_review_settings">AUTO REVIEW</h2>
-          <p class="hint" data-i18n="review_uses_selected_source">Reviews use the source selected above. Save the source and review choices separately.</p>
+
           <div class="section-actions">
             <label><span data-i18n="auto_review_model">Review model</span><select id="source-review"></select></label>
             <label><span data-i18n="thinking_level">Thinking level</span><select id="source-review-effort"></select></label>
@@ -155,8 +155,8 @@
         </details>
         </div>
         <div data-view="claude" hidden>
-        <div class="provider-tabs client-segments" role="group" aria-label="Claude app"><button type="button" data-claude-client="claude_app" aria-pressed="true">Claude App</button><button type="button" data-claude-client="claude_code" aria-pressed="false">Claude Code</button></div>
-        <div id="claude-model-management"></div>
+        <div class="provider-tabs client-segments" role="tablist" aria-label="Claude"><button type="button" id="claude-app-tab" role="tab" data-claude-client="claude_app" aria-selected="true" aria-controls="claude-model-management">Claude App</button><button type="button" id="claude-code-tab" role="tab" tabindex="-1" data-claude-client="claude_code" aria-selected="false" aria-controls="claude-model-management">Claude Code</button></div>
+        <div id="claude-model-management" role="tabpanel" aria-labelledby="claude-app-tab"></div>
         <details class="panel dashboard-section" id="claude-connections">
           <summary data-i18n="connection_details">Connection details</summary>
           <div class="table-wrap"><table><thead><tr><th data-i18n="client">APP</th><th data-i18n="connection_setup" data-i18n-title="configured_not_successful">Setup</th><th data-i18n="local_bridge">Local service</th><th data-i18n="last_request">LAST REQUEST</th></tr></thead><tbody id="claude-clients"></tbody></table></div>
@@ -176,10 +176,10 @@
         <div data-view="gemini" hidden>
           <section class="connection-access"><div class="connection-row"><label for="gemini-enabled" data-i18n="gemini_access_title">Copilot access</label><label class="switch-hit"><input id="gemini-enabled" type="checkbox" role="switch" data-i18n-label="gemini_access_title" aria-label="Copilot access" disabled></label></div></section>
           <section class="panel dashboard-section">
-            <div class="panel-heading"><h2 data-i18n="cap_visible_model">Available models</h2><span id="gemini-draft-state" role="status" hidden></span></div>
+            <div class="panel-heading"><h2 data-i18n="cap_visible_model">Available models</h2><div class="section-actions"><span id="gemini-draft-state" role="status" hidden></span><button id="gemini-refresh" type="button" data-i18n="refresh_models">Refresh models</button></div></div>
             <form id="gemini-model-form">
               <div class="table-wrap"><table class="binding-table"><thead><tr><th data-i18n="model">Model</th><th data-i18n="source">Source</th><th data-i18n="cap_context">Context</th><th data-i18n="cap_reasoning">Reasoning</th><th data-i18n="gemini_new_chat_default">New chat default</th></tr></thead><tbody id="gemini-models"></tbody></table></div>
-              <div class="section-actions"><label><span data-i18n="gemini_copilot_timeout">Copilot response timeout (s)</span> <input id="gemini-copilot-timeout" type="number" min="1" max="600" step="1" inputmode="numeric" disabled></label><span id="gemini-timeout-lock" class="hint" data-i18n="controlled_by_environment" hidden>Set at startup</span>
+              <div class="section-actions"><label><span data-i18n="gemini_copilot_timeout">Copilot response-header timeout (s)</span> <input id="gemini-copilot-timeout" data-i18n-placeholder="limit_default" placeholder="Use default" type="number" min="1" max="600" step="1" inputmode="numeric" disabled></label><span id="gemini-timeout-lock" class="hint" data-i18n="controlled_by_environment" hidden>Set at startup</span>
                 <label id="gemini-native-source-field" hidden><span data-i18n="gemini_native_source">Custom Gemini source</span> <select id="gemini-native-source" disabled></select></label></div>
               <div class="section-actions"><button id="gemini-save" type="submit" data-i18n="api_save" disabled>Save</button><button id="gemini-cancel" type="button" data-i18n="cap_discard_changes" disabled>Discard changes</button><button id="gemini-use-app-default" type="button" data-i18n="gemini_use_app_default" hidden>Use app default</button></div>
             </form>
@@ -190,9 +190,9 @@
             <summary data-i18n="connection_details">Connection details</summary>
             <p id="gemini-route-state" class="client-sync-state" role="status">—</p>
             <p class="hint" data-i18n="gemini_scope">Native Google models remain available. Copilot models and background requests use Copilot.</p>
-            <p id="gemini-app-state" class="table-note">—</p><p class="hint"><span data-i18n="gemini_version">Version</span>: <span id="gemini-version">—</span></p>
+            <div class="table-wrap"><table class="dense-table"><thead><tr><th data-i18n="client">App</th><th data-i18n="installed_version">Installed version</th></tr></thead><tbody><tr><td>Antigravity</td><td id="gemini-version">—</td></tr></tbody></table></div><p id="gemini-app-state" class="table-note">—</p>
             <p id="gemini-reopen" class="hint" data-i18n="gemini_reopen" hidden>Quit Gemini, then open it here to load CCDX models.</p>
-            <div class="section-actions"><button id="gemini-open" type="button" data-i18n="gemini_open">Open Antigravity</button><button id="gemini-refresh" type="button" data-i18n="refresh">Refresh</button><a class="section-link" href="#models" data-source-link="github" data-i18n="gemini_open_sources">Model sources</a></div>
+            <div class="section-actions"><button id="gemini-open" type="button" data-i18n="gemini_open">Open Antigravity</button><a class="section-link" href="#models" data-source-link="github" data-i18n="gemini_open_sources">Model sources</a></div>
           </details>
           <details class="panel dashboard-section"><summary data-i18n="gemini_activity">Connection activity</summary>
             <p class="hint" data-i18n="gemini_activity_scope">Includes model requests and client discovery.</p>
@@ -223,7 +223,7 @@
         <label><span data-i18n="api_key_env">Read key from environment</span><input name="key_env" type="text" autocomplete="off" spellcheck="false" placeholder="CCDX_COMPANY_API_KEY"><span class="hint" data-i18n="api_key_env_hint">Optional for servers without a credential service. Set before starting CCDX.</span></label>
       </div></details>
 
-      <fieldset><legend data-i18n="model_catalog">Model list</legend><div class="section-actions"><button type="button" id="connection-discover" data-i18n="api_read_models">Read models</button><button type="button" id="connection-discover-cancel" data-i18n="cancel" hidden>Cancel</button><span class="hint" data-i18n="api_discovery_save_first">Save the API first. No chat request is sent.</span></div>
+      <fieldset><legend data-i18n="model_catalog">Model list</legend><div class="section-actions"><button type="button" id="connection-discover" data-i18n="api_read_models">Read models</button><button type="button" id="connection-discover-cancel" data-i18n="cancel" hidden>Cancel</button><span id="connection-discover-note" class="hint" data-i18n="api_discovery_save_first">Save the source before reading models.</span></div>
         <details class="tool-details" id="connection-manual-model"><summary data-i18n="api_manual_model">Add a model manually</summary><div class="section-actions"><input type="text" id="connection-model-id" spellcheck="false" autocomplete="off" aria-label="Model ID" placeholder="Model ID"><button type="button" id="connection-model-add" data-i18n="api_add_model">Add model</button></div></details>
         <p class="hint" data-i18n="api_model_protocol_hint">Choose the APIs each model supports.</p><div class="table-wrap"><table><thead><tr><th data-i18n="model">Model</th><th data-i18n="api_protocols">Available APIs</th><th data-i18n="cap_context">Context</th><th data-i18n="cap_reasoning">Reasoning</th><th data-i18n="cap_search">Search</th><th></th></tr></thead><tbody id="connection-models"></tbody></table></div>
       </fieldset>
@@ -248,7 +248,7 @@
             <p class="hint" data-i18n="tools_device_instructions">Open GitHub, enter this code, and authorize CCDX.</p>
             <div class="device-code-row"><code id="github-user-code" class="device-code">—</code><button id="github-copy-code" class="icon-button" type="button" aria-label="Copy code" data-i18n-label="tools_copy_code" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="1"/><path d="M16 8V4H4v12h4"/></svg></button></div>
             <p id="github-copy-state" class="hint" role="status" aria-live="polite"></p>
-            <a id="github-authorize" class="tool-link button-link" href="https://github.com/login/device" target="_blank" rel="noopener noreferrer" data-i18n="tools_copy_open_github">Copy &amp; open GitHub</a>
+            <a id="github-authorize" class="tool-link section-link" href="https://github.com/login/device" target="_blank" rel="noopener noreferrer" data-i18n="tools_open_github">Authorize on GitHub</a>
             <button id="github-cancel" type="button" data-i18n="cancel">Cancel</button>
             <p class="hint" data-i18n="tools_keep_old_signin">Old sign-in is kept until verification succeeds.</p>
           </section>
@@ -295,7 +295,7 @@
           <p id="models-note" class="table-note" data-i18n="reading_provider_catalog">Loading model list…</p>
           <details id="model-check-details" class="model-check-details" hidden><summary data-i18n="source_check_details">Check details</summary><dl id="model-check-fields" class="failure-detail"></dl></details>
           <div class="table-wrap"><table><thead><tr><th scope="col" data-i18n="model">MODEL</th><th scope="col" data-i18n="catalog_supported_apps">Supported apps</th><th scope="col" data-i18n="tools_details">Details</th></tr></thead><tbody id="live-models-body" role="tabpanel"><tr><td colspan="3" data-i18n="loading">Loading…</td></tr></tbody></table></div>
-          <details class="tool-details"><summary data-i18n="catalog_scope">Catalog scope</summary><p class="hint" data-i18n="catalog_listing_does_not_guarantee_inference_access">Models listed; inference access not verified.</p></details>
+          <p class="hint" data-i18n="catalog_listing_does_not_guarantee_inference_access">Inference access unverified.</p>
         </details>
         <details class="panel dashboard-section" id="account-authorization">
           <summary data-i18n="source_access_details">SOURCE ACCESS DETAILS</summary>
@@ -307,21 +307,21 @@
         <div data-view="checks" hidden>
           <section class="panel dashboard-section">
             <h2 data-i18n="tools_check_local">Check this computer</h2>
-            <p class="hint" data-i18n="tools_local_scope">Local checks do not contact external services.</p>
-            <p>Codex App: <strong id="client-version-codex">—</strong></p>
-            <p>Claude App: <strong id="client-version-claude">—</strong></p>
-            <p>Antigravity: <strong id="client-version-antigravity">—</strong></p>
-            <p class="hint" data-i18n="client_versions_scope">Installed versions only; running App adoption and compatibility are separate.</p>
-            <div class="section-actions"><button id="check-local" type="button" data-i18n="tools_check_local">Check this computer</button></div>
-            <p id="checks-note" class="table-note" role="status" aria-live="polite" data-i18n="tools_checks_empty">Run a check to see the results.</p>
-            <div class="table-wrap" id="checks-results" hidden><table class="checks-table"><thead><tr><th data-i18n="tools_check_item">Check</th><th data-i18n="state">State</th><th data-i18n="tools_details">Details</th></tr></thead><tbody id="checks-body"></tbody></table></div>
+            <div class="table-wrap"><table class="dense-table"><thead><tr><th data-i18n="client">App</th><th data-i18n="installed_version">Installed version</th></tr></thead><tbody>
+              <tr><td>Codex App</td><td id="client-version-codex">—</td></tr>
+              <tr><td>Claude App</td><td id="client-version-claude">—</td></tr>
+              <tr><td>Antigravity</td><td id="client-version-antigravity">—</td></tr>
+            </tbody></table></div>
+            <div class="section-actions"><button id="check-local" type="button" data-i18n="run_local_check">Run check</button></div>
+            <p id="checks-note" class="table-note" role="status" aria-live="polite"></p>
+            <div class="table-wrap" id="checks-results" hidden><table class="checks-table dense-table"><thead><tr><th data-i18n="tools_check_item">Check</th><th data-i18n="state">State</th><th data-i18n="tools_details">Details</th></tr></thead><tbody id="checks-body"></tbody></table></div>
           </section>
           <section class="panel dashboard-section">
             <h2 data-i18n="account_access">ACCOUNT AND ACCESS</h2>
-            <div class="section-actions"><button id="check-account-link" class="account-entry" type="button" data-i18n="github_account_entry">GitHub account</button><a class="button-link account-entry" href="#models" data-source-link="m365" data-i18n="m365_account_entry">M365 account</a></div>
+            <div class="section-actions"><a id="check-account-link" class="button-link account-entry" href="#models" data-source-link="github" data-i18n="github_account_entry">GitHub account</a><a class="button-link account-entry" href="#models" data-source-link="m365" data-i18n="m365_account_entry">M365 account</a></div>
           </section>
           <section class="panel dashboard-section">
-            <h2 data-i18n="tools_codex_connection">Codex connection</h2><p class="hint" data-i18n="tools_config_scope">Review CCDX-managed fields before repair. Other settings are preserved.</p>
+            <h2 data-i18n="tools_codex_connection">Codex connection</h2>
             <div class="section-actions"><button id="preview-config-repair" type="button" data-i18n="tools_review_repair">Review repair</button></div>
             <section id="config-repair-preview" class="tool-flow" hidden><h3 data-i18n="tools_repair_preview">Repair preview</h3><dl id="config-repair-fields" class="failure-detail"></dl><pre id="config-preview-details" class="tool-code"></pre><div class="section-actions"><button id="apply-config-repair" type="button" data-i18n="tools_apply_repair">Back up and repair</button><button id="cancel-config-repair" type="button" data-i18n="cancel">Cancel</button></div></section>
           </section>
@@ -344,17 +344,17 @@
         </section>
           </details>
           <details class="panel dashboard-section"><summary data-i18n="more_checks_reports">MORE CHECKS AND REPORTS</summary>
-            <div class="section-actions"><button id="check-network" type="button" data-i18n="tools_network_check">Network settings</button></div><p id="network-check-result" class="hint" role="status"></p>
-            <h3 data-i18n="tools_compatibility">Model compatibility</h3><p class="hint" data-i18n="compatibility_scope">Tests Codex Responses, streaming and compaction. Uses quota.</p><p id="compatibility-note" class="hint" role="status"></p>
-            <div class="tool-details"><h3 data-i18n="diagnostic_report">Diagnostic report</h3><p class="hint" data-i18n="tools_report_scope">Reports omit credentials, account details and chat content.</p><div class="section-actions"><button id="check-compatibility" type="button" data-i18n="compatibility_test">Test Codex model compatibility</button><button id="export-report" type="button" data-i18n="tools_export_report">Export report</button></div></div>
+            <div class="section-actions"><button id="check-network" type="button" data-i18n="tools_network_check">View network settings</button></div><p id="network-check-result" class="hint" role="status"></p>
+            <h3 data-i18n="tools_compatibility">Model compatibility</h3><p class="hint" data-i18n="compatibility_scope">Tests Codex Responses, streaming and compaction. Uses quota.</p><div class="section-actions"><button id="check-compatibility" type="button" data-i18n="compatibility_test">Test Codex model compatibility</button></div><p id="compatibility-note" class="hint" role="status"></p>
+            <div class="tool-details"><h3 data-i18n="diagnostic_report">Diagnostic report</h3><p class="hint" data-i18n="tools_report_scope">Reports omit credentials, account details and chat content.</p><div class="section-actions"><button id="export-report" type="button" data-i18n="tools_export_report">Export report</button></div></div>
           </details>
         </div>
         <div data-view="usage" hidden>
         <div class="context-tabs" role="tablist" aria-label="Usage view" data-i18n-label="context_tabs"><button type="button" id="usage-tokens-tab" role="tab" aria-selected="true" aria-controls="usage-tokens-pane" data-i18n="context_tokens">Tokens</button><button type="button" id="usage-context-tab" role="tab" aria-selected="false" aria-controls="usage-context-pane" data-i18n="context_title">Context</button></div>
         <div id="usage-tokens-pane" role="tabpanel" aria-labelledby="usage-tokens-tab">
         <div class="section-actions usage-source-controls"><label><span data-i18n="source_entire_page">Source / entire page</span><select id="usage-provider"><option value="" data-i18n="all_providers">All providers</option></select></label>
-          <label><span data-i18n="usage_model_page">Model / entire page</span><select id="analytics-model"><option value="" data-i18n="all_models">All models</option></select></label>
-          <label><span data-i18n="usage_range_page">Time / entire page</span><select id="analytics-range"><option value="all" selected data-i18n="usage_all_history">All retained history</option><option value="7" data-i18n="7_days">Last 7 days</option><option value="30" data-i18n="30_days">Last 30 days</option><option value="90" data-i18n="90_days">Last 90 days</option><option value="365" data-i18n="usage_365_days">Last 365 days</option></select></label>
+          <label><span data-i18n="usage_model_page">Model</span><select id="analytics-model"><option value="" data-i18n="all_models">All models</option></select></label>
+          <label><span data-i18n="usage_range_page">Time</span><select id="analytics-range"><option value="all" selected data-i18n="usage_all_history">All retained history</option><option value="7" data-i18n="7_days">Last 7 days</option><option value="30" data-i18n="30_days">Last 30 days</option><option value="90" data-i18n="90_days">Last 90 days</option><option value="365" data-i18n="usage_365_days">Last 365 days</option></select></label>
           <label><span data-i18n="request_kind">Request purpose</span><select id="usage-purpose"><option value="" data-i18n="purpose_all">All purposes</option><option value="conversation" data-i18n="purpose_conversation">Conversation</option><option value="compaction" data-i18n="purpose_compaction">Compression</option><option value="diagnostic" data-i18n="purpose_diagnostic">Diagnostic</option><option value="compatibility" data-i18n="purpose_compatibility">Compatibility test</option><option value="unknown" data-i18n="purpose_unknown">Unknown</option></select></label>
           <button id="refresh-usage" type="button" data-i18n="refresh_usage">Refresh usage</button></div>
 
@@ -375,14 +375,14 @@
           <summary class="panel-heading"><h2 data-i18n="usage_totals">USAGE TOTALS</h2><span id="usage-state" data-i18n="reading_log">COUNTING</span></summary>
           <div class="section-actions"><button id="clear-usage-day" type="button" hidden data-i18n="usage_clear_date">Clear date</button></div>
           <p id="usage-note" class="table-note" data-i18n="aggregating_local_usage_metadata">Counting local usage…</p>
-          <div class="table-wrap"><table class="usage-table"><thead><tr><th scope="col" data-i18n="model">MODEL</th><th scope="col" data-i18n="usage_records">RECORDS</th><th scope="col" data-i18n="input">INPUT USAGE</th><th scope="col" data-i18n="cache_read">REUSED INPUT</th><th scope="col" data-i18n="cache_write">CACHE WRITE</th><th scope="col" data-i18n="output">OUTPUT USAGE</th><th scope="col" data-i18n="total">TOTAL</th><th scope="col" data-i18n="cache_hit">REUSE RATE</th></tr></thead><tbody id="usage-body"><tr><td colspan="8" data-i18n="loading">Loading…</td></tr></tbody></table></div>
+          <div class="table-wrap"><table class="usage-table dense-table"><thead><tr><th scope="col" data-i18n="model">MODEL</th><th scope="col" data-i18n="usage_records">RECORDS</th><th scope="col" data-i18n="input">INPUT USAGE</th><th scope="col" data-i18n="cache_read">REUSED INPUT</th><th scope="col" data-i18n="cache_write">CACHE WRITE</th><th scope="col" data-i18n="output">OUTPUT USAGE</th><th scope="col" data-i18n="total">TOTAL</th><th scope="col" data-i18n="cache_hit">REUSE RATE</th></tr></thead><tbody id="usage-body"><tr><td colspan="8" data-i18n="loading">Loading…</td></tr></tbody></table></div>
           <p class="hint" data-i18n="cache_hit_recorded_cached_input_tokens_incomplete_history_unavai">Unit: Token. Reused input is part of input. Rate uses records with valid input and cache-read counts.
 ~ Partial coverage. — No valid input basis.</p>
 
         </details>
         </div>
         <div id="usage-context-pane" role="tabpanel" aria-labelledby="usage-context-tab" hidden>
-          <section class="panel dashboard-section"><h2 data-i18n="context_activity">Conversations &amp; requests</h2><p id="context-view-state" class="table-note" role="status"></p><div class="table-wrap"><table class="context-sessions"><thead><tr><th data-i18n="context_item">Conversation / request</th><th data-i18n="client">App</th><th data-i18n="model">Model</th><th data-i18n="context_share">Input share</th></tr></thead><tbody id="context-sessions"></tbody></table></div></section>
+          <section class="panel dashboard-section"><h2 data-i18n="context_activity">Conversations &amp; requests</h2><p id="context-view-state" class="table-note" role="status"></p><div class="table-wrap"><table class="context-sessions dense-table"><thead><tr><th data-i18n="context_item">Conversation / request</th><th data-i18n="client">App</th><th data-i18n="model">Model</th><th data-i18n="context_share">Input share</th></tr></thead><tbody id="context-sessions"></tbody></table></div></section>
           <section id="context-selection" class="panel dashboard-section" aria-labelledby="context-selection-title" hidden><div class="panel-heading"><h2 id="context-selection-title"></h2><span id="context-selection-source"></span></div>
             <dl class="context-metrics"><div><dt data-i18n="context_latest_input">Latest input</dt><dd id="context-latest-input">—</dd></div><div><dt data-i18n="model_window">Model window</dt><dd id="context-window">—</dd></div><div><dt data-i18n="context_share">Input share</dt><dd id="context-share">—</dd></div><div><dt data-i18n="context_reuse">Cache reuse</dt><dd id="context-reuse">—</dd></div></dl>
             <div class="panel-heading"><h3 data-i18n="context_history">Input history</h3><span id="context-history-note"></span></div><div id="context-history-chart" class="context-history-chart"></div>
@@ -403,10 +403,10 @@
           <div class="flow-caption"><span id="flow-caption" data-i18n="flow_status_unknown">Status unavailable</span><button id="flow-clear" type="button" data-i18n="flow_show_all" hidden>Show all</button><button id="flow-more" type="button" hidden>More models</button></div>
         </section>
         <section id="tool-activity" class="panel dashboard-section" aria-labelledby="tool-title" data-paused="true">
-          <div class="panel-heading"><h2 id="tool-title" data-i18n="tool_heading">TOOL AND AGENT ACTIVITY</h2><label class="tool-style" for="tool-style"><span data-i18n="tool_style">Style</span><select id="tool-style"><option value="assembly" data-i18n="tool_style_assembly">Assembly line</option><option value="halo" data-i18n="tool_style_halo">Beam ring</option><option value="grid" data-i18n="tool_style_grid">Grid</option><option value="off" data-i18n="tool_style_off">Off</option></select></label></div>
+          <div class="panel-heading"><h2 id="tool-title" data-i18n="tool_heading">TOOL AND AGENT ACTIVITY</h2><label class="tool-style" for="tool-style"><span data-i18n="tool_style">Style</span><select id="tool-style"><option value="assembly" data-i18n="tool_style_assembly">Assembly line</option><option value="sorter" data-i18n="tool_style_sorter">Dual-lane sorter</option><option value="gantry" data-i18n="tool_style_gantry">Gantry transfer</option><option value="rotary" data-i18n="tool_style_rotary">Indexing table</option><option value="off" data-i18n="tool_style_off">Off</option></select></label></div>
           <div id="tool-stage" class="tool-stage" data-style="assembly">
             <div class="tool-visual"><div class="tool-orbit"><canvas id="tool-canvas" role="img" data-i18n-label="tool_heading" aria-label="Tool and agent activity"></canvas></div><p class="tool-narration"><span id="tool-state" role="status" aria-live="polite" data-i18n="flow_status_unknown">Waiting for a fresh status</span><span id="tool-cursor" aria-hidden="true" hidden> …</span></p></div>
-            <div class="tool-content"><p id="tool-context" class="tool-context" hidden></p><div id="tool-list"></div><p id="tool-more" class="hint" hidden></p><details id="tool-details" class="tool-details tool-technical" hidden><summary data-i18n="tool_details">Call details</summary><div id="tool-technical"></div></details></div>
+            <div class="tool-content"><p id="tool-context" class="tool-context" hidden></p><div id="tool-list"></div><p id="tool-more" class="hint" hidden></p><details id="tool-details" class="tool-details tool-technical" hidden><summary data-i18n="tool_details">Call details</summary><div class="table-wrap"><table class="dense-table"><thead><tr><th data-i18n="client">App</th><th data-i18n="source">Source</th><th data-i18n="model">Model</th><th data-i18n="tool_name">Tool</th><th data-i18n="outcome">Result</th></tr></thead><tbody id="tool-technical"></tbody></table></div></details></div>
           </div>
         </section>
         <details id="flow-active" class="panel dashboard-section"><summary id="flow-active-title" data-i18n="flow_active_requests">Active requests</summary><div class="table-wrap"><table><thead><tr><th data-i18n="client">App</th><th data-i18n="source">Source</th><th data-i18n="model">Model</th><th data-i18n="state">State</th><th data-i18n="flow_elapsed">Elapsed</th><th data-i18n="attempts">Attempts</th></tr></thead><tbody id="flow-active-body"></tbody></table></div></details>
@@ -418,15 +418,15 @@
         </details>
         <details class="panel dashboard-section" id="request-context" open>
           <summary data-i18n="recent_request_context">RECENT REQUESTS</summary>
-          <div class="table-wrap"><table class="recent-requests-table"><thead><tr><th scope="col" data-i18n="time">Time</th><th scope="col" data-i18n="client">App</th><th scope="col" data-i18n="model">MODEL</th><th scope="col" data-i18n="outcome">RESULT</th><th scope="col" class="recent-request-duration" data-i18n="request_total_time">Total time</th><th scope="col" data-i18n="tools_details">Details</th></tr></thead><tbody id="context-body"><tr><td colspan="6" data-i18n="no_observed_request_metadata">No request records yet.</td></tr></tbody></table></div>
+          <div class="table-wrap"><table class="recent-requests-table dense-table"><thead><tr><th scope="col" data-i18n="time">Time</th><th scope="col" data-i18n="client">App</th><th scope="col" data-i18n="model">MODEL</th><th scope="col" data-i18n="outcome">RESULT</th><th scope="col" class="recent-request-duration" data-i18n="request_total_time">Total time</th><th scope="col" data-i18n="tools_details">Details</th></tr></thead><tbody id="context-body"><tr><td colspan="6" data-i18n="no_observed_request_metadata">No request records yet.</td></tr></tbody></table></div>
           <details class="tool-details"><summary data-i18n="record_scope">Record scope</summary><p id="context-note" class="table-note">—</p><p class="hint" data-i18n="recent_upstream_request_metadata_not_exact_live_session_occupanc">No prompts or images are stored. — means unavailable data.</p><p class="hint" data-i18n="http_2xx_model_completed">HTTP status and model outcome are recorded separately.</p></details>
         </details>
         <details class="lower" id="recent-failures" open>
           <summary class="panel-heading"><h2 data-i18n="recent_inference_http_failures">RECENT REQUEST ISSUES</h2><span id="failure-count">requests + events</span></summary>
           <label for="failure-kind" class="sr-only" data-i18n="issue_category">Issue category</label>
           <select id="failure-kind"><option value="issues" data-i18n="issue_replies">Reply issues</option><option value="capability" data-i18n="issue_capabilities">Capability notices</option><option value="connection" data-i18n="issue_connections">Connections and paths</option><option value="discovery" data-i18n="issue_discovery">Service probes</option></select>
-          <ol id="failures"><li class="empty" data-i18n="reading_874bf">Reading…</li></ol>
-          <details id="failure-history" class="tool-details" hidden><summary id="failure-history-title">Failures over 24 hours</summary><div class="table-wrap"><table><thead><tr><th data-i18n="client">App</th><th data-i18n="model">Model</th><th data-i18n="phase">Phase</th><th data-i18n="failed">Failed</th><th data-i18n="time">Time</th><th data-i18n="request_id">Request ID</th></tr></thead><tbody id="failure-history-body"></tbody></table></div></details>
+          <div class="table-wrap"><table class="dense-table failure-table"><thead><tr><th data-i18n="time">Time</th><th data-i18n="client">App</th><th data-i18n="model">Model</th><th data-i18n="failure_reason">Reason</th></tr></thead><tbody id="failures"><tr><td colspan="4" data-i18n="reading_874bf">Reading…</td></tr></tbody></table></div>
+          <details id="failure-history" class="tool-details" hidden><summary id="failure-history-title">Failures over 24 hours</summary><div class="table-wrap"><table class="dense-table"><thead><tr><th data-i18n="client">App</th><th data-i18n="model">Model</th><th data-i18n="phase">Phase</th><th data-i18n="failed">Failed</th><th data-i18n="last_failed_at">Last failure</th><th data-i18n="last_request_id">Last request ID</th></tr></thead><tbody id="failure-history-body"></tbody></table></div></details>
         </details>
         </div>
         <div data-view="system" hidden>
@@ -445,9 +445,9 @@
       <select id="terminal-color-theme" disabled class="appearance-select"><option value="green" data-i18n="appearance_classic_green">Classic green (default)</option><option value="klein" data-i18n="appearance_klein_blue">Klein blue</option><option value="pink" data-i18n="appearance_soft_pink">Soft pink</option><option value="mono" data-i18n="appearance_black_white">Black &amp; white</option><option value="orange" data-i18n="appearance_orange">Orange</option></select>
     </div>
 
-          <div class="setting-row terminal-animation-toggle"><label for="setting-terminal_animation_enabled" data-i18n="terminal_animation">Terminal animation</label><input id="setting-terminal_animation_enabled" type="checkbox" role="switch" disabled><span id="effect-terminal_animation_enabled" class="hint" role="status"></span></div>
+          <div class="setting-row terminal-animation-toggle"><label for="setting-terminal_animation_enabled" data-i18n="terminal_animation_enable">Enable animation</label><input id="setting-terminal_animation_enabled" type="checkbox" role="switch" disabled><span id="effect-terminal_animation_enabled" class="hint" role="status"></span></div>
         <details id="animation-settings" class="appearance-animation settings-panel">
-          <summary class="panel-heading"><h2 data-i18n="terminal_animation_9edf6">TERMINAL ANIMATION</h2><span id="animation-state" data-i18n="reading">READING</span></summary>
+          <summary class="panel-heading"><h2 data-i18n="animation_theme">Animation style</h2><span id="animation-state" data-i18n="reading">READING</span></summary>
           <div id="animation-options" class="animation-options" role="group" aria-label="Animation style" data-i18n-label="animation_theme"></div>
           <div class="section-actions"><button id="save-animation" type="button" disabled data-i18n="save_selection">Save animation</button><span id="animation-note" role="status" data-i18n="applies_to_the_running_terminal">Updates the running terminal.</span></div>
         </details>
@@ -526,8 +526,8 @@
         <details class="panel dashboard-section" id="request-limits"><summary data-i18n="advanced_limits">Advanced: request limits</summary><div class="section-actions"><label><span data-i18n="decoded_limit">Decoded request limit (MiB)</span><input id="decoded-limit" type="number" min="128" max="512" step="1"></label><button id="decoded-limit-save" type="button" data-i18n="api_save">Save</button><button id="decoded-limit-default" type="button" data-i18n="limit_default">Use default</button></div><p id="decoded-limit-note" class="hint" role="status"></p><div class="section-actions"><label><span data-i18n="inflight_body_limit">Shared request-body limit (MiB)</span> <input id="inflight-body-limit" type="number" min="32" max="128" step="1" required aria-describedby="inflight-body-limit-note" disabled></label><button id="inflight-body-limit-save" type="button" data-i18n="api_save" disabled>Save</button><button id="inflight-body-limit-default" type="button" data-i18n="limit_default" disabled>Use default</button></div><p id="inflight-body-limit-note" class="hint" role="status"></p></details>
         <section class="panel dashboard-section" id="settings-preferences" aria-labelledby="preferences-heading">
           <h2 id="preferences-heading" data-i18n="preferences_heading">SAVE &amp; RESTORE</h2>
-          <div class="preferences-row"><div><label for="preferences-auto" data-i18n="preferences_auto">Save changes automatically</label><p class="hint" data-i18n="preferences_auto_hint">Valid changes on this page save automatically.</p></div><input id="preferences-auto" type="checkbox" role="switch" disabled checked></div>
-          <div class="preferences-row preferences-separator"><div><span data-i18n="preferences_reset_title">Restore default settings</span><p class="hint" data-i18n="preferences_reset_hint">Back up saved settings before restoring.</p></div><button id="preferences-reset" type="button" disabled data-i18n="preferences_reset">Restore defaults</button></div>
+          <div class="preferences-row"><div><label for="preferences-auto" data-i18n="preferences_auto">Save changes automatically</label></div><input id="preferences-auto" type="checkbox" role="switch" disabled checked></div>
+          <div class="preferences-row preferences-separator"><div><p class="hint" data-i18n="preferences_reset_hint">Back up saved settings before restoring.</p></div><button id="preferences-reset" type="button" disabled data-i18n="preferences_reset">Restore defaults</button></div>
           <div id="preferences-backup" class="preferences-row preferences-separator" hidden><div><span data-i18n="preferences_backup">Settings before restore</span><p id="preferences-backup-time" class="hint"></p></div><button id="preferences-restore" type="button" data-i18n="preferences_restore">Restore backup</button></div>
           <div id="preferences-manual" class="preferences-row preferences-separator" hidden><span id="preferences-manual-note" class="hint"></span><div class="connection-actions"><button id="preferences-discard" type="button" data-i18n="preferences_discard">Discard changes</button><button id="preferences-save" type="button" data-i18n="preferences_save">Save changes</button></div></div>
           <div class="section-actions"><button id="preferences-retry" type="button" hidden data-i18n="view_retry">Retry</button><p id="preferences-error" class="hint" role="alert"></p></div>
@@ -539,8 +539,12 @@
         </dialog>
         </div>
       </main>
-      <footer data-i18n="local_only_visible_page_updates">THIS COMPUTER ONLY / UPDATES WHILE VISIBLE</footer>
+
     </div>
+    <dialog id="action-confirm" class="preferences-dialog" aria-labelledby="action-confirm-title" aria-describedby="action-confirm-detail">
+      <h2 id="action-confirm-title"></h2><p id="action-confirm-detail"></p>
+      <form method="dialog" class="section-actions"><button id="action-confirm-cancel" value="cancel" data-i18n="cancel" autofocus>Cancel</button><button id="action-confirm-apply" value="confirm"></button></form>
+    </dialog>
     <dialog id="connection-memory-confirm" class="memory-confirm" aria-labelledby="connection-memory-confirm-title"><h2 id="connection-memory-confirm-title" data-i18n="memory_close_title">Turn off the memory extraction model?</h2><p data-i18n="memory_close_body">Codex uses this model to extract new memories. Turning it off may prevent new memory generation.</p><p class="hint" data-i18n="memory_existing_kept">Existing memories will not be deleted.</p><div class="section-actions"><button type="button" id="connection-memory-keep" data-i18n="memory_keep_enabled">Keep enabled</button><button type="button" id="connection-memory-close" data-i18n="memory_close_anyway">Turn off anyway</button></div></dialog>
   </body>
 </html>

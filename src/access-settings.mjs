@@ -20,6 +20,7 @@ const messages = {
   ccdx_api_model_unavailable: "This model is not configured for the requested API. Review the source's model list.",
   ccdx_api_environment_key_missing: "Set the configured API-key environment variable before starting CCDX.",
   ccdx_api_secret_unavailable: "The system credential store is unavailable. No plaintext fallback was used.",
+  ccdx_review_environment_override: "The startup setting CCDX_AUTO_REVIEW_MODEL controls the Auto Review model.",
   ccdx_client_source_mismatch: "Save the source before changing its review model.",
 };
 export const accessError = (code, statusCode = 400) => {

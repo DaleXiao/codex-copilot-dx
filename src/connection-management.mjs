@@ -193,6 +193,8 @@ export function createConnectionManagement({ binding, catalogRefresh, save, disc
         const c = binding("codex"),
           compiled = plan("codex");
         if (!c.enabled || input.provider !== c.source) throw accessError("ccdx_client_source_mismatch", 409);
+        if (c.source === "github" && String(env.CCDX_AUTO_REVIEW_MODEL || "").trim())
+          throw accessError("ccdx_review_environment_override", 409);
         const follow = input.model === "";
         const record = follow ? compiled.routes.get(compiled.defaultModel) : [...compiled.routes.values()].find(
           record => record.source === input.provider && record.upstreamModel === input.model

@@ -210,14 +210,18 @@ export function buildHttpFailureDetails({ statusCode, route, requestId, model, c
       : origin === "privacy" ? "Local privacy processing failed. Review its error code and request timeline."
         : origin === "client_validation" ? "The request was rejected locally before an upstream call."
       : error_body === "empty" ? "Upstream returned no error details." : "HTTP request failed; original response was preserved.");
+  const streamError = model_error === true && origin === "upstream_event";
+  const safeReason = safeUpstreamReason(upstream_code, statusCode, { stream: streamError });
   const details = responseFailureDetails({ model, error: { code: typeof code === "string" && /^[a-z\d_.:-]{1,80}$/i.test(code) ? code : `http_${statusCode}`,
-    message: model_error ? "The model source reported an error; the original HTTP response was preserved." : message } }, model_error ? "model.error" : "http.error", { headers, provider });
-  const retryAfter = origin === "upstream_http" && [429, 503].includes(statusCode) ? upstreamRetryAfter(headers) : null;
+    message: streamError ? safeReason?.message || "The source reported an error while streaming."
+      : model_error ? "The model source reported an error; the original HTTP response was preserved." : message } }, model_error ? "model.error" : "http.error", { headers, provider });
+  const retryAfter = (origin === "upstream_http" && [429, 503].includes(statusCode)
+    || streamError && safeReason && safeUpstreamReason(safeReason.code, 429)) ? upstreamRetryAfter(headers) : null;
   return { ...details, request_id: requestId, http_status: statusCode, route,
     ...(retryAfter === null ? {} : { retry_after: retryAfter }),
     origin: origin || (route === "not_found" ? "route" : "unclassified"), local_message: true,
     ...(error_body ? { error_body } : {}), ...(error_type ? { error_type } : {}),
-    ...(safeUpstreamReason(upstream_code, statusCode) ? { upstream_code } : {}), ...(parameter ? { parameter } : {}),
+    ...(safeReason ? { upstream_code: safeReason.code } : {}), ...(parameter ? { parameter } : {}),
     ...(diagnostic_message ? { diagnostic_message } : {}),
     ...(method ? { method } : {}), ...(target ? { target } : {}),
     ...(request_options ? { request_options } : {}),

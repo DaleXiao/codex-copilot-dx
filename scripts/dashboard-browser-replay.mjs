@@ -528,7 +528,7 @@ try {
         await page.evaluate(() => { window.clipboardBlocked = false; });await page.locator("#github-copy-code").click();
         await page.waitForFunction(() => window.clipboardWrites.length === 2);
         await page.locator("#github-authorize").evaluate(node => node.addEventListener("click", event => event.preventDefault()));
-        await page.locator("#github-authorize").click();await page.waitForFunction(() => window.clipboardWrites.length === 3);
+        await page.locator("#github-authorize").click();assert.equal(await page.evaluate(() => window.clipboardWrites.length), 2);
         if (output && language === "zh" && width === 1280) await page.locator("#github-account").screenshot({ path: path.join(output, `${engine}-${palette}-${theme}-device-code.png`) });
         await page.locator("#github-cancel").click();
         await page.waitForFunction(() => document.getElementById("github-login-flow").hidden);
@@ -785,17 +785,18 @@ try {
         assert.equal(readingAfter.focused, true, "New requests keep keyboard focus on the retained disclosure");
         assert.ok(Math.abs(readingAfter.top - readingTop) <= 2, "New requests keep open details at the reader's viewport position");
         assert.equal(await page.locator("#recent-failures").isVisible(), true);
-        assert.match(await page.locator("#recent-failures li summary").innerText(), /Microsoft 365/);
+        await page.locator("#failures details > summary").click();
+        assert.match(await page.locator("#failures").innerText(), /m365/);
         await page.locator("#failure-kind").selectOption("capability");
-        assert.equal(await page.locator("#failures > li").count(), 1);
+        assert.equal(await page.locator("#failures > tr").count(), 1);
         assert.match(await page.locator("#failures").innerText(), language === "zh" ? /共 2 次/ : /2 occurrences/);
         await page.locator("#failure-kind").selectOption("connection");
-        assert.equal(await page.locator("#failures > li").count(), 1);
+        assert.equal(await page.locator("#failures > tr").count(), 1);
         await page.locator("#failures details > summary").click();
         assert.match(await page.locator("#failures").innerText(), /oauth-authorization-server/);
         await page.locator("#failure-kind").selectOption("issues");
         await page.locator("#language-toggle").click();
-        assert.match(await page.locator("#recent-failures li summary").innerText(), language === "zh" ? /not retried/ : /未重试/);
+        assert.equal(await page.locator("#failures details > summary").count(), 1);
         await page.locator("#language-toggle").click();
         assert.equal(await page.locator("#model-usage").isVisible(), false);
         await nav("usage");
@@ -1100,7 +1101,7 @@ try {
           await page.locator("#inflight-body-limit-default").click();
           await page.waitForFunction(() => !document.getElementById("inflight-body-limit-default").hasAttribute("aria-busy"));
           assert.equal(serviceControl.snapshot().inflight_body.bytes, 32 * 1048576);
-          const beforeUpdate = manualUpdates;page.once("dialog", dialog => dialog.accept());await page.locator("#install-update").click();
+          const beforeUpdate = manualUpdates;await page.locator("#install-update").click();await page.locator("#action-confirm-apply").click();
           await page.waitForFunction(() => !document.getElementById("install-update").hasAttribute("aria-busy"));assert.equal(manualUpdates, beforeUpdate + 1);
         }
         assert.equal(await page.locator('[data-route="gemini"] span').innerText(),"Antigravity");

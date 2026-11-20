@@ -102,19 +102,28 @@ export function createConnectionRouting({ legacy, legacyClaudeAccess, isManaged,
       if (!Array.isArray(codex.deployments)) return null;
       if (codexRequiresKey()) requireCodexKey(req);
       const context = currentRequestContext(), review = body.model === "codex-auto-review";
-      const key = !codex.auto_review_model && (review || context?.purpose === "conversation") ? reviewSession(req.headers, context?.application) : null;
+      const override = review && codex.source === "github" ? String(env.CCDX_AUTO_REVIEW_MODEL || "").trim() : "";
+      const key = !override && !codex.auto_review_model && (review || context?.purpose === "conversation") ? reviewSession(req.headers, context?.application) : null;
       let requested = body.model;
       if (review) {
         const compiled = plan("codex"), remembered = key && reviewSessions.get(key);
-        const candidate = remembered && Date.now() - remembered.at <= 1800000 && compiled.routes.get(remembered.route);
-        const sameProfile = candidate && typeof remembered.profile === "string" && candidate.provider.profileId?.("responses") === remembered.profile;
-        requested = codex.auto_review_model || (sameProfile ? remembered.route : compiled.defaultModel);
+        if (override) {
+          const selected = [...compiled.routes.values()].find(record => record.source === "github"
+            && (record.upstreamModel === override || record.model.route_id === override));
+          if (!selected) throw accessError("ccdx_api_model_unavailable", 503);
+          requested = selected.model.route_id;
+        } else {
+          const candidate = remembered && Date.now() - remembered.at <= 1800000 && compiled.routes.get(remembered.route);
+          const sameProfile = candidate && typeof remembered.profile === "string" && candidate.provider.profileId?.("responses") === remembered.profile;
+          requested = codex.auto_review_model || (sameProfile ? remembered.route : compiled.defaultModel);
+        }
         delete body.service_tier;
       }
       const record = resolveDeployment("codex", requested);
       if (review) {
         const supports = record.model.capability.values.reasoning_efforts || [];
-        const chosen = codex.auto_review_effort && supports.includes(codex.auto_review_effort) ? codex.auto_review_effort
+        const configured = !override || codex.auto_review_model === requested ? codex.auto_review_effort : undefined;
+        const chosen = configured && supports.includes(configured) ? configured
           : body.reasoning?.effort === undefined && supports.includes("low") ? "low" : undefined;
         if (chosen) body.reasoning = { ...body.reasoning, effort: chosen };
       } else if (key && context) context.noteReviewModel = () => {

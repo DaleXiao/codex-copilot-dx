@@ -9,20 +9,23 @@ import {createAntigravityImages} from "./antigravity-images.mjs";
 import {createCopilotWeb} from "./copilot-web.mjs";
 import {inspectGeminiApp,planGeminiAppLaunch} from "./gemini-app.mjs";
 import {readUserSettings,userSettingsPath} from "./user-settings.mjs";
-import {readAccessSettings} from "./access-settings.mjs";
+import {accessSettingsPath,readAccessSettings} from "./access-settings.mjs";
 import {readClientGatewayKeys} from "./client-gateway-keys.mjs";
 import {createConversationSourceGuard} from "./conversation-source-guard.mjs";
 import {readSavedGithubToken} from "./auth-credentials.mjs";
 import {githubTokenFingerprint} from "./github-identity.mjs";
-import {atomicWriteFileIfChangedSync} from "./atomic-file.mjs";
-import {withFileLockSync} from "./lock.mjs";
+import {atomicWriteFile,atomicWriteFileIfChangedSync} from "./atomic-file.mjs";
+import {withFileLock,withFileLockSync} from "./lock.mjs";
+import {readBoundedFile} from "./bounded-file.mjs";
+import {redactDiagnosticText} from "./diagnostic-text.mjs";
 import {httpError} from "./http-errors.mjs";
-import {antigravityCopilotModels,ANTIGRAVITY_NATIVE_PREFIX} from "./antigravity-models.mjs";
+import {antigravityCopilotModels,ANTIGRAVITY_MODEL_PREFIX,ANTIGRAVITY_NATIVE_PREFIX} from "./antigravity-models.mjs";
 
 const execute=promisify(execFile),key="gemini_antigravity_enabled",modelKey="gemini_antigravity_models",defaultKey="gemini_antigravity_default_model";
 const timeoutKey="gemini_antigravity_copilot_timeout_seconds";
 const nativeSourceKey="gemini_antigravity_native_source";
 const validTimeout=value=>Number.isSafeInteger(value)&&value>=1&&value<=600;
+const validModel=id=>typeof id==="string"&&/^[\w][\w./:@+-]{0,159}$/.test(id)&&redactDiagnosticText(id)===id;
 const validAlias=id=>typeof id==="string"&&/^ccdx-copilot-[a-z0-9._-]{1,140}$/.test(id);
 
 export function createAntigravityRuntime({client,models=()=>[],refreshModels,privacy,home=os.homedir(),env=process.env,inspect=inspectGeminiApp,
@@ -30,7 +33,17 @@ export function createAntigravityRuntime({client,models=()=>[],refreshModels,pri
   upstreamTimeoutMs=180000,copilotTimeoutMs,nativeSources=()=>[],getSource=()=>null,...timeouts}={}) {
   const options={home,env},guard=createConversationSourceGuard(options);
   const web=searchFn?null:createCopilotWeb({client,readToken});
-  let app={status:"unknown"},route=null,lastOperation=null,compactionSalt;const conversationSources=new Map();
+  let app={status:"unknown"},route=null,lastOperation=null,compactionSalt,conversationRoutes;
+  const routeFile=path.join(path.dirname(accessSettingsPath(options)),"antigravity-conversations.json");
+  const readRoutes=async()=>{
+    let value;
+    try{value=JSON.parse(await readBoundedFile(routeFile,{encoding:"utf8",maxBytes:128*1024}));}
+    catch(error){if(error.code==="ENOENT")return {};throw httpError("Antigravity conversation routing data could not be read",409);}
+    if(!value||typeof value!=="object"||Array.isArray(value)||Object.keys(value).length>256||
+      Object.entries(value).some(([id,item])=>!/^[a-f0-9]{64}$/.test(id)||!item||
+        !/^[a-f0-9]{64}$/.test(item.owner)||!validModel(item.model)))throw httpError("Invalid Antigravity conversation routing data",409);
+    return value;
+  };
   const conversationKey=body=>{
     const id=body?.request?.labels?.root_cascade_id||body?.request?.labels?.cascade_id;
     if(typeof id!=="string"||!id||id.length>160||/[\u0000-\u001f\u007f]/.test(id))return null;
@@ -46,7 +59,7 @@ export function createAntigravityRuntime({client,models=()=>[],refreshModels,pri
       copilot_timeout_seconds:validTimeout(saved[timeoutKey])?saved[timeoutKey]:null,native_source:typeof saved[nativeSourceKey]==="string"?saved[nativeSourceKey]:null};
   };
   const configuredTimeout=saved=>copilotTimeoutMs??(saved.copilot_timeout_seconds===null?undefined:saved.copilot_timeout_seconds*1000);
-  const available=()=>settings().enabled&&readAccessSettings(options).providers.github?models():[];
+  const available=(saved=settings())=>saved.enabled&&readAccessSettings(options).providers.github?models():[];
   const nativeModels=(sourceId=settings().native_source)=>{
     if(!sourceId)return [];
     const source=nativeSources().find(item=>item.id===sourceId);
@@ -55,38 +68,75 @@ export function createAntigravityRuntime({client,models=()=>[],refreshModels,pri
       displayName:`${model.display_name||model.id} (${source.name})`,maxTokens:model.capability?.values.context_window,
       maxOutputTokens:model.capability?.values.max_output_tokens,supportsImages:model.capability?.values.input_modalities?.includes("image")===true}));
   };
-  const sourceGuard=guardSource||((body,source,signal)=>{
+  const profileFor=source=>source==="github"?"codex:"+githubTokenFingerprint(readToken()||"")
+    :source==="google"?"google:gemini-native":getSource(source)?.profileId("gemini");
+  const hashProfile=profile=>createHmac("sha256",compactionSalt).update(profile).digest("hex");
+  const sourceGuard=guardSource||(async(body,source,signal)=>{
     const labels=body.request?.labels||{},id=labels.root_cascade_id||labels.cascade_id;
     if(typeof id!=="string"||!id||id.length>160)throw httpError("Antigravity request has no stable conversation identifier",400);
-    const profile=source==="github"?"codex:"+githubTokenFingerprint(readToken()||""):source==="google"?"google:gemini-native":getSource(source)?.profileId("gemini");
+    const profile=profileFor(source);
     if(!profile)throw httpError("Antigravity source is unavailable",503);
-    return guard("gemini",profile,{messages:[]},{session_id:id},readClientGatewayKeys({...options,create:false}).codex,undefined,signal);
+    await guard("gemini",profile,{messages:[]},{session_id:id},readClientGatewayKeys({...options,create:false}).codex,undefined,signal);
+    return profile;
   });
-  const handler=createAntigravityHandler({client,models:available,selectedModels:()=>settings().selected_models,defaultModel:()=>settings().default_model,enabled:()=>{const saved=settings();return saved.configured||saved.native_source!==null;},privacy,searchFn:searchFn||web.search,
-    nativeModels,resolveNativeModel(id){const model=nativeModels().find(entry=>entry.id===id);if(!model)return null;const source=getSource(model.source);return source?.client?.gemini?{...model,transport:source}:null;},
+  const handler=createAntigravityHandler({client,models:available,selectedModels:(saved=settings())=>saved.selected_models,
+    defaultModel:(saved=settings())=>saved.default_model,enabled:(saved=settings())=>saved.configured||saved.native_source!==null,
+    requestSettings:settings,privacy,searchFn:searchFn||web.search,
+    nativeModels:(saved=settings())=>nativeModels(saved.native_source),
+    resolveNativeModel(id,saved=settings()){
+      const model=nativeModels(saved.native_source).find(entry=>entry.id===id);if(!model)return null;
+      const source=getSource(model.source);return source?.client?.gemini?{...model,transport:source}:null;
+    },
     imageFn:imageFn||createAntigravityImages({client,models:available,privacy}),guardSource:sourceGuard,compactionProfile:()=>githubTokenFingerprint(readToken()||""),
-    rememberConversationSource(body,source){const key=conversationKey(body);if(!key||typeof body.model!=="string"||!/^[\w][\w./:@+-]{0,159}$/.test(body.model))return;conversationSources.delete(key);conversationSources.set(key,{source,model:body.model});while(conversationSources.size>256)conversationSources.delete(conversationSources.keys().next().value)},
-    async resolveCompactionSource(body){
-      const key=conversationKey(body);if(!key)return null;if(conversationSources.has(key))return conversationSources.get(key);
-      const id=body.request.labels.root_cascade_id||body.request.labels.cascade_id,owner=await guard.owner("gemini",id,compactionSalt);
-      const profileHash=value=>createHmac("sha256",compactionSalt).update(value).digest("hex");
-      if(owner===profileHash("google:gemini-native")){
-        if(body.model.startsWith("ccdx-copilot-"))throw httpError("The conversation belongs to another model source",409);
-        return{source:"google",model:body.model};
+    async rememberConversationSource(body,source,signal,observedProfile){
+      const key=conversationKey(body);if(!key||!validModel(body.model))return;
+      const profile=typeof observedProfile==="string"?observedProfile:profileFor(source);if(!profile)return;
+      const owner=hashProfile(profile), cached=conversationRoutes?.[key];
+      if(cached?.owner===owner&&cached.model===body.model)return;
+      const remember=routes=>{
+        delete routes[key];routes[key]={owner,model:body.model};
+        const keys=Object.keys(routes);for(const id of keys.slice(0,Math.max(0,keys.length-256)))delete routes[id];
+      };
+      try{
+        await withFileLock(routeFile+".lock",async()=>{
+          const routes=await readRoutes();signal?.throwIfAborted();
+          if(routes[key]?.owner!==owner||routes[key].model!==body.model){
+            remember(routes);
+            await atomicWriteFile(routeFile,JSON.stringify(routes)+"\n",{mode:0o600});
+          }
+          conversationRoutes=routes;
+        },{timeoutMs:1000,signal});
+      }catch{
+        signal?.throwIfAborted();
+        // Existing source ownership still governs routing if this optional model record cannot be saved.
+        remember(conversationRoutes||={});
       }
-      if(owner===profileHash("codex:"+githubTokenFingerprint(readToken()||"")))return{source:"github",background:true};
-      if(owner){
-        const selected=settings().native_source, profile=selected&&getSource(selected)?.profileId("gemini");
-        const model=nativeModels(selected).find(entry=>entry.id===body.model);
-        if(profile&&owner===profileHash(profile)&&model)return{source:selected,model:model.id};
-        throw httpError("The conversation belongs to another model source",409);
+    },
+    async resolveCompactionSource(body,saved=settings()){
+      const key=conversationKey(body);if(!key)return null;
+      const id=body.request.labels.root_cascade_id||body.request.labels.cascade_id;
+      const owner=await guard.owner("gemini",id,compactionSalt);
+      if(!owner)return null;
+      conversationRoutes ||= await readRoutes();
+      const entry=conversationRoutes[key], pinned=entry?.owner===owner?entry.model:null;
+      if(owner===hashProfile(profileFor("google"))){
+        const model=pinned||body.model;
+        if(!validModel(model)||model.startsWith(ANTIGRAVITY_MODEL_PREFIX)||model.startsWith(ANTIGRAVITY_NATIVE_PREFIX))throw httpError("The conversation belongs to another model source",409);
+        return{source:"google",model};
       }
-      return null;
-    },fetchGoogle:googleFetch,acquireRequest,upstreamTimeoutMs,...timeouts,generationSettings(){
-      const saved=settings();return { selection:saved.selected_models, copilotTimeoutMs:configuredTimeout(saved) };
+      if(owner===hashProfile(profileFor("github"))){
+        const model=pinned||(validAlias(body.model)?body.model:null);
+        return model?{source:"github",model}:{source:"github",background:true};
+      }
+      const selected=saved.native_source, profile=selected&&profileFor(selected);
+      const model=profile&&owner===hashProfile(profile)&&nativeModels(selected).find(entry=>entry.id===(pinned||body.model));
+      if(model)return{source:selected,model:model.id};
+      throw httpError("The conversation belongs to another model source",409);
+    },fetchGoogle:googleFetch,acquireRequest,upstreamTimeoutMs,...timeouts,generationSettings(saved){
+      return { selection:saved.selected_models, copilotTimeoutMs:configuredTimeout(saved), preferred:saved.default_model };
     }});
   function snapshot(){
-    const config=settings(),sourceEnabled=readAccessSettings(options).providers.github,activity=handler.snapshot();
+    const config=settings(),sourceEnabled=readAccessSettings(options).providers.github,activity=handler.snapshot(config);
     const sources=nativeSources(), selectedNative=sources.find(item=>item.id===config.native_source);
     const listed=antigravityCopilotModels(models()).map(({id,model,displayName,effort,maxTokens})=>({id,model,name:displayName,effort,context_window:maxTokens,default:id===config.default_model,selected:config.selected_models===null||config.selected_models.includes(id)}));
     const groups=new Map();

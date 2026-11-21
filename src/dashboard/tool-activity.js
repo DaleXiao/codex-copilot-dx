@@ -1,11 +1,11 @@
 (() => {
   const root = document.getElementById("tool-activity");if (!root) return;
   const el = id => document.getElementById(id), canvas = el("tool-canvas"), ctx = canvas.getContext?.("2d");
-  const styles = new Set(["assembly", "sorter", "gantry", "rotary", "off"]), storageKey = "ccdx.dashboard.toolMotionStyle";
+  const styles = new Set(["production", "clock", "assembly", "sorter", "gantry", "rotary", "off"]), storageKey = "ccdx.dashboard.toolMotionStyle";
   const pending = state => ["preparing", "waiting"].includes(state);
   const phrase = (key, values = {}) => globalThis.ccdxLanguage.format(key, values);
   const text = (id, key, values) => globalThis.ccdxLanguage.set(el(id), key, values);
-  const state = { scene: "idle", style: "assembly" };
+  const state = { scene: "idle", style: "production" };
   const drawMachine = ctx && globalThis.ccdxToolMachines(ctx);
   try { const saved = localStorage.getItem(storageKey);if (styles.has(saved)) state.style = saved; } catch {}
   const motion = globalThis.matchMedia?.("(prefers-reduced-motion: reduce)") || { matches: false, addEventListener() {} };
@@ -27,7 +27,7 @@
     if (canvas.width !== w || canvas.height !== h) { canvas.width = w;canvas.height = h; }
     ctx.setTransform(1, 0, 0, 1, 0, 0);ctx.clearRect(0, 0, w, h);
     if (animating() && !motion.matches) drawnTime = (now - start) / 1000;
-    drawMachine(state.style, { time: drawnTime ?? 0, running: drawnTime !== null, reduced: motion.matches, width, height, dpr, ink: color, surface });
+    drawMachine(state.style, { time: motion.matches ? 0 : drawnTime ?? 0, width, height, dpr, ink: color, surface });
   }
 
   function animate(now) {
@@ -100,9 +100,9 @@
     el("tool-technical").replaceChildren();
     for (const row of rows) {
       const line = document.createElement("tr");
-      for (const value of [appName(row.application), sourceName(row.provider), row.model,
-        row.name || phrase("tool_action_generic"), phrase(`tool_row_${row.state}`)]) {
-        const cell = document.createElement("td");cell.textContent = value;line.append(cell);
+      for (const [label, value] of [["client", appName(row.application)], ["source", sourceName(row.provider)], ["model", row.model],
+        ["tool_name", row.name || phrase("tool_action_generic")], ["outcome", phrase(`tool_row_${row.state}`)]]) {
+        const cell = document.createElement("td");cell.textContent = value;cell.dataset.label = phrase(label);line.append(cell);
       }
       el("tool-technical").append(line);
     }

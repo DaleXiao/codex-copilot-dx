@@ -36,10 +36,10 @@ const data = (requests = [], items = []) => ({ stream_performance: { active_requ
 const tool = state => ({ id: "tool-one", application: "claude_app", provider: "api_work", model: "tool-model", name: "read_file", state, expires_in_ms: 15000 });
 
 test("motion defaults and removed preferences migrate while valid choices remain", () => {
-  for (const saved of [undefined, "orbit", "weave", "busy", "speed", "halo", "grid", "invalid"]) assert.equal(fixture(saved).el("tool-style").value, "assembly");
-  for (const saved of ["assembly", "sorter", "gantry", "rotary", "off"]) assert.equal(fixture(saved).el("tool-style").value, saved);
+  for (const saved of [undefined, "orbit", "weave", "busy", "speed", "halo", "grid", "invalid"]) assert.equal(fixture(saved).el("tool-style").value, "production");
+  for (const saved of ["production", "clock", "assembly", "sorter", "gantry", "rotary", "off"]) assert.equal(fixture(saved).el("tool-style").value, saved);
   const f = fixture();f.api.update(data([], [tool("waiting")]), { live: true });
-  for (const style of ["assembly", "sorter", "gantry", "rotary"]) {
+  for (const style of ["production", "clock", "assembly", "sorter", "gantry", "rotary"]) {
     f.style(style);const before = f.draws;f.advance(50);assert.ok(f.draws > before);assert.equal(f.saved, style);
     assert.equal(f.el("tool-state").textContent, "tool_waiting:1");
   }
@@ -65,7 +65,7 @@ test("pending calls take precedence and actual returned results hand back to an 
 });
 test("hidden, offscreen and reduced motion pause every style without changing its state text", () => {
   const f = fixture();f.api.update(data([request()]), { live: true });
-  for (const style of ["assembly", "sorter", "gantry", "rotary"]) {
+  for (const style of ["production", "clock", "assembly", "sorter", "gantry", "rotary"]) {
     f.style(style);f.motion.matches = true;f.listeners.get("motion")();assert.equal(f.frames.size, 0);
     f.motion.matches = false;f.listeners.get("motion")();assert.ok(f.frames.size);
     f.intersect(false);assert.equal(f.frames.size, 0);f.intersect(true);assert.ok(f.frames.size);

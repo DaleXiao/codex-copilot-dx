@@ -18,7 +18,7 @@ import {withFileLockSync} from "./lock.mjs";
 import {httpError} from "./http-errors.mjs";
 import {createAntigravityBindings, validModel} from "./antigravity-bindings.mjs";
 import {parseTimerMs} from "./runtime-config.mjs";
-import {antigravityCopilotModels,ANTIGRAVITY_MODEL_PREFIX,ANTIGRAVITY_NATIVE_PREFIX} from "./antigravity-models.mjs";
+import {antigravityCopilotModels,groupAntigravityModels,ANTIGRAVITY_MODEL_PREFIX,ANTIGRAVITY_NATIVE_PREFIX} from "./antigravity-models.mjs";
 
 const execute=promisify(execFile),key="gemini_antigravity_enabled",modelKey="gemini_antigravity_models",defaultKey="gemini_antigravity_default_model";
 const timeoutKey="gemini_antigravity_copilot_timeout_seconds";
@@ -97,12 +97,9 @@ export function createAntigravityRuntime({client,models=()=>[],refreshModels,pri
   function snapshot(){
     const config=settings(),sourceEnabled=readAccessSettings(options).providers.github,activity=handler.snapshot(config);
     const sources=nativeSources(), selectedNative=sources.find(item=>item.id===config.native_source);
-    const listed=antigravityCopilotModels(models()).map(({id,model,displayName,effort,maxTokens})=>({id,model,name:displayName,effort,context_window:maxTokens,default:id===config.default_model,selected:config.selected_models===null||config.selected_models.includes(id)}));
-    const groups=new Map();
-    for(const variant of listed){
-      if(!groups.has(variant.model))groups.set(variant.model,{id:variant.model,name:variant.name.split(" · Copilot")[0],source:"github",context_window:variant.context_window,default:false,efforts:[]});
-      const group=groups.get(variant.model);group.default||=variant.default;group.efforts.push({id:variant.id,effort:variant.effort,selected:variant.selected});
-    }
+    const catalog=models();
+    const listed=antigravityCopilotModels(catalog).map(({id,model,displayName,effort,maxTokens})=>({id,model,name:displayName,effort,context_window:maxTokens,default:id===config.default_model,selected:config.selected_models===null||config.selected_models.includes(id)}));
+    const groups=groupAntigravityModels(listed,catalog);
     const expected=[...(config.enabled&&sourceEnabled?listed.filter(model=>model.selected).map(model=>model.id):[]),...nativeModels(config.native_source).map(model=>model.id)].sort();
     const desiredDefault=expected.includes(config.default_model)?config.default_model:null;
     const reload=config.enabled&&sourceEnabled||config.native_source?(activity.catalog_models===null?null:JSON.stringify([...activity.catalog_models].sort())!==JSON.stringify(expected)
@@ -114,7 +111,7 @@ export function createAntigravityRuntime({client,models=()=>[],refreshModels,pri
       source_enabled:sourceEnabled,default_model_unavailable:defaultUnavailable,models_reload_required:reload,app:visibleApp,application:current||null,route_observed:activity.observed,
       model_source:["Google",...(config.enabled&&sourceEnabled?["GitHub Copilot"]:[]),...(selectedNative?[selectedNative.name]:[])].join(" + "),background_source:"GitHub Copilot",ordinary_chat_source:"Google (unchanged)",
       compaction_source:"Observed conversation source; existing background policy when unassigned",
-      models:listed,model_groups:[...groups.values()],activity,last_operation:lastOperation};
+      models:listed,model_groups:groups,activity,last_operation:lastOperation};
   }
   async function action(input={},baseUrl){
     if(input&&Object.keys(input).some(name=>!["action","accept_background_copilot","models","default_model","copilot_timeout_seconds","native_source"].includes(name)))throw httpError("Invalid Gemini operation",400);

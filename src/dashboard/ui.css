@@ -269,9 +269,18 @@ main { align-self: start; }
 .chart-heading { flex-wrap: wrap; align-items: end; }
 .chart-heading .analytics-controls { margin: 0; }
 .chart-heading label { display: grid; gap: 6px; color: var(--muted); }
-.request-details { min-width: 190px; max-width: 340px; white-space: normal; }
-.request-details .failure-detail { grid-template-columns: minmax(95px, auto) minmax(0, 1fr); margin-bottom: 0; }
-.request-details .failure-detail dd { overflow-wrap: anywhere; }
+.request-detail-cell { padding: 9px 12px 12px; background: var(--surface); }
+.request-detail-fields { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(240px,100%),1fr)); gap:5px 20px; margin:0; }
+.request-detail-fields > div { display:grid; grid-template-columns:minmax(0,max-content) minmax(0,1fr); align-items:baseline; gap:6px 10px; min-width:0; }
+.request-detail-fields .request-detail-wide { grid-column:1 / -1; }
+.request-detail-fields dt { color:var(--muted); }
+.request-detail-fields dd { margin:0; overflow-wrap:anywhere; min-width:0; }
+.request-disclosure { min-height:0; padding:4px 8px; white-space:nowrap; }
+.recent-requests-table th.recent-request-time { width:13ch; }
+.recent-requests-table th.recent-request-duration { width:15ch; }
+.recent-requests-table th.recent-request-app { width:17%; }
+.recent-requests-table th.recent-request-result { width:17%; }
+.recent-requests-table th:last-child { width:10ch; }
 .snapshot-meta { justify-content: flex-start; margin-top: 14px; line-height: 1.7; }
 .overview { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .client-overview { grid-template-columns: 1fr; }
@@ -693,28 +702,40 @@ input[role="switch"]:disabled { opacity: .5; cursor: wait; }
 
 .tool-style { display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);white-space:nowrap; }
 .tool-style select { max-width:160px; }
-.tool-stage { display:grid;grid-template-columns:minmax(180px,250px) minmax(0,1fr);align-items:start;gap:24px;min-height:230px; }
+.tool-stage { display:grid;grid-template-columns:minmax(0,2fr) minmax(180px,1fr);align-items:start;gap:18px; }
 .tool-visual,.tool-content { min-width:0; }
-.tool-orbit { width:100%;height:190px;position:relative; }
+.tool-orbit { width:100%;height:clamp(260px,29vw,360px);position:relative; }
 .tool-orbit canvas { display:block;width:100%;height:100%; }
 .tool-stage[data-style="off"] { grid-template-columns:1fr;min-height:110px; }
 .tool-stage[data-style="off"] .tool-orbit { display:none; }
 .tool-stage[data-style="off"] .tool-narration { text-align:left; }
 .tool-narration { margin:0;min-height:24px;text-align:center;color:var(--text);font-size:12px;line-height:1.7; }
-.tool-context { color:var(--muted);font-size:11px;line-height:1.6;margin:0 0 16px; }
-.tool-entry { display:grid;grid-template-columns:18px minmax(0,1fr) auto;gap:10px;align-items:center;min-height:48px;padding-block:8px;border-bottom:1px solid var(--border); }
+.tool-context { color:var(--muted);font-size:11px;line-height:1.6;margin:0 0 8px;overflow-wrap:anywhere; }
+.tool-entry { display:grid;grid-template-columns:12px minmax(0,1fr) minmax(0,max-content);gap:7px;align-items:center;min-height:34px;padding-block:4px;border-bottom:1px solid var(--border); }
 .tool-entry:last-child { border-bottom:0; }
 .tool-name { font-size:12px; }
-.tool-entry > span:last-child { color:var(--muted);font-size:11px;white-space:nowrap; }
+.tool-entry > span:last-child { color:var(--muted);font-size:11px;text-align:right;overflow-wrap:anywhere; }
 .tool-mark { display:inline-block;width:7px;height:7px;border:1px solid var(--accent);border-radius:50%; }
 .tool-entry[data-state="preparing"] .tool-mark { background:var(--accent); }
 .tool-entry[data-state="returned"] .tool-mark { width:9px;height:5px;border-top:0;border-right:0;border-radius:0;transform:rotate(-45deg); }
 .tool-technical { margin:12px 0 0;color:var(--muted);font-size:11px; }
 .tool-technical p { overflow-wrap:anywhere;line-height:1.7;margin:6px 0; }
+.tool-technical th:nth-child(3), .tool-technical th:nth-child(4) { width:26%; }
 #tool-cursor { display:inline-block;animation:tool-cursor 1s steps(1) infinite; }
 #tool-activity[data-paused="true"] #tool-cursor { animation:none; }
 @keyframes tool-cursor { 50% { opacity:0; } }
-@media(max-width:620px) { .tool-stage { grid-template-columns:1fr;grid-template-rows:auto 1fr;gap:8px; }.tool-stage[data-style="off"] { grid-template-rows:1fr; }.tool-visual { width:100%;max-width:330px;margin-inline:auto; }.tool-content { padding-bottom:8px; }.tool-context { margin-bottom:4px; } }
+@media(max-width:760px) {
+  .tool-stage { grid-template-columns:1fr;gap:8px; }
+  .tool-orbit { height:clamp(200px,52vw,320px); }
+  .tool-context { margin-bottom:4px; }
+}
+@media(max-width:620px) {
+  .tool-technical :is(table,tbody,tr) { display:block; }
+  .tool-technical thead { position:absolute; clip-path:inset(50%); width:1px; height:1px; overflow:hidden; }
+  .tool-technical tbody tr { padding-block:6px; border-bottom:1px solid var(--border); }
+  .tool-technical tbody td { display:grid; grid-template-columns:70px minmax(0,1fr); gap:8px; padding:2px 0; border:0; }
+  .tool-technical tbody td::before { content:attr(data-label); color:var(--muted); }
+}
 @media(prefers-reduced-motion:reduce) { #tool-cursor { animation:none; } }
 
 /* Compact request statistics in the existing diagnostics panel. */
@@ -759,8 +780,13 @@ input[role="switch"]:disabled { opacity: .5; cursor: wait; }
   .usage-table :is(th,td):not(:first-child):not(:nth-child(7)):not([colspan]) { display: none; }
   .usage-table th:first-child { width: 70%; }
   .usage-row-details { display: block; }
-  .recent-requests-table :is(th,td):is(:nth-child(1),:nth-child(2),:nth-child(5)):not([colspan]) { display: none; }
-  .recent-requests-table th:nth-child(3) { width: 40%; }
+  .recent-requests-table { table-layout:auto; }
+  .recent-requests-table :is(th,td):is(.recent-request-time,.recent-request-app) { display:none; }
+  .recent-requests-table th.recent-request-duration { width:11ch; }
+  .recent-requests-table th.recent-request-result { width:1%; }
+  .recent-requests-table th:last-child { width:1%; }
+  .recent-requests-table .recent-request-duration { white-space:nowrap; }
+  .recent-requests-table .recent-request-result { overflow-wrap:normal; }
   .failure-table th:last-child { width: 40%; }
 }
 #action-confirm-apply { background:var(--accent); color:var(--page); border-color:var(--accent); }

@@ -54,9 +54,12 @@ test("Chat tool calls restore their original names and exact arguments", () => {
   const { chat, originalNames } = antigravityToChat({ contents: [{ role: "user", parts: [{ text: "read" }] }], tools: [{ functionDeclarations: [tool] }] }, { model: "gemini-4-argon", stream: false });
   const alias = chat.tools[0].function.name;
   const result = chatToAntigravity({ choices: [{ finish_reason: "tool_calls", message: { content: null,
-    tool_calls: [{ id: "call-two", function: { name: alias, arguments: '{"number":9007199254740993}' } }] } }] }, originalNames);
+    tool_calls: [{ id: "call-two", function: { name: alias, arguments: '{"number":9007199254740993,"_id":"item","_meta":{"__typename":"Record"}}' } }] } }] }, originalNames);
   assert.equal(result.candidates[0].content.parts[0].functionCall.name, tool.name);
   assert.match(JSON.stringify(result), /9007199254740993/);
+  const { args } = result.candidates[0].content.parts[0].functionCall;
+  assert.equal(args._id, "item");
+  assert.deepEqual(args._meta, { __typename: "Record" });
   assert.throws(() => chatToAntigravity({ choices: [{ finish_reason: "tool_calls", message: { tool_calls: [{ id: "call-two", function: { name: alias, arguments: "{" } }] } }] }, originalNames), /arguments/);
 });
 

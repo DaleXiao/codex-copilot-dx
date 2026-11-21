@@ -3,10 +3,12 @@ import {modelDisplayName} from "./model-display.mjs";
 import {modelReasoningEfforts} from "./provider-metadata.mjs";
 export const ANTIGRAVITY_MODEL_PREFIX = "ccdx-copilot-";
 export const ANTIGRAVITY_NATIVE_PREFIX = "ccdx-gemini-";
+const geminiModel = /^gemini-[a-z0-9][a-z0-9._-]{0,100}$/;
+const knownEfforts = new Set(["minimal", "low", "medium", "high", "xhigh", "max"]);
 
 export function antigravityCopilotModels(catalog) {
   const data=Array.isArray(catalog)?catalog:catalog?.data;
-  return uniqueModelEntries(Array.isArray(data)?data:[]).filter(model=>/^gemini-[a-z0-9][a-z0-9._-]{0,100}$/.test(model?.id)
+  return uniqueModelEntries(Array.isArray(data)?data:[]).filter(model=>geminiModel.test(model?.id)
     &&model.model_picker_enabled!==false&&(!model.policy?.state||model.policy.state==="enabled")
     &&(!model.capabilities?.type||model.capabilities.type==="chat")
     &&model.capabilities?.supports?.streaming!==false&&model.capabilities?.supports?.tool_calls!==false
@@ -21,6 +23,35 @@ export function antigravityCopilotModels(catalog) {
         supportsImages:model.capabilities?.supports?.vision===true,
       }));
     });
+}
+
+export function groupAntigravityModels(listed, catalog) {
+  const data = Array.isArray(catalog) ? catalog : catalog?.data;
+  const base = new Map();
+  for (const model of uniqueModelEntries(Array.isArray(data) ? data : [])) {
+    if (!geminiModel.test(model?.base_model_id) || !geminiModel.test(model.id) || model.base_model_id === model.id
+      || !knownEfforts.has(model.reasoning_effort)) continue;
+    base.set(model.id, { id: model.base_model_id, effort: model.reasoning_effort });
+  }
+  const nameOf = name => name.split(" · Copilot")[0];
+  const names = new Map(listed.map(variant => [variant.model, nameOf(variant.name)]));
+  const groups = new Map();
+  for (const variant of listed) {
+    const candidate = base.get(variant.model);
+    const explicit = candidate && !base.has(candidate.id) && (!variant.effort || variant.effort === candidate.effort) ? candidate : null;
+    const id = explicit?.id || variant.model;
+    if (!groups.has(id)) {
+      const name = names.get(id) || id.split("-").map(word => word[0]?.toUpperCase() + word.slice(1)).join(" ");
+      groups.set(id, { id, name, source: "github", context_window: variant.context_window, default: false, efforts: [] });
+    }
+    const group = groups.get(id);
+    if (Number.isFinite(group.context_window) && Number.isFinite(variant.context_window)) {
+      group.context_window = Math.min(group.context_window, variant.context_window);
+    } else group.context_window = undefined;
+    group.default ||= variant.default;
+    group.efforts.push({ id: variant.id, effort: explicit?.effort || variant.effort, selected: variant.selected });
+  }
+  return [...groups.values()];
 }
 
 // Use the upstream's existing agent-default field only when it names a model

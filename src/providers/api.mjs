@@ -46,6 +46,8 @@ export function createApiProvider({ config, secrets, env = process.env, platform
     endpoint: config.endpoints[protocol] ? new URL(config.endpoints[protocol]).href : null, key: config.secret_ref || fingerprint, auth: protocol === "messages" ? config.auth_header : protocol === "gemini" ? "x-goog-api-key" : "bearer",
   })).digest("hex").slice(0, 24)}`]));
   const profile = profiles.responses;
+  const admissionAccount = `api:${config.id}:${config.secret_ref || fingerprint}`;
+  const admissionRevision = createHash("sha256").update(JSON.stringify(profiles)).digest("hex");
   const modelsUrl = config.base_url.replace(/\/+$/, "") + "/models", geminiModelsUrl = config.endpoints.gemini && new URL(config.endpoints.gemini).href;
   const targets = [...Object.values(config.endpoints), modelsUrl];
   if (config.endpoints.messages) targets.push(config.endpoints.messages.replace(/\/+$/, "") + "/count_tokens");
@@ -235,7 +237,8 @@ export function createApiProvider({ config, secrets, env = process.env, platform
     },
   };
   return {
-    id: config.id, name: config.name, client, registry, configuredModels: true, defaultReviewEffort: null, profileId: (protocol = "responses") => profiles[protocol] || profile,
+    id: config.id, name: config.name, client, registry, configuredModels: true, defaultReviewEffort: null,
+    admissionAccount, admissionRevision, profileId: (protocol = "responses") => profiles[protocol] || profile,
     models: family => catalog.filter(model => model.supported_endpoints.includes(family === "claude" ? paths.messages : family === "gemini" ? paths.gemini : paths.responses))
       .map(model => ({ ...model, ...modelDisplay(model.id), capability: model.protocol_capabilities[family === "claude" ? "messages" : family === "gemini" ? "gemini" : "responses"] })),
     catalog: () => catalog,

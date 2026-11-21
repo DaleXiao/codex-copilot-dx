@@ -405,13 +405,13 @@ const dashboardRefresh = globalThis.ccdxRefresh.createController({
       variant: () => {
         const mode = (element("usage-analytics").open || Boolean(usageView.selectedDate)) ? "analytics" : "summary";
         const provider = element("usage-provider")?.value || "";
-        return JSON.stringify({ mode, provider, model: element("analytics-model").value || "", days: element("analytics-range").value || "all", date: usageView.selectedDate });
+        return JSON.stringify({ mode, provider, model: element("analytics-model").value || "", days: element("analytics-range").value || "all", date: usageView.selectedDate, purpose: element("usage-purpose")?.value || "" });
       },
       load: async ({ variant, signal }) => {
-        const { mode, provider, model, days, date } = JSON.parse(variant), query = new URLSearchParams();
+        const { mode, provider, model, days, date, purpose } = JSON.parse(variant), query = new URLSearchParams();
         if (mode === "analytics") { query.set("analytics", "1");query.set("time_zone", Intl.DateTimeFormat().resolvedOptions().timeZone); }
         if (provider) query.set("provider", provider);
-        if (element("usage-purpose")?.value) query.set("purpose", element("usage-purpose").value);
+        if (purpose) query.set("purpose", purpose);
         if (model) query.set("model", model);
         if (date?.startsWith("<")) query.set("to", new Date(Date.parse(date.slice(1)) - 86400000).toISOString().slice(0, 10));
         else if (date) { query.set("from", date);query.set("to", date); }

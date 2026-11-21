@@ -68,12 +68,13 @@ test("a model quota cannot block sibling models or shrink their concurrency", as
 });
 
 test("queue byte/count bounds, cancellation and shutdown release ownership once", async () => {
-  const scheduler = createSourceAdmission({ initialLimit: 1, maxQueued: 1, maxQueuedBytes: 8 }), stream = busyStream();
+  const bodyText = "x".repeat(1024 * 1024);
+  const scheduler = createSourceAdmission({ initialLimit: 1, maxQueued: 1, maxQueuedBytes: bodyText.length }), stream = busyStream();
   const first = await scheduler.run(descriptor("api_a"), async () => stream.response);
-  await assert.rejects(scheduler.run(descriptor("api_a"), async () => Response.json({}), { bytes: () => 9 }), { code: "ccdx_source_queue_full" });
-  const abort = new AbortController();const next = scheduler.run(descriptor("api_a"), async () => Response.json({}), { signal: abort.signal, bytes: () => 8 });
+  await assert.rejects(scheduler.run(descriptor("api_a"), async () => Response.json({}), { bodyText: bodyText + "x" }), { code: "ccdx_source_queue_full" });
+  const abort = new AbortController();const next = scheduler.run(descriptor("api_a"), async () => Response.json({}), { signal: abort.signal, bodyText });
   const cancelled = assert.rejects(next, { name: "AbortError" });abort.abort();await cancelled;
-  const pending = scheduler.run(descriptor("api_a"), async () => Response.json({}), { bytes: () => 8 });
+  const pending = scheduler.run(descriptor("api_a"), async () => Response.json({}), { bodyText });
   const stopped = assert.rejects(pending, { code: "ccdx_source_closed" });scheduler.close();await stopped;
   await first.body.cancel();assert.equal(stream.cancelled(), true);assert.equal(scheduler.snapshot()[0].active, 0);
 });
@@ -129,4 +130,30 @@ test("error, abort and nested recovery can acquire a fresh source slot", async (
   const summary = await scheduler.run(descriptor("github"), async () => Response.json({ summary: true }));await summary.text();
   const abort = new AbortController(), stream = busyStream();await scheduler.run(descriptor("github"), async () => stream.response, { signal: abort.signal });
   abort.abort();await flush();assert.equal(scheduler.snapshot()[0].active, 0);scheduler.close();
+});
+
+test("replacing an endpoint clears its feedback while retaining account slots and ignoring late old feedback", async t => {
+  const scheduler = createSourceAdmission({ initialLimit: 2 });
+  t.after(() => scheduler.close());
+  const old = { ...descriptor("api_a"), revision: "old" }, next = { ...old, revision: "new" };
+  const quota = () => Response.json({ error: { code: "model_quota_exceeded" } }, { status: 429 });
+  scheduler.registerDeployment(old);
+  let finish;
+  const late = scheduler.run(old, () => new Promise(resolve => { finish = resolve; }), { model: "limited" });
+  const denied = await scheduler.run(old, quota, { model: "limited" });
+  await denied.text();
+  assert.equal(scheduler.snapshot()[0].model_limits[0].model, "limited");
+  scheduler.registerDeployment(old);
+  assert.equal(scheduler.snapshot()[0].model_limits.length, 1, "Re-reading unchanged settings preserves evidence");
+  scheduler.configure("api_a", 1);
+  scheduler.registerDeployment(next);
+  assert.equal(scheduler.snapshot()[0].model_limits.length, 0);
+  let sent = false;
+  const pending = scheduler.run(next, () => { sent = true;return Response.json({ ok: true }); }, { model: "limited" });
+  await flush();
+  assert.equal(sent, false, "The old attempt still occupies the account's only slot");
+  finish(quota());
+  assert.equal((await late).status, 429);
+  assert.deepEqual(await (await pending).json(), { ok: true });
+  assert.equal(scheduler.snapshot()[0].model_limits.length, 0);
 });

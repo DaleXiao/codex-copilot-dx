@@ -27,7 +27,13 @@ export function observeSourceStreamFailure(response, error) {
   }
 }
 export function admittedSource(source, scheduler) {
-  return source?.client && scheduler ? { ...source, client: scheduler.wrap(source.client, () => ({ source: source.id, account: source.profileId() })) } : source;
+  if (!source?.client || !scheduler) return source;
+  if (!source.admissionRevision) {
+    return { ...source, client: scheduler.wrap(source.client, () => ({ source: source.id, account: source.profileId() })) };
+  }
+  const descriptor = { source: source.id, account: source.admissionAccount, revision: source.admissionRevision };
+  scheduler.registerDeployment(descriptor);
+  return { ...source, client: scheduler.wrap(source.client, () => descriptor) };
 }
 
 export function sourceLimitFeedback(status, headers, body, now = Date.now()) {
@@ -65,8 +71,9 @@ export function sourceLimitFeedback(status, headers, body, now = Date.now()) {
 export function createSourceAdmission({ now = Date.now, initialLimit = MAX_LIMIT, maxQueued = 16,
   maxQueuedBytes = MAX_QUEUE_BYTES, waitTimeoutMs = 30000, stableMs = 60000, onStable = () => {}, learned = {} } = {}) {
   const groups = new Map(), limits = new Map(), clients = new WeakMap();
+  const deployments = new Map();
   let closed = false, queuedBytes = 0;
-  const groupFor = ({ source, account = source }) => {
+  const groupFor = ({ source, account = source, revision }) => {
     const identity = source + "\0" + account;
     let group = groups.get(identity);
     if (!group) {
@@ -75,8 +82,11 @@ export function createSourceAdmission({ now = Date.now, initialLimit = MAX_LIMIT
         if (!idle) throw failure("ccdx_source_capacity", "Source scheduler is busy. Retry shortly.");
         clearTimeout(idle[1].timer);groups.delete(idle[0]);
       }
-      const key = fingerprint(identity), saved = learned[key], restored = validLimit(saved?.limit) && saved?.limit !== null && now() >= saved.at && now() - saved.at < 86400000;
-      group = { source, key, limit: restored ? saved.limit : initialLimit, active: 0, queue: [], models: new Map(), lastClient: null,
+      const deployment = revision && deployments.get(source);
+      const activeRevision = deployment?.account === account ? deployment.revision : revision;
+      const key = fingerprint(activeRevision ? identity + "\0" + activeRevision : identity);
+      const saved = learned[key], restored = validLimit(saved?.limit) && saved?.limit !== null && now() >= saved.at && now() - saved.at < 86400000;
+      group = { source, key, revision: activeRevision, limit: restored ? saved.limit : initialLimit, active: 0, queue: [], models: new Map(), lastClient: null,
         epoch: 0, stableAt: now(), successes: 0, readyToGrow: false, lastStableNotice: now(), pausedUntil: 0, reason: null, timer: null, completed: 0, rejected: 0 };
       groups.set(identity, group);
     }
@@ -116,7 +126,7 @@ export function createSourceAdmission({ now = Date.now, initialLimit = MAX_LIMIT
     arm(group);
   }
   function feedback(group, entry, value) {
-    if (!value) return;
+    if (!value || entry.revision !== group.revision) return;
     const until = now() + Math.min(7 * 86400000, value.delay);
     const model = modelState(group, entry.model);
     if (value.scope === "source") { group.pausedUntil = Math.max(group.pausedUntil, until);group.reason = value.kind; }
@@ -137,11 +147,12 @@ export function createSourceAdmission({ now = Date.now, initialLimit = MAX_LIMIT
     arm(group);
   }
   class Lease {
-    constructor(group, model, client) { this.group = group;this.model = model;this.client = client;this.epoch = group.epoch;this.bytes = 0;this.released = false;this.observed = false; }
+    constructor(group, model, client, revision) { this.group = group;this.model = model;this.client = client;this.revision = revision;this.epoch = group.epoch;this.bytes = 0;this.released = false;this.observed = false; }
     limit(value) { this.observed = true;feedback(this.group, this, value); }
     streamFailure(error, headers) { const value = sourceLimitFeedback(429, headers, { error }, now());if (value?.kind !== "unknown") this.limit(value); }
     observe(status, headers, body) {
       const group = this.group, entry = this;
+      if (entry.revision !== group.revision) return;
       if (!this.headersObserved) {
         this.headersObserved = true;
         const declared = headers?.get?.("x-ratelimit-concurrency-limit");
@@ -159,7 +170,7 @@ export function createSourceAdmission({ now = Date.now, initialLimit = MAX_LIMIT
     release(success = false) {
       if (this.released) return;this.released = true;
       const group = this.group, entry = this, model = this.modelState;group.active--;if (model) model.active--;group.completed++;
-      if (success && !this.observed) {
+      if (success && !this.observed && entry.revision === group.revision) {
         group.successes = Math.min(8, group.successes + 1);
         const mature = group.successes >= 8 && now() - group.stableAt >= stableMs;
         group.readyToGrow ||= mature;
@@ -192,7 +203,7 @@ export function createSourceAdmission({ now = Date.now, initialLimit = MAX_LIMIT
   function acquire(descriptor, { signal, model = "unknown", client = "other", bytes, bodyText } = {}) {
     if (closed) throw failure("ccdx_source_closed", "The source scheduler is stopping.");
     if (signal?.aborted) throw abortError(signal);
-    const group = groupFor(descriptor), entry = new Lease(group, model, client);
+    const group = groupFor(descriptor), entry = new Lease(group, model, client, descriptor.revision);
     if (!group.queue.length && fits(group, entry)) { entry.resolve = immediate;return activate(group, entry); }
     const delay = Math.max(0, readyAt(group, entry) - now());
     if (delay >= waitTimeoutMs) throw failure("ccdx_source_limited", "The source is limited. Retry after its recovery time.", delay, 429);
@@ -279,6 +290,20 @@ export function createSourceAdmission({ now = Date.now, initialLimit = MAX_LIMIT
   }
   return {
     run,
+    registerDeployment(descriptor) {
+      const { source, account, revision } = descriptor;
+      if (!deployments.has(source) && deployments.size >= 64) deployments.delete(deployments.keys().next().value);
+      deployments.set(source, descriptor);
+      const identity = source + "\0" + account, group = groups.get(identity);
+      if (!group || group.revision === revision) return;
+      // Keep leases in the account pool while discarding evidence from the replaced endpoints.
+      const time = now();
+      Object.assign(group, { key: fingerprint(identity + "\0" + revision), revision, limit: initialLimit,
+        epoch: 0, stableAt: time, successes: 0, readyToGrow: false, lastStableNotice: time,
+        pausedUntil: 0, reason: null, advertised: undefined, advertisedUntil: 0 });
+      group.models.clear();
+      drain(group);
+    },
     wrap(client, descriptor) {
       if (!client || clients.has(client) || client[SOURCE_ADMISSION]?.scheduler === this) return clients.get(client) || client;
       const wrapped = { ...client };

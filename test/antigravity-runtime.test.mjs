@@ -274,3 +274,20 @@ test("parallel model choices commit in request order and a failed SSE cannot rep
   assert.equal((await call("placeholder",{type:"summarization"})).status,200);
   assert.deepEqual(sent,["gemini-4-carbon",argon,"gemini-4-carbon",argon]);
 });
+
+test("explicit reasoning families group the API and TUI choices without replacing wire aliases", async t => {
+  const f = fixture(t);
+  const model = id => ({ id, supported_endpoints: ["/chat/completions"] });
+  const runtime = createAntigravityRuntime({ ...f.options, models: () => ({ data: [
+    { ...model("gemini-4-carbon-low"), base_model_id: "gemini-4-carbon", reasoning_effort: "low" },
+    { ...model("gemini-4-carbon-high"), base_model_id: "gemini-4-carbon", reasoning_effort: "high" },
+    model("gemini-4-carbon-preview"), model("gemini-4-independent-high"),
+  ] }) });
+  t.after(() => runtime.close());
+  const high = "ccdx-copilot-gemini-4-carbon-high";
+  const state = await runtime.action({ action: "models", models: [high], default_model: high }, "http://127.0.0.1:2026");
+  assert.equal(state.default_model, high);
+  assert.equal(state.models.find(row => row.id === high).model, "gemini-4-carbon-high");
+  assert.deepEqual(state.model_groups.map(row => row.id), ["gemini-4-carbon", "gemini-4-carbon-preview", "gemini-4-independent-high"]);
+  assert.deepEqual(state.model_groups[0].efforts.map(row => [row.effort, row.selected]), [["low", false], ["high", true]]);
+});

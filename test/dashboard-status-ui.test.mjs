@@ -51,7 +51,8 @@ test("Overview formats the current-run token ratio without turning unknown value
 
 test("request-context rows are lazy, bounded, text-only and distinguish missing values from zero", () => {
   const nodes = new Map();
-  const createNode = () => ({ textContent: "", children: [], open: false,
+  const createNode = () => ({ textContent: "", children: [], open: false, attributes: {}, setAttribute(key, value) { this.attributes[key] = value; },
+    addEventListener(type, callback) { this[type] = callback; },
     replaceChildren(...children) { this.children = children; }, append(...children) { this.children.push(...children); } });
   const document = { getElementById(id) { if (!nodes.has(id)) nodes.set(id, createNode()); return nodes.get(id); }, createElement: createNode };
   const renderContext = runInNewContext(`${renderScript}\nrenderContext;`, { document, ccdxLanguage: dashboardLanguage });
@@ -62,42 +63,51 @@ test("request-context rows are lazy, bounded, text-only and distinguish missing 
   assert.equal(nodes.get("context-body").children.length, 0);
   document.getElementById("request-context").open = true;
   renderContext();
-  const rows = nodes.get("context-body").children;
-  assert.equal(rows[0].children[2].textContent, "<script>not-html</script>");
-  const fields = row => row.children[5].children[0].children[1].children;
+  const children = nodes.get("context-body").children;
+  const rows = children.filter((_, index) => index % 2 === 0);
+  const detailRows = children.filter((_, index) => index % 2 !== 0);
+  const trigger = rows[1].children[5].children[0];
+  assert.equal(detailRows[1].hidden, true);
+  assert.equal(detailRows[1].children[0].colSpan, 6);
+  assert.equal(trigger.attributes["aria-controls"], detailRows[1].id);
+  trigger.click();
+  assert.equal(detailRows[1].hidden, false);
+  assert.equal(trigger.attributes["aria-expanded"], "true");
+  assert.equal(rows[0].children[3].textContent, "<script>not-html</script>");
+  const fields = row => row.children[0].children[0].children.flatMap(pair => pair.children);
   const detail = (row, key) => { const nodes = fields(row);for (let index = 0; index < nodes.length; index += 2) if (nodes[index].textContent === dashboardLanguage.format(key)) return nodes[index + 1].textContent; };
-  assert.equal(detail(rows[0], "images"), "—", "Unknown image count remains unknown in technical details");
-  assert.equal(detail(rows[0], "input_window"), "—", "Unknown input occupancy remains unknown");
-  assert.equal(detail(rows[1], "images"), "0");
-  assert.equal(rows[1].children[1].textContent, "Codex App");
-  assert.equal(rows[1].children[4].textContent, "120.03 s");
-  assert.equal(detail(rows[1], "source"), "GitHub Copilot");
-  assert.equal(detail(rows[1], "input_tokens"), "150");
-  assert.equal(detail(rows[1], "input_window"), "15.0%");
-  assert.equal(rows[0].children[3].textContent, "Failed");
-  assert.equal(rows[1].children[3].textContent, "Completed");
+  assert.equal(detail(detailRows[0], "images"), "—", "Unknown image count remains unknown in technical details");
+  assert.equal(detail(detailRows[0], "input_window"), "—", "Unknown input occupancy remains unknown");
+  assert.equal(detail(detailRows[1], "images"), "0");
+  assert.equal(rows[1].children[2].textContent, "Codex App");
+  assert.equal(rows[1].children[1].textContent, "120.03 s");
+  assert.equal(detail(detailRows[1], "source"), "GitHub Copilot");
+  assert.equal(detail(detailRows[1], "input_tokens"), "150");
+  assert.equal(detail(detailRows[1], "input_window"), "15.0%");
+  assert.equal(rows[0].children[4].textContent, "Failed");
+  assert.equal(rows[1].children[4].textContent, "Completed");
   assert.equal(rows[0].children[0].textContent, "—", "Missing timestamp is not guessed");
-  assert.equal(detail(rows[1], "wire_mib"), "1.00 MiB", "Payload bytes remain available");
-  assert.equal(detail(rows[0], "body_queue_wait"), undefined);
-  assert.match(detail(rows[1], "body_queue_wait"), /942 ms \(Admitted\).*At entry: An earlier request needed exclusive access/);
-  assert.equal(detail(rows[1], "source_queue_wait"), "20 ms");
-  assert.equal(detail(rows[1], "client_tool_errors_received"), "2", "Explicit tool errors remain separate from model completion");
+  assert.equal(detail(detailRows[1], "wire_mib"), "1.00 MiB", "Payload bytes remain available");
+  assert.equal(detail(detailRows[0], "body_queue_wait"), undefined);
+  assert.match(detail(detailRows[1], "body_queue_wait"), /942 ms \(Admitted\).*At entry: An earlier request needed exclusive access/);
+  assert.equal(detail(detailRows[1], "source_queue_wait"), "20 ms");
+  assert.equal(detail(detailRows[1], "client_tool_errors_received"), "2", "Explicit tool errors remain separate from model completion");
   assert.match(nodes.get("context-note").textContent, /2 completed, 0 incomplete, 1 failed/);
   for (const [result, label] of [["admitted", "Admitted"], ["timed_out", "Queue timed out"], ["aborted", "Wait cancelled"]]) {
     renderContext({ recent_requests: [{ outcome: result === "admitted" ? "completed" : "failed", context: { body_queue: {
       wait_ms: 108247, outcome: result, reason: "body_budget", length_known: false, requested_bytes: 33554432, active_bytes: 211918, limit_bytes: 33554432,
     } } }] });
-    assert.match(detail(nodes.get("context-body").children[0], "body_queue_wait"), new RegExp(`${label}.*At entry: Unknown body length required a full reservation`));
+    assert.match(detail(nodes.get("context-body").children[1], "body_queue_wait"), new RegExp(`${label}.*At entry: Unknown body length required a full reservation`));
   }
   renderContext({ recent_requests: Array.from({ length: 25 }, () => ({ context: {} })) });
-  assert.equal(nodes.get("context-body").children.length, 20);
+  assert.equal(nodes.get("context-body").children.length, 40);
   document.getElementById("request-context").closest = () => ({ hidden: true });
   renderContext({ recent_requests: [{ model: "updated-while-hidden", context: {} }] });
-  assert.equal(nodes.get("context-body").children.length, 20, "Hidden modules defer rebuilding rows");
+  assert.equal(nodes.get("context-body").children.length, 40, "Hidden modules defer rebuilding rows");
   document.getElementById("request-context").closest = () => null;
   renderContext();
-  assert.equal(nodes.get("context-body").children.length, 1);
-  assert.equal(nodes.get("context-body").children[0].children[2].textContent, "updated-while-hidden");
+  assert.equal(nodes.get("context-body").children.length, 2);
+  assert.equal(nodes.get("context-body").children[0].children[3].textContent, "updated-while-hidden");
 });
 
 test("Overview groups apps by their selected source without hiding sources or guessing an ambiguous choice", () => {
@@ -228,7 +238,7 @@ test("native prediction dashboard distinguishes bridge readiness from candidate 
 });
 
 test('known access refusals remain notices even when their separate notice entry has been evicted',()=>{
- const nodes=new Map(),createNode=()=>({textContent:'',children:[],querySelectorAll(){return[];},setAttribute(){},replaceChildren(...items){this.children=items;},append(...items){this.children.push(...items);}});
+ const nodes=new Map(),createNode=()=>({textContent:'',children:[],querySelectorAll(){return[];},setAttribute(){},addEventListener(){},replaceChildren(...items){this.children=items;},append(...items){this.children.push(...items);}});
  const document={getElementById(id){if(!nodes.has(id))nodes.set(id,createNode());return nodes.get(id);},createElement:createNode};
  const render=runInNewContext(`${renderScript}\nrender;`,{document,ccdxLanguage:dashboardLanguage});
  render({stream_performance:{recent_requests:[{request_id:'blocked',at:'2026-10-26T01:00:00Z',model:'configured-but-disabled',failed:true,outcome:'unknown',origin:'client_validation',http_status:400,rejection_reason:'ccdx_model_not_selected'}]},http_errors:{actionable_recent:[],capability_recent:[]}});

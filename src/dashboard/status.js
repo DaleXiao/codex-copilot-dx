@@ -397,21 +397,21 @@
       const signature = JSON.stringify(contextRequests);
       if (signature === contextSignature) return;
       contextSignature = signature;
-      const openDetails = [...(body.querySelectorAll?.("details[open]") || [])].filter(details => details.dataset.disclosureClosing !== "true");
-      const expanded = new Set(openDetails.map(details => details.getAttribute("data-request-key")));
+      const openDetails = [...(body.querySelectorAll?.(".request-disclosure[aria-expanded=true]") || [])];
+      const expanded = new Set(openDetails.map(button => button.getAttribute("data-request-key")));
       const viewport = document.defaultView;
-      const focused = document.activeElement?.closest?.(".request-details > summary");
+      const focused = document.activeElement?.closest?.(".request-disclosure");
       const keepFocus = Boolean(focused && body.contains?.(focused));
       const topInView = summary => {
         if (!viewport?.scrollY || !summary) return null;
         const box = summary.getBoundingClientRect();return box.bottom > 0 && box.top < viewport.innerHeight ? box.top : null;
       };
       let reading = keepFocus ? focused : null;
-      if (!reading && viewport?.scrollY) reading = openDetails.map(details => details.querySelector("summary")).find(summary => topInView(summary) !== null);
-      const readingKey = reading?.parentElement?.getAttribute("data-request-key"), readingTop = topInView(reading);
+      if (!reading && viewport?.scrollY) reading = openDetails.find(button => topInView(button) !== null);
+      const readingKey = reading?.getAttribute("data-request-key"), readingTop = topInView(reading);
       let restoredSummary;
       body.replaceChildren();
-      for (const request of contextRequests) {
+      for (const [rowIndex, request] of contextRequests.entries()) {
         const context = request.context || {};
         const outcome = ["completed", "incomplete", "failed", "cancelled"].includes(request.outcome)
           ? request.outcome[0].toUpperCase() + request.outcome.slice(1) : "unknown";
@@ -420,22 +420,37 @@
         const at = Date.parse(request.at);
         const totalMs = request.timings_ms?.finished;
         const app = ["codex", "codex_app", "codex_cli", "claude", "claude_app", "claude_code", "gemini_app", "api"].includes(request.application) ? request.application : "api";
-        const row = tableRow([Number.isFinite(at) ? time(at) : "—", "",
-          String(request.model || "unknown").slice(0, 80), outcome, Number.isFinite(totalMs) ? requestTime(totalMs) : "—", ""], { labels: [3] });
-        localize(row.children[1], `flow_app_${app}`);
-        row.children[4].className = "recent-request-duration";
+        const row = tableRow([Number.isFinite(at) ? time(at) : "—", Number.isFinite(totalMs) ? requestTime(totalMs) : "—", "",
+          String(request.model || "unknown").slice(0, 80), outcome, ""], { labels: [4] });
+        localize(row.children[2], `flow_app_${app}`);
+        ["time", "duration", "app", "model", "result"].forEach((name, index) => { row.children[index].className = "recent-request-" + name; });
         const wireFailure = Number.isInteger(request.http_status) && request.http_status >= 400;
         if (request.rejection_reason) {
-          if (globalThis.ccdxIcons) globalThis.ccdxIcons.set(row.children[3], "request_access_blocked", "unavailable");else localize(row.children[3], "request_access_blocked");
-        } else if (globalThis.ccdxIcons) globalThis.ccdxIcons.set(row.children[3], wireFailure ? "request_http_failure" : outcome.toLowerCase(),
+          if (globalThis.ccdxIcons) globalThis.ccdxIcons.set(row.children[4], "request_access_blocked", "unavailable");else localize(row.children[4], "request_access_blocked");
+        } else if (globalThis.ccdxIcons) globalThis.ccdxIcons.set(row.children[4], wireFailure ? "request_http_failure" : outcome.toLowerCase(),
           wireFailure ? "warning" : globalThis.ccdxIcons.kind(outcome.toLowerCase()), wireFailure ? { status: request.http_status } : {});
-        else if (wireFailure) localize(row.children[3], "request_http_failure", { status: request.http_status });
-        const details = document.createElement("details"), summary = document.createElement("summary"), fields = document.createElement("dl");
+        else if (wireFailure) localize(row.children[4], "request_http_failure", { status: request.http_status });
+        const disclosure = document.createElement("button"), detailRow = document.createElement("tr"),
+          cell = document.createElement("td"), fields = document.createElement("dl");
         const key = String(request.request_id || `${request.at || ""}/${request.provider || ""}/${request.model || ""}`).slice(0, 256);
-        details.setAttribute?.("data-request-key", key);details.open = expanded.has(key);
-        if (key === readingKey) restoredSummary = summary;
-        details.className = "request-details";fields.className = "failure-detail";
-        localize(summary, "tools_details");details.append(summary, fields);
+        const id = "request-detail-" + rowIndex;
+        disclosure.type = "button";
+        disclosure.className = "request-disclosure";
+        disclosure.setAttribute("data-request-key", key);
+        disclosure.setAttribute("aria-controls", id);
+        detailRow.className = "request-detail-row";
+        detailRow.id = id;
+        cell.colSpan = 6;
+        cell.className = "request-detail-cell";
+        fields.className = "request-detail-fields";
+        localize(disclosure, "tools_details");
+        function showDetails(open) {
+          disclosure.setAttribute("aria-expanded", String(open));
+          detailRow.hidden = !open;
+        }
+        showDetails(expanded.has(key));
+        disclosure.addEventListener("click", () => showDetails(detailRow.hidden));
+        if (key === readingKey) restoredSummary = disclosure;
         const queue = context.body_queue;
         const queueResult = queue?.outcome === "admitted" ? "body_queue_admitted" : queue?.outcome === "timed_out" ? "body_queue_timed_out"
           : queue?.outcome === "aborted" ? "body_queue_aborted" : "body_queue_result_unknown";
@@ -471,9 +486,12 @@
           ...(context.client_tool_errors_received > 0 ? [["client_tool_errors_received", number(context.client_tool_errors_received)]] : [])]) {
           const term = document.createElement("dt"), detail = document.createElement("dd");localize(term, key);
           if (value?.key) localize(detail, value.key, value.values);else detail.textContent = value;
-          fields.append(term, detail);
+          const pair = document.createElement("div");
+          if (["request_id", "client_request_id", "body_queue_wait", "upstream_transport_error", "requested_model"].includes(key)) pair.className = "request-detail-wide";
+          pair.append(term, detail);fields.append(pair);
         }
-        row.children[5].append(details);body.append(row);
+        cell.append(fields);detailRow.append(cell);
+        row.children[5].append(disclosure);body.append(row, detailRow);
       }
       if (restoredSummary) {
         if (keepFocus) restoredSummary.focus({ preventScroll: true });

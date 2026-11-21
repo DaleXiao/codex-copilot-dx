@@ -6,6 +6,8 @@
     "tool_style_sorter": ["Dual-lane sorter","双轨分拣"],
     "tool_style_gantry": ["Gantry transfer","龙门移载"],
     "tool_style_rotary": ["Indexing table","分度转盘"],
+    "tool_style_production": ["Production line", "工业生产线"],
+    "tool_style_clock": ["Gear clock", "齿轮钟表"],
     "tool_style_assembly": ["Assembly line","装配线"],
     "refresh_models": ["Refresh models", "刷新模型"],
     "routing_reason": ["Model routing", "选模依据"],

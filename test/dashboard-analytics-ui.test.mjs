@@ -699,3 +699,16 @@ test("filtering one historical source retains the other historical source option
   const selector = h.nodes.get("usage-provider");selector.value = "retired_a";selector.listeners.change();await flush();
   assert.ok(selector.children.some(option => option.value === "retired_b"));
 });
+
+test("a usage request keeps the selected purpose that belongs to its refresh key", async () => {
+  const h = harness();
+  await flush();
+  const purpose = h.nodes.get("usage-purpose");
+  purpose.value = "conversation";
+  purpose.listeners.change();
+  // Refresh starts in a microtask. Loading must use the captured variant.
+  purpose.value = "compaction";
+  await flush();
+  assert.ok(h.requests.some(url => String(url).includes("purpose=conversation")));
+  assert.ok(!h.requests.some(url => String(url).includes("purpose=compaction")));
+});

@@ -1,9 +1,5 @@
 (() => {
-  const fract = x => x - Math.floor(x);
-  const clamp = x => Math.max(0, Math.min(1, x));
-  const ease = x => { x = clamp(x); return x * x * (3 - 2 * x); };
-  const mix = (a,b,t) => a+(b-a)*t;
-  const project = (x,y,z=0) => [x+y*.52,152+y*.36-z];
+  "use strict";
   const palette = (inkColor, paperColor) => {
     const sampler = document.createElement("canvas");sampler.width=1;sampler.height=1;
     const sample = sampler.getContext("2d",{willReadFrequently:true});
@@ -16,347 +12,873 @@
       if (!colors.has(strength)) colors.set(strength, "rgb(" + paper.map((x,i) => Math.round(mix(x,ink[i],strength))).join(",") + ")");
       return colors.get(strength);
     };
-    return { ink:inkColor,paper:paperColor,face:tone(.04),signal:inkColor,tone,
-      stroke:tone(.66),shadow:tone(.10),base:tone(.32),top:tone(.13),side:tone(.25),end:tone(.39),edge:tone(.48) };
+    return { paper: paperColor, ink: inkColor, line: tone(.79), soft: tone(.58), metal: tone(.08),
+      side: tone(.17), flank: tone(.27), recess: tone(.37), shadow: tone(.07) };
   };
-  function poly(c,points,fill,stroke,width=1) {
-    c.beginPath();c.moveTo(...points[0]);for(let i=1;i<points.length;i++)c.lineTo(...points[i]);
-    if(fill){c.closePath();c.fillStyle=fill;c.fill();}
-    if(stroke){c.lineWidth=width;c.strokeStyle=stroke;c.stroke();}
+  const diagonal = Math.SQRT1_2;
+  const tau = Math.PI * 2;
+  const wrap = (value, period) => ((value % period) + period) % period;
+  const mix = (a, b, amount) => a + (b - a) * amount;
+  function segment(value, start, end) {
+    const t = Math.min(1, Math.max(0, (value - start) / (end - start)));
+    return t * t * (3 - 2 * t);
   }
-  function ellipse(c,x,y,rx,ry,fill,stroke,width=1) {
-    c.beginPath();c.ellipse(x,y,rx,ry,0,0,Math.PI*2);
-    if(fill){c.fillStyle=fill;c.fill();}
-    if(stroke){c.lineWidth=width;c.strokeStyle=stroke;c.stroke();}
-  }
-  function beam(c,a,b,width,color) {
-    c.lineCap="round";poly(c,[a,b],null,color,width);c.lineCap="butt";
-  }
-  function block(c,p,x,y,z,w,d,h,skin=p) {
-    const a=project(x,y,z),f=project(x,y+d,z),g=project(x+w,y+d,z);
-    const A=project(x,y,z+h),B=project(x+w,y,z+h),F=project(x,y+d,z+h),G=project(x+w,y+d,z+h);
-    // The camera is above, in front of +Y and on the -X side.
-    poly(c,[A,F,f,a],skin.end,p.stroke,.82);
-    poly(c,[F,G,g,f],skin.side,p.stroke,.82);
-    poly(c,[A,B,G,F],skin.top,p.stroke,.82);
-    poly(c,[F,G],null,p.tone(.37),.72);
-  }
-  function plinth(c,p,x,y,w,d,h=4) {
-    poly(c,[project(x-5,y+5),project(x+w+5,y+5),project(x+w+5,y+d+8),project(x-5,y+d+8)],p.shadow);
-    block(c,p,x,y,0,w,d,h,{top:p.face,side:p.side,end:p.base});
-  }
-  function signal(c,p,x,y,z,live) {
-    const [a,b]=project(x,y,z);
-    ellipse(c,a,b,3.8,2.4,p.tone(.4));
-    ellipse(c,a,b-.5,2.2,1.6,live?p.signal:p.tone(.60));
-  }
-  function roller(c,p,x,y,z,w,d) {
-    block(c,p,x,y,z,w,d,8);
-    const X=x+2,W=w-4;
-    c.save();poly(c,[project(X,y,8+z),project(X+W,y,8+z),project(X+W,y+d,8+z),project(X,y+d,8+z)],p.tone(.19));c.clip();
-    for(let a=x+5;a<x+w-3;a+=9){
-      poly(c,[project(a,y+2,z+8),project(a,y+d-2,z+8)],null,p.tone(.45),2.7);
-      poly(c,[project(a-.75,y+2,z+8),project(a-.75,y+d-2,z+8)],null,p.tone(.06),.85);
-    }
-    c.restore();
-    for(const dy of [0,d-2])block(c,p,x,y+dy,z+8,w,2,2);
-    for(const dx of [5,w-5]) {const [a,b]=project(x+dx,y+d,z+4);ellipse(c,a,b,1.8,1.8,p.ink,p.tone(.53),.5);}
-  }
-  // The rear plate goes behind the lane. The front plate and cap occlude
-  // the lane, leaving a continuous aperture on the visible end.
-  function beltGuard(c,p,x,y,length,depth,floor,ceiling,front) {
-    if(!front){
-      block(c,p,x,y,floor,length,3,ceiling-floor);
-      return;
-    }
-    const edge=y+depth;
-    block(c,p,x,edge-3,floor,length,3,ceiling-floor);
-    block(c,p,x,y,ceiling,length,depth,3);
-    const [a,b]=project(x+length*.54,edge,ceiling-5);
-    ellipse(c,a,b,1.2,1.2,p.tone(.62));
-  }
-  const sweep = (q,start,end) => ease((q-start)/(end-start));
-  function planeCircle(c,x,y,z,r,fill,stroke,width=1) {
-    const [sx,sy]=project(x,y,z);
-    c.save();c.transform(1,0,.52,.36,sx,sy);
-    ellipse(c,0,0,r,r,fill,stroke,width);
-    c.restore();
-  }
-  function cylinder(c,p,x,y,z,r,h,skin=p) {
-    const near=Math.atan(.52);
-    const rim=Array.from({length:13},(_,i)=>{
-      const angle=near+i*Math.PI/12;
-      return [x+r*Math.cos(angle),y+r*Math.sin(angle)];
-    });
-    const face=rim.map(([u,v])=>project(u,v,z+h));
-    poly(c,[...face,...rim.reverse().map(([u,v])=>project(u,v,z))],skin.side,p.stroke,.8);
-    planeCircle(c,x,y,z+h,r,skin.top,p.stroke,1.1);
-  }
-  function flange(c,p,x,y,z,width=24,shadow=true) {
-    const half=width/2, depth=width*.32, h=6.5;
-    const outline=[[-half,-depth+3],[-half+3,-depth],[half-3,-depth],[half,-depth+3],
-      [half,depth-3],[half-3,depth],[-half+3,depth],[-half,depth-3]];
-    const base=outline.map(([dx,dy])=>project(x+dx,y+dy,z));
-    const top=outline.map(([dx,dy])=>project(x+dx,y+dy,z+h));
-    const [sx,sy]=project(x,y,z);
-    if(shadow)ellipse(c,sx+2,sy+1,half+3,depth*.48,p.shadow);
-    for(const i of [7,6,5,4]){
-      const j=(i+1)%outline.length;
-      poly(c,[top[i],top[j],base[j],base[i]],p.tone(i===5?.56:.41),p.stroke,.65);
-    }
-    poly(c,top,p.tone(.07),p.tone(.77),.95);
-    poly(c,[top[0],top[1],top[2],top[3]],null,p.paper,.85);
-    poly(c,[top[7],top[6],top[5],top[4]],null,p.tone(.25),.8);
-    const [cx,cy]=project(x,y,z+h);
-    c.save();c.transform(1,0,.52,.36,cx,cy);
-    ellipse(c,0,0,5,5,p.tone(.22),p.tone(.64),.8);
-    ellipse(c,0,0,3.9,3.9,p.ink);
-    for(const side of [-1,1]) {
-      ellipse(c,side*(half-4),0,1.25,1.25,p.ink);
-    }
-    c.restore();
-  }
-  function assembly(c,p,t,running,reduced,layer) {
-    const moving=running&&!reduced;
-    const q=moving?fract(t/1.53):.93;
-    const travel=sweep(q,.02,.37), step=108, pressX=174, lane=48, deck=29;
-    const insertion=sweep(q,.56,.63);
-    const pressTip=mix(72,40.5,sweep(q,.42,.56))-3*insertion
-      +35*sweep(q,.68,.85);
-    layer("base",c=>{
-      plinth(c,p,11,4,353,82,5);
-      for(const x of [51,110,239,305]){
-        for(const y of [34,56])block(c,p,x,y,5,8,7,16);
-      }
-      for(const x of [16,329])beltGuard(c,p,x,27,28,44,5,44,false);
-      roller(c,p,23,31,21,121,34);
-      roller(c,p,204,31,21,144,34);
-      // The lower die and the transfer guides share the conveyor deck height.
-      block(c,p,140,31,13,68,34,16);
-      for(const y of [31,63])block(c,p,141,y,29,67,2,2);
-      block(c,p,145,34,5,59,27,8,{top:p.top,side:p.base,end:p.end});
+  const project = ([x, y, z]) => [(x - y) * diagonal, (x + y) / 2 - z * diagonal];
 
-      block(c,p,147,10,5,9,13,103);
-      block(c,p,192,10,5,9,13,103);
-      block(c,p,143,6,5,18,22,6);
-      block(c,p,187,6,5,18,22,6);
-      block(c,p,146,17,95,55,50,12);
-      block(c,p,155,30,107,38,33,12,{top:p.face,side:p.base,end:p.end});
-      block(c,p,167,42,69,14,12,26);
-      for(const x of [155,193]){
-        block(c,p,x,35,72,3,7,23);
-        block(c,p,x,53,72,3,7,23);
-      }
-      poly(c,[project(192,24,111),project(198,24,111),project(202,31,105),
-        project(202,45,104)],null,p.tone(.58),2.5);
-      const hatch=Array.from({length:6},(_,i)=>151+i*8);
-      for(const x of hatch)poly(c,[project(x,67,96),project(x+4,67,104)],null,p.tone(.48),1.1);
-    });
-    signal(c,p,187,53,119,moving&&q>.42&&q<.69);
+  function renderer(context, width, height, colors, kind) {
+    const scale = Math.min(width / (kind === "clock" ? 208 : 305), height / (kind === "clock" ? 161 : kind === "rotary" ? 190 : 218));
+    const ox = width / 2 + (kind === "rotary" ? 3 : kind === "clock" ? -3 : -5) * scale;
+    const oy = height / 2 + (kind === "rotary" ? 20 : kind === "clock" ? 17 : 7) * scale;
+    context.clearRect(0, 0, width, height);
+    context.lineJoin = "round";
+    context.lineCap = "round";
+    context.save();
+    context.translate(ox, oy);
+    context.scale(scale, scale);
 
-    for(const i of [-1,0,1,2]){
-      const x=pressX+(i+travel-1)*step;
-      if(x<31||x>343)continue;
-      flange(c,p,x,lane,deck,26);
-      const lip=i>0?2:i===0?5-3*insertion:5;
-      cylinder(c,p,x,lane,deck+6.5,5.5,lip,{top:p.tone(.07),side:p.edge,end:p.edge});
-      planeCircle(c,x,lane,deck+6.5+lip,2.7,p.ink);
+    function shape(vertices, fill, stroke = "line", weight = 0.62) {
+      const points = vertices.map(project);
+      context.beginPath();
+      context.moveTo(...points[0]);
+      for (const point of points.slice(1)) context.lineTo(...point);
+      if (fill) {
+        context.closePath();
+        context.fillStyle = colors[fill];
+        context.fill();
+      }
+      if (stroke) {
+        context.strokeStyle = colors[stroke];
+        context.lineWidth = weight;
+        context.stroke();
+      }
     }
-    block(c,p,171,45,pressTip+3,6,6,78-(pressTip+3));
-    block(c,p,164,40,pressTip,20,16,3,{top:p.top,side:p.end,end:p.base});
-    layer("guard",c=>{
-      for(const x of [16,329])beltGuard(c,p,x,27,28,44,5,44,true);
-    });
-  }
-  function sorter(c,p,t,running,reduced,layer) {
-    const moving=running&&!reduced, phase=moving?t*1.03:0;
-    const pathY=x=>29+39*ease((x-152)/70);
-    layer("base",c=>{
-      plinth(c,p,16,5,334,84);
-      for(const x of [37,138,248,310]){
-        for(const y of [17,35])block(c,p,x,y,4,7,6,16);
-      }
-      for(const x of [224,269,310]){
-        for(const y of [56,74])block(c,p,x,y,4,7,6,16);
-      }
-      for(const [x,y] of [[169,37],[195,54]])block(c,p,x,y,4,7,6,16);
-      roller(c,p,23,15,20,309,28);
-      // The transfer deck follows the polished guide path.
-      const bars=Array.from({length:10},(_,i)=>151+8*i);
-      const back=bars.map(x=>project(x,pathY(x)-12,28));
-      const front=bars.map(x=>project(x,pathY(x)+12,28));
-      const skirt=bars.map(x=>project(x,pathY(x)+12,20));
-      poly(c,[...front,...skirt.reverse()],p.side,p.stroke,.85);
-      poly(c,[...back,...front.slice().reverse()],p.tone(.21),p.stroke,.85);
-      for(const x of bars){
-        const y=pathY(x);
-        poly(c,[project(x,y-10,28),project(x,y+10,28)],null,p.edge,2);
-        poly(c,[project(x+.7,y-10,28),project(x+.7,y+10,28)],null,p.top,.75);
-      }
-      roller(c,p,211,54,20,121,28);
-      block(c,p,118,9,4,6,9,71);
-      block(c,p,118,46,4,6,9,71);
-      block(c,p,114,10,75,15,45,7);
-      block(c,p,119,21,66,8,24,9);
-    });
-    const idle=[.06,.23,.49,.65,.79,.92];
-    const parts=idle.map((rest,i)=>{
-      const q=moving?fract(phase+i/6):rest;
-      const x=27+297*q;
-      const y=i%2?pathY(x):29;
-      return {x,y,q};
-    });
-    const scanned=parts.some(part=>Math.abs(part.x-122)<13);
-    const divert=parts.reduce((s,part,i)=>i%2?Math.max(s,
-      ease((part.x-143)/13)*ease((206-part.x)/15)):s,0);
-    const pivot=project(152,41,38),tip=project(152+29*divert,41-16*divert,38);
-    block(c,p,149,38,22,6,6,16);
-    beam(c,pivot,tip,4,p.tone(.36));beam(c,pivot,tip,1,p.tone(.77));
-    parts.sort((a,b)=>a.y-b.y||a.x-b.x).forEach(({x,y,q})=>{
-      c.globalAlpha=moving?Math.min(ease(q/.047),ease((1-q)/.054)):1;
-      flange(c,p,x,y,28);
-    });
-    c.globalAlpha=1;
-    signal(c,p,123,33,82,running&&scanned);
-    if(moving&&scanned)poly(c,[project(122,18,35),project(122,39,35)],null,p.signal,1.05);
-    for(const y of [15,54]){
-      block(c,p,324,y+25,20,7,3,13);
-      signal(c,p,327,y+26.5,33,moving&&parts.some(part=>part.x>303&&Math.abs(part.y-y-14)<9));
-    }
-  }
-  function gantry(c,p,t,running,reduced,layer) {
-    const moving=running&&!reduced;
-    const q=moving?fract(t/1.53):.01;
-    const from=94,to=267,lane=51,deck=29;
-    const clear=79,pick=43;
-    const carriageX=from+(to-from)*(sweep(q,.34,.60)-sweep(q,.86,1));
-    const carriageZ=clear-(clear-pick)*(sweep(q,.025,.18)-sweep(q,.23,.34)
-      +sweep(q,.60,.71)-sweep(q,.77,.86));
-    const grasp=sweep(q,.18,.23)-sweep(q,.72,.77);
-    const held=q>=.23&&q<.72;
-    const partZ=carriageZ-(pick-deck), feed=sweep(q,.33,.92), sent=sweep(q,.79,1);
-    layer("base",c=>{
-      plinth(c,p,11,4,351,84,5);
-      for(const x of [54,303]) {
-        block(c,p,x-6,9,5,25,24,6);
-        block(c,p,x,13,11,13,16,93);
-        poly(c,[project(x+1,29,32),project(x+21,29,11),project(x+1,29,11)],p.side,p.stroke,.8);
-      }
-      for(const x of [45,98,257,312]){
-        for(const y of [38,59])block(c,p,x,y,5,8,6,16);
-      }
-      for(const x of [17,329])beltGuard(c,p,x,32,25,40,5,39,false);
-      roller(c,p,27,35,21,93,32);
-      roller(c,p,241,35,21,107,32);
-    });
-    if(held) {
-      // The load casts its shadow onto the bed or onto the lower machine base.
-      const surface=carriageX<119||carriageX>245?deck:5;
-      const [x,y]=project(carriageX,lane,surface);
-      ellipse(c,x+2,y,13,3.8,p.shadow);
-    }
-    if(q<.23)flange(c,p,from,lane,deck,21);
-    for(const x of [from-41+41*feed,from-82+41*feed]){
-      if(x>=30)flange(c,p,x,lane,deck,21);
-    }
-    if(q>=.72&&to+91*sent<342)flange(c,p,to+91*sent,lane,deck,21);
 
-    layer("beam",c=>{
-      block(c,p,48,20,100,273,34,13);
-      for(const z of [103,109]) {
-        poly(c,[project(52,54,z),project(317,54,z)],null,p.tone(.60),1.5);
-      }
-      for(let x=66;x<316;x+=19){
-        const [a,b]=project(x,54,106);
-        ellipse(c,a,b,1.3,1.3,p.tone(.68));
-      }
-    });
-    const cable=[project(315,38,116),project(carriageX+20,38,116),
-      project(carriageX+14,38,113),project(carriageX+10,38,108)];
-    poly(c,cable,null,p.tone(.43),3.4);
-    poly(c,cable,null,p.tone(.69),.85);
-    block(c,p,carriageX-10,32,90,20,25,19,{top:p.face,side:p.base,end:p.end});
-    block(c,p,carriageX-3,47,carriageZ+3,6,8,90-carriageZ-3);
-    block(c,p,carriageX-11,44,carriageZ,22,14,4);
-    if(held)flange(c,p,carriageX,lane,partZ,21,false);
-    for(const sign of [-1,1]){
-      const jawX=carriageX+sign*mix(14.5,11.8,grasp);
-      block(c,p,jawX-1.3,46,carriageZ-12,2.6,10,12);
+    function line(from, to, stroke = "line", weight = 0.46) {
+      shape([from, to], null, stroke, weight);
     }
-    layer("guard",c=>{
-      for(const x of [17,329])beltGuard(c,p,x,32,25,40,5,39,true);
-    });
-    signal(c,p,306,39,113,held&&moving);
+
+    function box(x, y, z, w, d, h, top = "paper", front = "side", end = "metal") {
+      const a = [x, y, z + h], b = [x + w, y, z + h];
+      const c = [x + w, y + d, z + h], e = [x, y + d, z + h];
+      shape([b, [x + w, y, z], [x + w, y + d, z], c], end);
+      shape([e, c, [x + w, y + d, z], [x, y + d, z]], front);
+      shape([a, b, c, e], top);
+    }
+
+    function plane(x, y, z, turn, draw) {
+      context.save();
+      const point = project([x, y, z]);
+      context.transform(diagonal, 0.5, -diagonal, 0.5, ...point);
+      context.rotate(turn);
+      draw(context);
+      context.restore();
+    }
+
+    function outline(path, fill, stroke = "line", weight = 0.54) {
+      if (fill) {
+        context.fillStyle = colors[fill];
+        context.fill(path, "evenodd");
+      }
+      if (stroke) {
+        context.strokeStyle = colors[stroke];
+        context.lineWidth = weight;
+        context.stroke(path);
+      }
+    }
+
+    function circle(x, y, z, radius, fill, stroke = "line", weight = 0.49) {
+      plane(x, y, z, 0, () => {
+        const path = new Path2D();
+        path.arc(0, 0, radius, 0, tau);
+        outline(path, fill, stroke, weight);
+      });
+    }
+
+    function hole(x, y, z, radius = 1.15) {
+      circle(x, y, z, radius, "flank", "soft", 0.37);
+      line([x - radius * 0.57, y, z], [x + radius * 0.57, y, z], "soft", 0.35);
+    }
+
+    function flange(x, y, z, radius, height, bore = 0, top = "paper") {
+      const start = -Math.PI / 4;
+      const arc = Array.from({ length: 16 }, (_, i) => {
+        const a = start + Math.PI * i / 15;
+        return [x + radius * Math.cos(a), y + radius * Math.sin(a)];
+      });
+      shape([...arc.map(([px, py]) => [px, py, z]), ...arc.reverse().map(([px, py]) => [px, py, z + height])], "side");
+      circle(x, y, z + height, radius, top);
+      if (bore) {
+        circle(x, y, z + height, bore, "recess");
+        circle(x, y, z + height, bore + 1.3, null, "soft", 0.39);
+      }
+    }
+
+    function shaftCap(x, y, z, radius, phase, fill = "metal") {
+      const point = project([x, y, z]);
+      context.save();
+      context.transform(diagonal, 0.5, 0, -diagonal, ...point);
+      const face = new Path2D();
+      face.arc(0, 0, radius, 0, tau);
+      outline(face, fill);
+      const hub = new Path2D();
+      hub.arc(0, 0, radius * 0.34, 0, tau);
+      outline(hub, "flank", "line", 0.4);
+      const slot = new Path2D();
+      slot.moveTo(Math.cos(phase) * radius * 0.42, Math.sin(phase) * radius * 0.42);
+      slot.lineTo(Math.cos(phase) * radius * 0.82, Math.sin(phase) * radius * 0.82);
+      outline(slot, null, "ink", 0.62);
+      context.restore();
+    }
+
+    return { context, colors, shape, line, box, plane, outline, circle, hole, flange, shaftCap };
   }
-  function rotary(c,p,t,running,reduced,layer) {
-    const moving=running&&!reduced;
-    const phase=moving?t/1.04:.32;
-    const u=fract(phase), stationAngle=Math.PI/3;
-    const angle=(Math.floor(phase)+sweep(u,.015,.29))*stationAngle;
-    const centerX=180,centerY=53,orbit=53,tableTop=33;
-    const position=a=>[centerX+orbit*Math.cos(a),centerY+orbit*Math.sin(a)];
-    const heads=[4,5].map(i=>position(i*stationAngle));
-    layer("base",c=>{
-      plinth(c,p,76,-40,213,171,5);
-      for(const [x,y] of heads){
-        block(c,p,x-14,y-46,5,28,18,6);
-        block(c,p,x-9,y-41,11,18,12,84);
-        block(c,p,x-11,y-41,83,22,51,11);
-        poly(c,[project(x+7,y-41,90),project(x+12,y-41,100),
-          project(x+12,y+4,100),project(x+9,y+8,93)],null,p.tone(.55),2);
-      }
-      cylinder(c,p,centerX,centerY,5,44,14,{top:p.top,side:p.base,end:p.base});
-      cylinder(c,p,centerX,centerY,19,74,14,{top:p.tone(.14),side:p.end,end:p.end});
-      planeCircle(c,centerX,centerY,tableTop,67,null,p.tone(.45),.8);
+
+  const beltHeight = 34.7;
+  const station = -12;
+  const palletHeight = beltHeight + 2.6;
+  const pitch = 42;
+
+  function platform(r, x, y, w, d) {
+    r.shape([[x + 3, y + 5, 0], [x + w + 5, y + 5, 0],
+      [x + w + 5, y + d + 6, 0], [x + 3, y + d + 6, 0]], "shadow", null);
+    r.box(x, y, 1, w, d, 3, "metal", "flank");
+    for (const dx of [6, w - 6]) for (const dy of [5, d - 5]) r.hole(x + dx, y + dy, 4.05);
+  }
+
+  function trackSupport(r, x, y, width) {
+    for (const edge of [y - width + 3, y + width - 7]) {
+      r.box(x - 4, edge - 2, 4, 13, 9, 2, "metal");
+      r.hole(x - 1.9, edge + 4.9, 6.03);
+      r.hole(x + 6.8, edge + 4.9, 6.03);
+      r.box(x, edge, 6, 5, 5, 19, "metal");
+      r.line([x + 2.5, edge + 5, 8], [x + 2.5, edge + 5, 24], "soft");
+    }
+    r.box(x - 1, y - width + 2, 23, 7, width * 2 - 4, 3, "metal");
+  }
+
+  function cover(r, x, y, width, length) {
+    const z = beltHeight;
+    r.box(x, y - width - 3, z - 2, length, 3, 15, "metal");
+    r.box(x, y + width, z - 3, length, 3, 16, "metal");
+    r.box(x, y - width - 3, z + 13, length, 2 * width + 6, 2.5, "paper");
+    for (const dx of [2.7, length - 2.7]) for (const dy of [-width, width]) r.hole(x + dx, y + dy, z + 15.53);
+    for (let dx = length / 2 - 4; dx < length / 2 + 6; dx += 2) {
+      r.line([x + dx, y - 4, z + 15.54], [x + dx, y + 4, z + 15.54], "soft", 0.6);
+    }
+  }
+
+  function belt(r, left, right, y, width, travel, payload = () => {}) {
+    const drum = 5.7, axle = 29, straight = right - left;
+    const round = Math.PI * drum, loop = 2 * (straight + round);
+    const count = Math.ceil(loop / 8);
+    const z = beltHeight;
+    r.box(left - 4, y - width - 3, 24, straight + 8, 3, 10, "metal");
+    r.box(left, y - width, axle - drum, straight, width * 2, 2, "metal", "flank");
+    const band = Array.from({ length: 13 }, (_, index) => {
+      const a = Math.PI * index / 12;
+      return [right + drum * Math.sin(a), y + width, axle + drum * Math.cos(a)];
     });
-    // Each workpiece and its fixture share the same angle and height.
-    const sockets=Array.from({length:6},(_,i)=>position(angle+i*stationAngle));
-    sockets.sort((a,b)=>a[1]-b[1]);
-    for(const [x,y] of sockets){
-      cylinder(c,p,x,y,tableTop,14,4,{top:p.tone(.27),side:p.end,end:p.end});
-      cylinder(c,p,x,y,tableTop+4,10,6,{top:p.tone(.07),side:p.edge,end:p.edge});
-      planeCircle(c,x,y,tableTop+10,6.6,p.tone(.25),p.tone(.54),.65);
-      planeCircle(c,x,y,tableTop+10,4.7,p.ink);
+    r.shape([...band, ...band.slice().reverse().map(([x, , zz]) => [x, y - width, zz])], "flank");
+    r.shape([[left, y - width, z], [right, y - width, z], [right, y + width, z], [left, y + width, z]], "metal");
+    for (let i = 0; i < count; i++) {
+      const s = wrap(i * loop / count + travel, loop);
+      if (s >= straight + round) continue;
+      const a = (s - straight) / drum;
+      const x = s < straight ? left + s : right + drum * Math.sin(a);
+      const zz = s < straight ? z : axle + drum * Math.cos(a);
+      r.line([x, y - width + 1.3, zz], [x, y + width - 1.3, zz], "soft");
     }
-    cylinder(c,p,centerX,centerY,tableTop,15,5,{top:p.top,side:p.edge,end:p.edge});
-    const indicator=angle+Math.PI*.14;
-    for(const [lo,hi] of [[17,41],[65,72]]){
-      const at=r=>project(centerX+r*Math.cos(indicator),centerY+r*Math.sin(indicator),tableTop+.1);
-      poly(c,[at(lo),at(hi)],null,p.stroke,1.1);
+    payload();
+    r.box(left - 4, y + width, 24, straight + 8, 3, 9.8, "paper", "side");
+    r.line([left + 7, y + width + 3.02, 26.3], [right - 7, y + width + 3.02, 26.3], "soft", 0.51);
+    r.shaftCap(left, y + width + 3.25, axle, 3.6, -travel / drum);
+    r.shaftCap(right, y + width + 3.25, axle, 4.1, -travel / drum);
+  }
+
+  function pallet(r, x, y, width = 12) {
+    r.box(x - 6.3, y - width / 2, beltHeight, 12.6, width, 2.6, "paper");
+  }
+
+  function workpiece(r, x, y, z, seated = false) {
+    r.flange(x, y, z, 5, 1.4, 0, "metal");
+    r.flange(x, y, z + 1.4, 3.9, 4.4, seated ? 1.3 : 2.65, seated ? "metal" : "paper");
+    if (seated) r.circle(x, y, z + 5.84, 2.45, null, "soft", 0.35);
+  }
+
+  function motor(r, x, y) {
+    r.box(x - 9, y - 1, 18, 19, 10, 2, "metal");
+    r.box(x - 7, y, 20, 15, 10, 12, "metal", "flank");
+    for (let dx = -5; dx <= 6; dx += 2.4) {
+      r.line([x + dx, y + 3, 32.04], [x + dx, y + 10, 32.04], "soft", 0.6);
+      r.line([x + dx, y + 10.03, 32], [x + dx, y + 10.03, 21.5], "soft", 0.6);
     }
-    heads.forEach(([x,y],i)=>{
-      const offset=i*.07;
-      const stroke=sweep(u,.39+offset,.54+offset)-sweep(u,.67+offset,.82+offset);
-      const tip=mix(65,tableTop+10,stroke);
-      block(c,p,x-6,y-6,67,12,12,18,{top:p.face,side:p.base,end:p.end});
-      cylinder(c,p,x,y,tip+3,2.5,69-tip,{top:p.face,side:p.edge,end:p.edge});
-      cylinder(c,p,x,y,tip,6,3,{top:p.top,side:p.end,end:p.end});
-      signal(c,p,x+5,y+5,85,moving&&stroke>.85);
+  }
+
+  function indexCycle(distance) {
+    const time = (distance + 0.16) / 2.12;
+    const step = Math.floor(time), phase = time - step;
+    const advance = pitch * segment(phase, 0, 0.26);
+    return { step, phase, advance, travel: pitch * step + advance };
+  }
+
+  function transferPose(phase, from, to) {
+    const low = palletHeight, high = low + 19;
+    const lift = segment(phase, 0.27, 0.38) - segment(phase, 0.43, 0.55)
+      + segment(phase, 0.69, 0.79) - segment(phase, 0.85, 0.93);
+    const side = segment(phase, 0.55, 0.69) - segment(phase, 0.93, 1);
+    const grip = segment(phase, 0.38, 0.43) - segment(phase, 0.79, 0.85);
+    const y = mix(from, to, side);
+    const z = mix(high, low, lift);
+    if (phase < 0.43) return { y, z, grip, part: [from, low] };
+    if (phase < 0.79) return { y, z, grip, part: [y, z] };
+    return { y, z, grip, part: [to, low] };
+  }
+
+  function jaw(r, x, y, z, grip) {
+    const gap = mix(5.9, 3.9, grip);
+    r.box(x - 4.8, y - 4.8, z + 6.2, 9.6, 9.6, 5, "metal");
+    for (const side of [-1, 1]) {
+      const edge = x + side * gap;
+      r.box(edge - (side < 0 ? 1.7 : 0), y - 2.3, z + 2.3, 1.7, 4.6, 5.6, "flank");
+      r.box(edge - (side < 0 ? 2 : 0), y - 2.3, z + 2.1, 2, 4.6, 1.5, "side");
+    }
+    r.hole(x, y, z + 11.26, 1.25);
+  }
+
+  function armLink(r, a, b, height, half) {
+    const dx = b[0] - a[0], dy = b[1] - a[1];
+    const length = Math.hypot(dx, dy), nx = -dy * half / length, ny = dx * half / length;
+    const edge = (point, sign, z) => [point[0] + nx * sign, point[1] + ny * sign, z];
+    const front = nx + ny > 0 ? 1 : -1;
+    r.shape([edge(a, front, height), edge(b, front, height),
+      edge(b, front, height - 4.7), edge(a, front, height - 4.7)], "side");
+    r.shape([edge(a, -1, height), edge(b, -1, height), edge(b, 1, height), edge(a, 1, height)], "paper");
+    r.line([a[0], a[1], height + 0.02], [b[0], b[1], height + 0.02], "soft", 0.51);
+  }
+
+  function scaraHead(r, shoulder, x, pose) {
+    const wrist = [x, pose.y];
+    const dx = wrist[0] - shoulder[0], dy = wrist[1] - shoulder[1];
+    const link = 30, reach = Math.hypot(dx, dy);
+    const lift = Math.sqrt(link * link - reach * reach / 4);
+    const elbow = [shoulder[0] + dx / 2 - dy * lift / reach, shoulder[1] + dy / 2 + dx * lift / reach];
+    jaw(r, x, pose.y, pose.z, pose.grip);
+    r.flange(x, pose.y, pose.z + 11.2, 1.7, 70 - pose.z - 11.2, 0, "metal");
+    armLink(r, elbow, wrist, 73, 4.6);
+    r.flange(x, pose.y, 70, 4.5, 5, 1.45, "metal");
+    armLink(r, shoulder, elbow, 78, 5.4);
+    r.flange(...elbow, 72.2, 5.3, 7.2, 1.7, "metal");
+    r.flange(...shoulder, 74, 6.5, 6, 2, "metal");
+  }
+
+  function press(r, x, y, phase, partTop, top = 73) {
+    const stroke = segment(phase, 0.31, 0.52) - segment(phase, 0.65, 0.83);
+    const tip = mix(partTop + 18, partTop, stroke);
+    r.flange(x, y, tip, 2.4, top - tip, 0, "side");
+    r.box(x - 5.4, y - 4.7, top - 6, 10.8, 9.4, 10, "metal");
+    r.hole(x, y, top + 4.04, 1.2);
+  }
+
+  function singleLine(r, distance, robotic) {
+    const cycle = indexCycle(distance);
+    const width = robotic ? 19 : 13;
+    const shoulder = [-26, -40];
+    const pose = transferPose(cycle.phase, -8.5, 8.5);
+    const top = robotic ? 80 : 77;
+
+    r.layer("bed", r => {
+      platform(r, -121, robotic ? -50 : -40, 242, robotic ? 79 : 65);
+      if (robotic) {
+        r.box(-36, -48, 4, 20, 17, 3, "paper");
+        for (const x of [-33, -19]) for (const y of [-45, -34]) r.hole(x, y, 7.04);
+        r.flange(...shoulder, 7, 6.9, 5, 0, "metal");
+        r.flange(...shoulder, 12, 4.6, 65, 0, "metal");
+        r.flange(...shoulder, 59, 6.25, 11.5, 0, "side");
+      } else {
+        r.box(station - 10, -37, 4, 20, 14, 3);
+        r.hole(station - 7, -33, 7.02);
+        r.hole(station + 7, -33, 7.02);
+        r.box(station - 6, -35, 7, 12, 9, top - 10, "metal");
+        r.line([station - 3, -25.95, 10], [station - 3, -25.95, top - 5], "soft");
+      }
+      for (const x of [-83, -37, 31, 82]) trackSupport(r, x, 0, width);
+    });
+    belt(r, -108, 109, 0, width, cycle.travel, () => {
+      for (let i = 0; i < 5; i++) {
+        const x = -102 + wrap(i * pitch + 6 + cycle.travel, 5 * pitch);
+        const indexed = cycle.phase >= 0.26;
+        const atStation = indexed && Math.abs(x - station) < 0.1;
+        const processed = indexed ? x > station + 0.1 : x >= station + cycle.advance - 0.1;
+        pallet(r, x, 0, robotic ? 29 : 12);
+        if (robotic) {
+          for (const y of [-8.5, 8.5]) r.circle(x, y, palletHeight + 0.03, 5, null, "soft", 0.41);
+          const [y, z] = atStation ? pose.part : [processed ? 8.5 : -8.5, palletHeight];
+          workpiece(r, x, y, z);
+        } else {
+          workpiece(r, x, 0, palletHeight, processed || (atStation && cycle.phase >= 0.52));
+        }
+      }
+    });
+    r.layer("guards", r => {
+      cover(r, -113, 0, width, 24);
+      cover(r, 90, 0, width, 25);
+      motor(r, 107, width + 5);
+    });
+    if (robotic) {
+      scaraHead(r, shoulder, station, pose);
+    } else {
+      r.box(station - 6, -35, top - 6, 12, 41, 6, "paper");
+      r.line([station - 2.8, -31, top + 0.03], [station - 2.8, 2.7, top + 0.03], "soft");
+      for (const y of [-31, 2.4]) r.hole(station + 2.8, y, top + 0.04, 1.1);
+      press(r, station, 0, cycle.phase, palletHeight + 5.8, top - 8);
+    }
+  }
+
+  function sortPose(distance) {
+    const time = (distance + 0.13) / 1.86;
+    const step = Math.floor(time), phase = time - step;
+    const lane = step % 2 ? 23 : -23;
+    const y = lane * (segment(phase, 0.34, 0.55) - segment(phase, 0.74, 0.94));
+    const x = -104 + 78 * segment(phase, 0.04, 0.34) + 128 * segment(phase, 0.55, 0.94);
+    return { x, y, lane, step, phase, incoming: 78 * segment(phase, 0.04, 0.34) };
+  }
+
+  function sorter(r, distance) {
+    const { x, y, lane, phase, step, incoming } = sortPose(distance);
+    const partY = phase <= 0.55 ? y : lane;
+    const max = 102;
+    platform(r, -119, -44, 234, 88);
+    for (const sx of [-85, -52]) trackSupport(r, sx, 0, 11);
+    for (const cy of [-23, 23]) for (const sx of [11, 57, 91]) trackSupport(r, sx, cy, 10);
+
+    for (const sx of [-35, -17]) {
+      r.box(sx - 2.5, -36, 4, 8, 72, 15, "metal", "side");
+      r.box(sx, -36, 19, 3, 72, 5, "paper");
+      for (const edge of [-34, 31]) r.hole(sx + 1.5, edge, 24.02, 0.8);
+    }
+    belt(r, -107, -45, 0, 11, step * 78 + incoming, () => {
+      if (x <= -39) {
+        pallet(r, x, 0);
+        workpiece(r, x, 0, palletHeight);
+      }
+    });
+    r.box(-37, y - 10.7, 24, 20, 21.4, 9.5, "paper", "side");
+    const shuttleTravel = step * 89 + incoming + Math.max(0, Math.min(11, x + 26));
+    belt(r, -33, -21, y, 9, shuttleTravel, () => {
+      if (x > -39 && x <= -15) {
+        pallet(r, x, partY);
+        workpiece(r, x, partY, palletHeight);
+      }
+    });
+    for (const cy of [-23, 23]) {
+      const completed = Math.floor((step + (cy < 0 ? 1 : 0)) / 2);
+      const outgoing = cy === lane ? Math.max(0, x + 15) : 0;
+      belt(r, -9, 107, cy, 10, completed * 117 + outgoing, () => {
+        if (x > -15 && x < max + 0.1 && cy === lane) {
+          pallet(r, x, cy);
+          workpiece(r, x, cy, palletHeight);
+        }
+      });
+      cover(r, 90, cy, 10, 22);
+    }
+    cover(r, -113, 0, 11, 21);
+  }
+
+  function gantry(r, distance) {
+    const cycle = indexCycle(distance);
+    const far = -23, near = 23;
+    const pose = transferPose(cycle.phase, far, near);
+    const z = 79;
+    platform(r, -118, -51, 233, 103);
+    function column(y) {
+      r.box(station - 10, y - 7, 4, 20, 14, 3);
+      for (const x of [station - 7, station + 7]) r.hole(x, y + 3.7, 7.03);
+      r.box(station - 5.6, y - 4, 7, 11.2, 8, z - 10, "metal");
+      r.line([station - 2.4, y + 4.03, 10], [station - 2.4, y + 4.03, z - 5], "soft");
+    }
+    column(-44);
+    for (const y of [far, near]) {
+      for (const x of [-86, -41, 21, 75]) trackSupport(r, x, y, 10);
+      belt(r, -108, 108, y, 10, cycle.travel, () => {
+        for (let i = 0; i < 5; i++) {
+          const x = -102 + wrap(i * pitch + 6 + cycle.travel, 5 * pitch);
+          const indexed = cycle.phase >= 0.26;
+          const atStation = indexed && Math.abs(x - station) < 0.1;
+          const processed = indexed ? x > station + 0.1 : x >= station + cycle.advance - 0.1;
+          pallet(r, x, y);
+          if (!atStation && (processed ? near : far) === y) workpiece(r, x, y, palletHeight);
+        }
+      });
+      cover(r, -113, y, 10, 21);
+      cover(r, 90, y, 10, 21);
+    }
+    if (cycle.phase >= 0.26) workpiece(r, station, ...pose.part);
+    jaw(r, station, pose.y, pose.z, pose.grip);
+    r.flange(station, pose.y, pose.z + 11.2, 1.9, z - pose.z - 11.2, 0, "metal");
+    column(44);
+    r.box(station - 6.7, -49, z - 6, 13.4, 98, 6, "paper", "side");
+    for (const x of [station - 4.2, station + 4.2]) {
+      r.line([x, -45, z + 0.04], [x, 45, z + 0.04], "soft", 0.65);
+      for (const y of [-45, 45]) r.hole(x, y, z + 0.05, 0.8);
+    }
+    r.box(station - 7.4, pose.y - 5.4, z - 7.3, 14.8, 10.8, 9.4, "metal");
+    r.hole(station, pose.y, z + 2.13, 1.6);
+    r.box(station - 6, 43, z, 12, 8, 4.4, "flank");
+  }
+
+  function rotary(r, distance) {
+    const { step, phase, advance } = indexCycle(distance);
+    const slot = tau / 6, rotation = (step + advance / pitch) * slot;
+    const bearing = 26, radius = 47, top = 29.8;
+    const angle = -Math.PI / 3, orbit = 34;
+    const axis = [Math.cos(angle) * orbit, Math.sin(angle) * orbit];
+    r.layer("table", r => {
+      platform(r, -57, -62, 114, 116);
+      r.box(11, -59, 4, 20, 13, 3, "paper");
+      for (const x of [14, 28]) r.hole(x, -54, 7.04);
+      r.box(15, -57, 7, 12, 9, 67, "metal");
+      r.line([18, -47.97, 10], [18, -47.97, 71], "soft");
+      r.flange(0, 0, 4, bearing + 7, 4, 0, "metal");
+      r.flange(0, 0, 8, bearing, 15.8, 0, "side");
+      for (let i = 0; i < 10; i++) {
+        const a = -Math.PI / 4 + Math.PI * i / 9;
+        const x = bearing * Math.cos(a), y = bearing * Math.sin(a);
+        r.line([x, y, 8.7], [x, y, 22.9], "soft", 0.61);
+      }
+      r.flange(0, 0, 23.8, radius, 6, 0, "metal");
+    });
+    r.circle(0, 0, top + 0.01, 44, null, "soft", 0.6);
+    const fixtures = [];
+    for (let i = 0; i < 6; i++) {
+      const a = angle + i * slot + rotation;
+      fixtures.push({ x: Math.cos(a) * orbit, y: Math.sin(a) * orbit, i });
+      const mark = a + slot / 2;
+      const direction = [Math.cos(mark), Math.sin(mark)];
+      r.line([...direction.map(v => v * 42), top + 0.02], [...direction.map(v => v * 46), top + 0.02], "soft", 0.7);
+    }
+    r.flange(0, 0, top, 10, 3.1, 2.4, "paper");
+    for (const { x, y, i } of fixtures.sort((a, b) => a.x + a.y - b.x - b.y)) {
+      const arrival = (6 - i) % 6;
+      const seated = step + (phase >= 0.52 ? 1 : 0) > ((arrival + 5) % 6);
+      r.flange(x, y, top, 7.8, 2.5, 0, "paper");
+      workpiece(r, x, y, top + 2.5, seated);
+    }
+    r.box(15, -57, 72, 12, 34, 5, "paper");
+    for (const y of [-53, -26]) r.hole(21, y, 77.04, 1.25);
+    press(r, ...axis, phase, top + 8.3, 67);
+  }
+
+  const pressureAngle = Math.PI / 9;
+  const involute = angle => Math.tan(angle) - angle;
+  function makeWheel(teeth, windows, bore, moduleSize) {
+    const pitchRadius = moduleSize * teeth / 2;
+    const outerRadius = pitchRadius + moduleSize;
+    const rootRadius = pitchRadius - 1.25 * moduleSize;
+    const base = pitchRadius * Math.cos(pressureAngle);
+    const rootFlank = Math.max(base, rootRadius);
+    const step = tau / teeth;
+    const halfTooth = step * 0.245;
+    const halfAngle = (radius) => halfTooth + involute(pressureAngle) - involute(Math.acos(base / radius));
+    const path = new Path2D();
+    function point(radius, angle, move = false) {
+      const x = radius * Math.cos(angle), y = radius * Math.sin(angle);
+      const method = move ? "moveTo" : "lineTo";
+      path[method](x, y);
+    }
+    for (let i = 0; i < teeth; i++) {
+      const angle = i * step;
+      point(rootRadius, angle - step / 2, i === 0);
+      point(rootRadius, angle - halfAngle(rootFlank) - step * 0.055);
+      for (let j = 0; j <= 4; j++) {
+        const radius = rootFlank + (outerRadius - rootFlank) * j / 4;
+        point(radius, angle - halfAngle(radius));
+      }
+      for (let j = 4; j >= 0; j--) {
+        const radius = rootFlank + (outerRadius - rootFlank) * j / 4;
+        point(radius, angle + halfAngle(radius));
+      }
+      point(rootRadius, angle + halfAngle(rootFlank) + step * 0.055);
+      point(rootRadius, angle + step / 2);
+    }
+    path.closePath();
+    const outerWindow = rootRadius - 3.2;
+    const innerWindow = bore + 2.8;
+    for (let i = 0; i < windows; i++) {
+      const middle = i * tau / windows;
+      const half = Math.PI / windows - 0.15;
+      const from = middle - half, to = middle + half;
+      path.moveTo(outerWindow * Math.cos(from), outerWindow * Math.sin(from));
+      path.arc(0, 0, outerWindow, from, to);
+      path.lineTo(innerWindow * Math.cos(to - 0.17), innerWindow * Math.sin(to - 0.17));
+      path.arc(0, 0, innerWindow, to - 0.17, from + 0.17, true);
+      path.closePath();
+    }
+    return { teeth, pitchRadius, rootRadius, path, bore };
+  }
+
+  function polar(radius, angle) {
+    return [radius * Math.cos(angle), radius * Math.sin(angle)];
+  }
+
+  function offset([x, y], radius, angle) {
+    const [dx, dy] = polar(radius, angle);
+    return [x + dx, y + dy];
+  }
+
+  const minuteAxis = [-54, -27];
+  const minuteWheel = makeWheel(72, 6, 5.5, 0.75);
+  const minutePinion = makeWheel(12, 0, 3.2, 1);
+  const barrelWheel = makeWheel(58, 0, 4, 1);
+  const barrelOpening = 24;
+  barrelWheel.path.moveTo(barrelOpening, 0);
+  barrelWheel.path.arc(0, 0, barrelOpening, 0, tau);
+  barrelWheel.path.closePath();
+  const barrelMesh = -1.46;
+  const barrelAxis = offset(minuteAxis, barrelWheel.pitchRadius + minutePinion.pitchRadius, barrelMesh + Math.PI);
+
+  const thirdPinion = makeWheel(12, 0, 2.5, 0.75);
+  const thirdWheel = makeWheel(80, 5, 4.1, 0.67);
+  const thirdMesh = 0.12;
+  const thirdAxis = offset(minuteAxis, minuteWheel.pitchRadius + thirdPinion.pitchRadius, thirdMesh);
+
+  const secondsPinion = makeWheel(8, 0, 1.7, 0.67);
+  const secondsWheel = makeWheel(60, 5, 3.5, 0.60);
+  const secondsMesh = 0.45;
+  const secondsAxis = offset(thirdAxis, thirdWheel.pitchRadius + secondsPinion.pitchRadius, secondsMesh);
+
+  const escapePinion = makeWheel(10, 0, 1.8, 0.60);
+  const escapeMesh = -0.57;
+  const escapeAxis = offset(secondsAxis, secondsWheel.pitchRadius + escapePinion.pitchRadius, escapeMesh);
+  const leverAxis = -0.38;
+  const palletSpan = 22.5;
+  const balanceSpan = 46.5;
+  const balanceCenter = offset(escapeAxis, balanceSpan, leverAxis);
+  const palletCenter = offset(escapeAxis, palletSpan, leverAxis);
+  const escapeTeeth = 15;
+  const toothPitch = tau / escapeTeeth;
+  const toothTip = 15.2;
+  const lockAngle = 3.5 * toothPitch / 2;
+  const banking = 0.116;
+
+  const escapeWheel = new Path2D();
+  const clubTooth = [[10.7, -0.49], [10.7, -0.30], [13.65, 0.025], [toothTip, 0],
+    [15.05, 0.16], [13.85, 0.24], [10.7, 0.32]];
+  for (let i = 0; i < escapeTeeth; i++) {
+    for (const [j, [radius, fraction]] of clubTooth.entries()) {
+      const point = polar(radius, (i + fraction) * toothPitch);
+      if (i === 0 && j === 0) escapeWheel.moveTo(...point);
+      else escapeWheel.lineTo(...point);
+    }
+  }
+  escapeWheel.closePath();
+  for (let i = 0; i < 5; i++) {
+    const start = i * tau / 5 + 0.13, end = start + tau / 5 - 0.26;
+    escapeWheel.moveTo(...polar(8.95, start));
+    escapeWheel.arc(0, 0, 8.95, start, end);
+    escapeWheel.lineTo(...polar(3.6, end - 0.17));
+    escapeWheel.arc(0, 0, 3.6, end - 0.17, start + 0.17, true);
+    escapeWheel.closePath();
+  }
+
+  // External mesh phases, solved backwards from the intermittent escape-wheel motion.
+  function drivingAngle(wheel, pinion, driven, axis) {
+    const alignment = (wheel.teeth + pinion.teeth) * axis + pinion.teeth * Math.PI - Math.PI;
+    return (alignment - driven * pinion.teeth) / wheel.teeth;
+  }
+
+  function clockPose(distance) {
+    const time = distance * 5.6;
+    const beat = Math.floor(time);
+    const phase = time - beat;
+    const direction = beat % 2 === 0 ? 1 : -1;
+    const advance = (beat + segment(phase, 0.50, 0.70)) * toothPitch / 2;
+    const escape = leverAxis + lockAngle - advance;
+    const seconds = drivingAngle(secondsWheel, escapePinion, escape, escapeMesh);
+    const third = drivingAngle(thirdWheel, secondsPinion, seconds, secondsMesh);
+    const minute = drivingAngle(minuteWheel, thirdPinion, third, thirdMesh);
+    const barrel = drivingAngle(barrelWheel, minutePinion, minute, barrelMesh);
+    return {
+      escape, seconds, third, minute, barrel,
+      pallet: direction * banking * (1 - 2 * segment(phase, 0.42, 0.61)),
+      balance: -1.78 * Math.cos(Math.PI * time)
+    };
+  }
+
+  const initialClock = clockPose(0);
+
+  function gearFace(r, axis, height, gear, angle, finish = "paper") {
+    const { path, bore, rootRadius } = gear;
+    for (const z of [height - 1.8, height - 0.9]) {
+      r.plane(...axis, z, angle, () => r.outline(path, "flank", null));
+    }
+    r.plane(...axis, height, angle, () => r.outline(path, finish));
+    if (rootRadius - bore > 6) r.circle(...axis, height + 0.02, rootRadius - 1.27, null, "soft", 0.38);
+    r.flange(...axis, height, bore, 1.25, 0, "side");
+    r.circle(...axis, height + 1.27, bore * 0.5, "recess", "line", 0.44);
+    r.line([...offset(axis, -bore * 0.39, angle), height + 1.31],
+      [...offset(axis, bore * 0.39, angle), height + 1.31], "ink", 0.48);
+  }
+
+  function drawCoil(r, center, height, inner, outer, turns, wind, weight) {
+    const path = new Path2D();
+    const count = Math.ceil(turns * 29);
+    for (let i = 0; i <= count; i++) {
+      const fraction = i / count;
+      const point = polar(mix(inner, outer, fraction), tau * turns * fraction + wind * (1 - fraction));
+      if (i === 0) path.moveTo(...point);
+      else path.lineTo(...point);
+    }
+    r.plane(...center, height, 0, () => r.outline(path, null, "line", weight));
+  }
+
+  function clockBridge(r, from, bearing, height, width, pillar = 2.9) {
+    r.flange(...from, 5, pillar, height - 9.65, 0, "metal");
+    armLink(r, from, bearing, height, width);
+    r.hole(...from, height + 0.04, width - 0.75);
+    r.flange(...bearing, height - 0.8, width + 0.95, 1.35, 0, "metal");
+    r.circle(...bearing, height + 0.57, width * 0.54, "recess", "ink", 0.55);
+    r.circle(...bearing, height + 0.60, width * 0.25, "paper", "soft", 0.46);
+  }
+
+  function dialHand(r, axis, length, width, height, angle, fill) {
+    r.plane(...axis, height, angle - Math.PI / 2, () => {
+      const path = new Path2D();
+      path.moveTo(-3.4, -width * 0.65);
+      path.lineTo(length - 3.2, -width);
+      path.lineTo(length, 0);
+      path.lineTo(length - 3.2, width);
+      path.lineTo(-3.4, width * 0.65);
+      path.closePath();
+      r.outline(path, fill, "ink", 0.46);
     });
   }
-  const scenes={assembly,sorter,gantry,rotary};
+
+  function drawDial(r, rotations) {
+    const top = 33;
+    const radius = 25.6;
+    r.flange(...minuteAxis, 19.65, 1.57, top - 19.65, 0, "metal");
+    for (const angle of [-2.6, -1.35, 2.55]) {
+      const stud = offset(minuteAxis, 31.2, angle);
+      r.flange(...stud, 5, 2.9, top - 9.8, 0, "side");
+      armLink(r, stud, offset(minuteAxis, radius - 3, angle), top - 1.8, 2.1);
+      r.hole(...stud, top - 1.75, 1.29);
+    }
+    r.flange(...minuteAxis, top - 2.1, radius, 2.1, 0, "paper");
+    r.circle(...minuteAxis, top + 0.03, 23.9, null, "soft", 0.44);
+    r.circle(...minuteAxis, top + 0.05, 17.6, null, "soft", 0.38);
+    for (let i = 0; i < 60; i++) {
+      const angle = i * tau / 60 - Math.PI / 2;
+      const inner = i % 15 === 0 ? 18.7 : i % 5 === 0 ? 19.85 : 21.75;
+      r.line([...offset(minuteAxis, inner, angle), top + 0.09],
+        [...offset(minuteAxis, 22.85, angle), top + 0.09], i % 5 === 0 ? "ink" : "soft", i % 15 === 0 ? 1.24 : 0.49);
+    }
+    const traveled = rotations.minute - initialClock.minute;
+    const initialTime = 10 * 3600 + 8 * 60;
+    dialHand(r, minuteAxis, 13.9, 1.35, top + 0.57, initialTime * tau / 43200 + traveled / 12, "ink");
+    dialHand(r, minuteAxis, 21.4, 1.0, top + 1.08, initialTime * tau / 3600 + traveled, "ink");
+    r.flange(...minuteAxis, top + 1.1, 1.8, 1.25, 0, "side");
+  }
+
+  function drawSeconds(r, rotations) {
+    const height = 29.5;
+    const anchor = offset(secondsAxis, 14.3, 1.05);
+    r.flange(...anchor, 5, 2.15, height - 6, 0, "side");
+    const rim = new Path2D();
+    rim.arc(0, 0, 10.2, 0, tau);
+    rim.moveTo(8.1, 0);
+    rim.arc(0, 0, 8.1, 0, tau);
+    r.plane(...secondsAxis, height - 1.5, 0, () => r.outline(rim, "side"));
+    r.plane(...secondsAxis, height, 0, () => r.outline(rim, "paper"));
+    r.line([...offset(secondsAxis, 10.05, 1.05), height], [...anchor, height], "ink", 1.8);
+    r.hole(...anchor, height + 0.03, 1.23);
+    for (let i = 0; i < 12; i++) {
+      const angle = i * tau / 12;
+      r.line([...offset(secondsAxis, 8.5, angle), height + 0.04],
+        [...offset(secondsAxis, 9.7, angle), height + 0.04], "ink", i % 3 === 0 ? 0.75 : 0.43);
+    }
+    r.flange(...secondsAxis, 27.2, 1.13, height - 25.7, 0, "metal");
+    dialHand(r, secondsAxis, 8.4, 0.33, height + 0.92, rotations.seconds - initialClock.seconds + 0.35, "ink");
+    r.circle(...secondsAxis, height + 1.02, 1.15, "recess", "line", 0.47);
+  }
+
+  function palletStone(side) {
+    // Transform the contact face at the tooth tip back into the lever's coordinates.
+    const angle = side * lockAngle;
+    const [x, y] = polar(toothTip + 0.04, angle);
+    const [nx, ny] = polar(1, angle);
+    const [tx, ty] = [-ny, nx];
+    const reverse = -side * banking;
+    const c = Math.cos(reverse), s = Math.sin(reverse);
+    return [[0, -1.35], [0, 1.35], [1.9, 1.35], [2.25, -1.35]].map(([a, b]) => {
+      const dx = x + nx * a + tx * b - palletSpan, dy = y + ny * a + ty * b;
+      return [dx * c - dy * s, dx * s + dy * c];
+    });
+  }
+
+  const palletStones = [-1, 1].map(palletStone);
+
+  function drawPallet(r, angle) {
+    const z = 22.7;
+    for (const side of [-1, 1]) {
+      const bank = offset(palletCenter, 12.7, leverAxis + side * 0.27);
+      r.flange(...bank, 5, 1.18, z - 4.2, 0, "metal");
+    }
+    r.flange(...palletCenter, 5, 1.63, z - 5, 0, "side");
+    const outline = (points, fill, stroke = "line", weight = 0.57) => {
+      const a = leverAxis + angle;
+      const c = Math.cos(a), s = Math.sin(a);
+      r.shape(points.map(([x, y]) => [palletCenter[0] + x * c - y * s,
+        palletCenter[1] + x * s + y * c, z]), fill, stroke, weight);
+    };
+    for (const stone of palletStones) {
+      const back = [(stone[2][0] + stone[3][0]) / 2, (stone[2][1] + stone[3][1]) / 2];
+      outline([[-1.8, -1.18], [back[0] - 0.5, back[1] - 1.04],
+        [back[0] + 0.96, back[1] + 0.9], [-1.1, 1.25]], "metal");
+      outline(stone, "recess", "ink", 0.5);
+    }
+    outline([[-2.7, -1.7], [10.3, -1.35], [16.1, -2.64], [19, -2.5], [17.15, -0.77],
+      [15.7, -0.58], [15.7, 0.58], [17.15, 0.77], [19, 2.5], [16.1, 2.64],
+      [10.3, 1.35], [-2.7, 1.7]], "paper");
+    r.flange(...palletCenter, z, 2.1, 1.0, 0, "side");
+    r.circle(...palletCenter, z + 1.05, 0.77, "recess", "ink", 0.45);
+  }
+
+  const balanceRadius = 20.8;
+  const balanceRim = new Path2D();
+  for (const radius of [balanceRadius, balanceRadius - 2.85]) {
+    balanceRim.moveTo(radius, 0);
+    balanceRim.arc(0, 0, radius, 0, tau);
+    balanceRim.closePath();
+  }
+
+  function drawBalance(r, angle, palletAngle) {
+    const height = 33.3;
+    r.flange(...balanceCenter, 5, 2.7, height - 6, 0, "side");
+    r.flange(...balanceCenter, 20.4, 7.65, 1.05, 0, "flank");
+    drawPallet(r, palletAngle);
+    const impulse = offset(balanceCenter, 6.65, leverAxis + Math.PI + angle);
+    r.flange(...impulse, 21.45, 0.83, 1.63, 0, "recess");
+    for (const z of [height - 2.5, height - 1.25]) {
+      r.plane(...balanceCenter, z, angle, () => r.outline(balanceRim, "flank", null));
+    }
+    for (let i = 0; i < 3; i++) {
+      const tip = offset(balanceCenter, balanceRadius - 1.7, angle + i * tau / 3 + 0.3);
+      armLink(r, balanceCenter, tip, height - 0.08, 1.32);
+    }
+    r.plane(...balanceCenter, height, angle, () => r.outline(balanceRim, "paper"));
+    r.circle(...balanceCenter, height + 0.025, balanceRadius - 0.87, null, "soft", 0.36);
+    for (let i = 0; i < 12; i++) {
+      const direction = angle + i * tau / 12;
+      const outer = offset(balanceCenter, balanceRadius - 1.43, direction);
+      r.circle(...outer, height + 0.04, 0.58, "recess", "ink", 0.33);
+    }
+    r.flange(...balanceCenter, height, 2.9, 1.1, 0, "metal");
+    drawCoil(r, balanceCenter, height + 2.15, 2.3, 11.9, 3.5, angle, 0.59);
+    const stud = offset(balanceCenter, 11.9, Math.PI);
+    r.flange(...stud, height + 1.5, 1.34, 1.44, 0, "side");
+    // Two narrow, stationary supports expose the spring and the regulating rim.
+    clockBridge(r, offset(balanceCenter, 23.8, -1.15), balanceCenter, height + 6.4, 2.0);
+    const studBase = offset(balanceCenter, 22.4, 2.04);
+    r.flange(...studBase, 5, 2.32, height - 4, 0, "metal");
+    armLink(r, studBase, stud, height + 2.98, 1.08);
+    r.hole(...studBase, height + 3.03, 0.91);
+  }
+
+  function displayClock(r, distance) {
+    const pose = clockPose(distance);
+    r.layer("plate", r => {
+      const edge = [[-84, -65], [78, -65], [89, -54], [89, 2],
+        [64, 30], [27, 48], [-84, 48], [-95, 38], [-95, -54]];
+      const face = edge.map(([x, y]) => [x, y, 5]);
+      r.shape(edge.map(([x, y]) => [x + 3.1, y + 4.1, 0]), "shadow", null);
+      for (const i of [2, 3, 4, 5, 6]) {
+        const a = face[i], b = face[i + 1];
+        r.shape([a, b, [b[0], b[1], 0], [a[0], a[1], 0]], i === 5 ? "flank" : "side");
+      }
+      r.shape(face, "metal");
+      const rim = edge.map(([x, y]) => [x * 0.958, (y + 7) * 0.94 - 7, 5.04]);
+      r.shape([...rim, rim[0]], null, "soft", 0.48);
+      for (const [x, y] of [[-86, -55], [-86, 37], [79, -54], [60, 26]]) {
+        r.circle(x, y, 5.06, 2.62, "flank", "soft", 0.47);
+        r.hole(x, y, 5.1, 1.56);
+      }
+      for (const axis of [minuteAxis, thirdAxis, secondsAxis, escapeAxis]) r.flange(...axis, 5, 2.18, 2.28, 0, "side");
+
+    });
+    r.flange(...barrelAxis, 5, 26.25, 3.4, 0, "side");
+    r.circle(...barrelAxis, 8.43, barrelOpening, "flank", "soft", 0.46);
+    drawCoil(r, barrelAxis, 8.50, 5.2, barrelOpening - 0.72, 5.5, pose.barrel, 0.66);
+    gearFace(r, barrelAxis, 10.7, barrelWheel, pose.barrel);
+    gearFace(r, minuteAxis, 10.7, minutePinion, pose.minute, "side");
+    r.flange(...minuteAxis, 11.94, 1.75, 4.25, 0, "metal");
+    r.flange(...secondsAxis, 7.25, 1.57, 3.45, 0, "metal");
+    gearFace(r, secondsAxis, 13.7, secondsWheel, pose.seconds);
+    r.flange(...escapeAxis, 7.26, 1.17, 3.55, 0, "metal");
+    gearFace(r, escapeAxis, 13.7, escapePinion, pose.escape, "side");
+
+    r.flange(...thirdAxis, 7.25, 1.6, 9.1, 0, "metal");
+    gearFace(r, minuteAxis, 18.4, minuteWheel, pose.minute);
+    gearFace(r, thirdAxis, 18.4, thirdPinion, pose.third, "side");
+    r.flange(...thirdAxis, 19.6, 1.83, 4.64, 0, "metal");
+    r.flange(...secondsAxis, 14.9, 1.55, 9.37, 0, "metal");
+    r.flange(...escapeAxis, 14.95, 1.32, 6.0, 0, "metal");
+    gearFace(r, escapeAxis, 22.7, { path: escapeWheel, bore: 2.2, rootRadius: 10.7 }, pose.escape);
+    gearFace(r, thirdAxis, 26.2, thirdWheel, pose.third);
+    gearFace(r, secondsAxis, 26.2, secondsPinion, pose.seconds, "side");
+
+    clockBridge(r, offset(barrelAxis, 28.2, 2.1), barrelAxis, 16.2, 2.35);
+    clockBridge(r, offset(thirdAxis, 26, -1.22), thirdAxis, 31.3, 2.14);
+    drawBalance(r, pose.balance, pose.pallet);
+    drawSeconds(r, pose);
+    drawDial(r, pose);
+  }
+
+  function motionDistance(seconds) {
+    const ramp = 1.65, initial = 0.21, max = 1;
+    const t = Math.min(ramp, seconds);
+    return initial * t + (max - initial) * t * t / (2 * ramp) + max * (seconds - t);
+  }
+
+
+  const machines = {
+    production: (scene, distance) => singleLine(scene, distance, true),
+    assembly: (scene, distance) => singleLine(scene, distance, false),
+    sorter, gantry, rotary, clock: displayClock,
+  };
+
   globalThis.ccdxToolMachines = context => {
-    const layers = new Map();
     let identity, colors;
-    return (style, { time, running, reduced, width, height, dpr, ink, surface }) => {
-      const scale = Math.min(width / 420, height / 202);
-      const transform = [scale * dpr, 0, 0, scale * dpr, (width - 420 * scale) * dpr / 2, (height - 202 * scale) * dpr / 2];
+    const layers = new Map();
+    return (style, { time, width, height, dpr, ink, surface }) => {
+      const paint = machines[style];
+      if (!paint) return;
       const next = [style, width, height, dpr, ink, surface].join("|");
       if (identity !== next) {
-        identity = next;layers.clear();colors = palette(ink, surface);
+        identity = next;
+        layers.clear();
+        colors = palette(ink, surface);
       }
-      context.setTransform(...transform);
-      const layer = (key, paint) => {
-        let bitmap = layers.get(key);
-        if (!bitmap) {
-          bitmap = document.createElement("canvas");
-          bitmap.width = context.canvas.width;bitmap.height = context.canvas.height;
-          const buffer = bitmap.getContext("2d");buffer.setTransform(...transform);paint(buffer);
-          layers.set(key, bitmap);
+      context.setTransform(dpr, 0, 0, dpr, 0, 0);
+      const scene = renderer(context, width, height, colors, style === "production" ? "line" : style);
+      scene.layer = (name, draw) => {
+        let image = layers.get(name);
+        if (!image) {
+          image = document.createElement("canvas");
+          image.width = context.canvas.width;
+          image.height = context.canvas.height;
+          const buffer = image.getContext("2d");
+          buffer.setTransform(dpr, 0, 0, dpr, 0, 0);
+          draw(renderer(buffer, width, height, colors, style === "production" ? "line" : style));
+          buffer.restore();
+          layers.set(name, image);
         }
-        context.save();context.setTransform(1, 0, 0, 1, 0, 0);context.drawImage(bitmap, 0, 0);context.restore();
+        context.save();
+        context.setTransform(1, 0, 0, 1, 0, 0);
+        context.drawImage(image, 0, 0);
+        context.restore();
       };
-      scenes[style](context, colors, time, running, reduced, layer);
+      paint(scene, motionDistance(Math.max(0, time)));
+      context.restore();
     };
   };
 })();

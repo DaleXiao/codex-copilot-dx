@@ -925,3 +925,20 @@ test("restart inherits account material, gateway keys, model choices and uses sa
   assert.equal(new Headers(reload.calls[0].init.headers).get("authorization"), "Bearer synthetic-persisted-key");
   assert.deepEqual(fs.readFileSync(auth), authBytes);assert.equal(values.size, 1);
 });
+
+test("failed catalog discovery leaves the saved provider's generation cooldown untouched", async t => {
+  const calls = [];
+  const provider = createApiProvider({ config: apiConfig, secrets: { get: async () => "fixture-key" },
+    networkFactory: async () => ({ close() {}, async fetch(_url, init) {
+      calls.push(init.method);
+      return init.method === "GET" ? Response.json({}, { status: 503, headers: { "Retry-After": "9" } }) : Response.json({ output: [] });
+    } }) });
+  t.after(() => provider.close());
+  const before = provider.health();
+  for (let i = 0; i < 2; i++) await assert.rejects(provider.discover(), { code: "ccdx_api_catalog_http_503", retryAfterMs: 9000 });
+  assert.deepEqual(provider.health(), before);
+  const response = await provider.client.responses({ model: "custom/response", input: "fixture" });
+  assert.equal(response.status, 200);
+  await response.text();
+  assert.deepEqual(calls, ["GET", "GET", "POST"]);
+});

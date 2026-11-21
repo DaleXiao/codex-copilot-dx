@@ -3,7 +3,10 @@ import assert from "node:assert/strict";
 import { createRequestAdmission } from "../src/request-admission.mjs";
 import { startAdapter } from "../src/adapter.mjs";
 import { maskPrivacyRequest, protectPrivacyResponse } from "../src/privacy-transform.mjs";
-import { invokeAdapter } from "../test-support/adapter.mjs";
+import { invokeAdapter as invoke } from "../test-support/adapter.mjs";
+
+// Tests of transport behavior never use the developer's real masking policy.
+const invokeAdapter = (options, request) => invoke({ privacy: { wrap: callback => callback, close() {} }, ...options }, request);
 
 const headers = { host: "127.0.0.1:2026", authorization: "Bearer fixture", "chatgpt-account-id": "fixture-account" };
 const request = { model: "gemini-4-carbon", id: "session-fixture", commands: { search_query: [{ q: "fixture query" }],

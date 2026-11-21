@@ -136,7 +136,8 @@ test("HTTP 200 response.failed retries an exact encrypted continuation before do
   }
 });
 
-test("HTTP 200 response.failed never retries after visible stream output", async () => {
+for (const event of ["response.output_text.delta", "response.reasoning_summary_text.delta"]) {
+test(`HTTP 200 response.failed never retries after delivering ${event}`, async () => {
   const failures = createResponseFailureDiagnostics();
   let calls = 0;
   const response = await invokeAdapter({
@@ -145,7 +146,7 @@ test("HTTP 200 response.failed never retries after visible stream output", async
       calls += 1;
       return responsesSse(
         { type: "response.created", response: { id: "resp_partial", object: "response", status: "in_progress", output: [] } },
-        { type: "response.output_text.delta", output_index: 0, item_id: "msg_partial", delta: "partial output" },
+        { type: event, output_index: 0, item_id: "msg_partial", delta: "partial output" },
         encryptedFailure("resp_partial"),
       );
     },
@@ -165,6 +166,7 @@ test("HTTP 200 response.failed never retries after visible stream output", async
   assert.match(response.text, /response\.failed/);
   assert.equal(failures.snapshot().recent[0].retry_skipped, "output_started");
 });
+}
 
 test("HTTP 200 unary failed response retries exact encrypted history once", async () => {
   const failures = createResponseFailureDiagnostics();

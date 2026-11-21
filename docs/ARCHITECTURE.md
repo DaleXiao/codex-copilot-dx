@@ -55,6 +55,8 @@ Antigravity keeps a bounded local conversation route table with keyed session ha
 
 For managed GitHub Codex model plans, Auto Review resolves an explicit startup override within the authorized deployments before consulting saved or observed session routing. The saved effort is associated with its selected review route. A different override uses the app's requested effort, or Low when omitted and supported.
 
+Antigravity stages the model binding separately from the source authorization guard. It commits a binding only after protocol completion, using request order to prevent a later-arriving response from an older request replacing a confirmed choice. The binding store retains only the account and conversation hashes, model alias and order. Lightweight runtime status reads its counters directly before composing provider, catalog and diagnostic details. The terminal's app management commands share the existing formatting, confirmation and management API contracts through their own command module.
+
 ## Composition and lifecycle
 
 ### Application control and shared source admission

@@ -222,14 +222,55 @@ test("dashboard refresh uses the existing GitHub catalog runtime and leaves sett
 test("a reconstructed gateway keeps a known Copilot conversation's compression model and effort",async t=>{
   const f=fixture(t),sent=[];
   await f.runtime.action({action:"enable",accept_background_copilot:true},"http://127.0.0.1:2026");
-  const environment={env:{},dashboardOptions:{home:f.home},codexModelRegistry:{models:catalog},codexClient:{async chatCompletions(value){
+  const registry={data:[...catalog.data,{...catalog.data[0],id:"gemini-4-argon"}]};
+  const environment={env:{},dashboardOptions:{home:f.home},codexModelRegistry:{models:registry},codexClient:{async chatCompletions(value){
     sent.push([value.model,value.reasoning_effort]);
     return Response.json({choices:[{finish_reason:"stop",message:{content:"ok"}}]});
   }}};
   const request={requestType:"agent",model:"ccdx-copilot-gemini-4-carbon-high",request:{labels:{root_cascade_id:"fixture-compression-session"},contents:[{role:"user",parts:[{text:"private fixture"}]}]}};
   const call=body=>invokeAdapter(environment,{url:"/antigravity/v1internal:generateContent",headers:{host:"127.0.0.1:2026"},body});
   assert.equal((await call(request)).status,200);
+  const invalid={...request,model:"ccdx-copilot-gemini-4-argon-high",request:{
+    ...request.request,contents:[{role:"user",parts:[{unsupported_part:true}]}],
+  }};
+  assert.equal((await call(invalid)).status,400);
+  assert.equal(sent.length,1,"a locally rejected model switch never reaches upstream");
   assert.equal((await call({...request,requestType:"summarization",model:"discovery-model"})).status,200);
   assert.deepEqual(sent,[["gemini-4-carbon","high"],["gemini-4-carbon","high"]]);
   assert.doesNotMatch(fs.readFileSync(path.join(path.dirname(f.file),"antigravity-conversations.json"),"utf8"),/fixture-compression-session|private fixture/);
+});
+
+test("parallel model choices commit in request order and a failed SSE cannot replace the successful choice",async t=>{
+  const f=fixture(t),sent=[],pending=Promise.withResolvers(),release=Promise.withResolvers();
+  await f.runtime.action({action:"enable",accept_background_copilot:true},"http://127.0.0.1:2026");
+  const argon="gemini-4-argon",registry={data:[...catalog.data,{...catalog.data[0],id:argon}]};
+  const runtime=createAntigravityRuntime({...f.options,guardSource:undefined,models:()=>registry,
+    client:{async chatCompletions(value){
+      sent.push(value.model);
+      if(sent.length===1){pending.resolve();await release.promise;}
+      if(value.stream)return new Response(
+        'data: {"choices":[{"delta":{"content":"partial"}}]}\n\ndata: {"error":{"code":"upstream_error"}}\n\n',
+        {headers:{"content-type":"text/event-stream"}},
+      );
+      return Response.json({choices:[{finish_reason:"stop",message:{content:"ok"}}]});
+    }}});
+  t.after(()=>runtime.close());
+  const call=(model,{stream=false,type="agent"}={})=>{
+    const body={model,requestType:type,request:{labels:{root_cascade_id:"ordered-compaction"},contents:[{role:"user",parts:[{text:"fixture"}]}]}};
+    const req=Readable.from([JSON.stringify(body)]);
+    Object.assign(req,{method:"POST",url:"/antigravity/v1internal:"+(stream?"streamGenerateContent":"generateContent"),
+      headers:{host:"127.0.0.1:2026","content-type":"application/json"},socket:{remoteAddress:"127.0.0.1"}});
+    return invokeAdapterRequest({},req,runtime.handle);
+  };
+  const carbon="ccdx-copilot-gemini-4-carbon-high", alternative="ccdx-copilot-gemini-4-argon-high";
+  const old=call(carbon);
+  try{
+    await pending.promise;
+    assert.equal((await call(alternative)).status,200);
+  }finally{release.resolve();}
+  assert.equal((await old).status,200);
+  const failed=await call(carbon,{stream:true});
+  assert.equal(failed.status,200);assert.match(failed.text,/"error"/);
+  assert.equal((await call("placeholder",{type:"summarization"})).status,200);
+  assert.deepEqual(sent,["gemini-4-carbon",argon,"gemini-4-carbon",argon]);
 });

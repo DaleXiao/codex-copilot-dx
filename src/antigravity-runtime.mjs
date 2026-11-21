@@ -1,5 +1,4 @@
 import fs from "node:fs";
-import {createHmac} from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import {execFile} from "node:child_process";
@@ -9,16 +8,15 @@ import {createAntigravityImages} from "./antigravity-images.mjs";
 import {createCopilotWeb} from "./copilot-web.mjs";
 import {inspectGeminiApp,planGeminiAppLaunch} from "./gemini-app.mjs";
 import {readUserSettings,userSettingsPath} from "./user-settings.mjs";
-import {accessSettingsPath,readAccessSettings} from "./access-settings.mjs";
+import {readAccessSettings} from "./access-settings.mjs";
 import {readClientGatewayKeys} from "./client-gateway-keys.mjs";
 import {createConversationSourceGuard} from "./conversation-source-guard.mjs";
 import {readSavedGithubToken} from "./auth-credentials.mjs";
 import {githubTokenFingerprint} from "./github-identity.mjs";
-import {atomicWriteFile,atomicWriteFileIfChangedSync} from "./atomic-file.mjs";
-import {withFileLock,withFileLockSync} from "./lock.mjs";
-import {readBoundedFile} from "./bounded-file.mjs";
-import {redactDiagnosticText} from "./diagnostic-text.mjs";
+import {atomicWriteFileIfChangedSync} from "./atomic-file.mjs";
+import {withFileLockSync} from "./lock.mjs";
 import {httpError} from "./http-errors.mjs";
+import {createAntigravityBindings, validModel} from "./antigravity-bindings.mjs";
 import {parseTimerMs} from "./runtime-config.mjs";
 import {antigravityCopilotModels,ANTIGRAVITY_MODEL_PREFIX,ANTIGRAVITY_NATIVE_PREFIX} from "./antigravity-models.mjs";
 
@@ -26,7 +24,6 @@ const execute=promisify(execFile),key="gemini_antigravity_enabled",modelKey="gem
 const timeoutKey="gemini_antigravity_copilot_timeout_seconds";
 const nativeSourceKey="gemini_antigravity_native_source";
 const validTimeout=value=>Number.isSafeInteger(value)&&value>=1&&value<=600;
-const validModel=id=>typeof id==="string"&&/^[\w][\w./:@+-]{0,159}$/.test(id)&&redactDiagnosticText(id)===id;
 const validAlias=id=>typeof id==="string"&&/^ccdx-copilot-[a-z0-9._-]{1,140}$/.test(id);
 
 export function createAntigravityRuntime({client,models=()=>[],refreshModels,privacy,home=os.homedir(),env=process.env,inspect=inspectGeminiApp,
@@ -34,23 +31,8 @@ export function createAntigravityRuntime({client,models=()=>[],refreshModels,pri
   upstreamTimeoutMs=180000,copilotTimeoutMs,nativeSources=()=>[],getSource=()=>null,...timeouts}={}) {
   const options={home,env},guard=createConversationSourceGuard(options);
   const web=searchFn?null:createCopilotWeb({client,readToken});
-  let app={status:"unknown"},route=null,lastOperation=null,compactionSalt,conversationRoutes;
-  const routeFile=path.join(path.dirname(accessSettingsPath(options)),"antigravity-conversations.json");
-  const readRoutes=async()=>{
-    let value;
-    try{value=JSON.parse(await readBoundedFile(routeFile,{encoding:"utf8",maxBytes:128*1024}));}
-    catch(error){if(error.code==="ENOENT")return {};throw httpError("Antigravity conversation routing data could not be read",409);}
-    if(!value||typeof value!=="object"||Array.isArray(value)||Object.keys(value).length>256||
-      Object.entries(value).some(([id,item])=>!/^[a-f0-9]{64}$/.test(id)||!item||
-        !/^[a-f0-9]{64}$/.test(item.owner)||!validModel(item.model)))throw httpError("Invalid Antigravity conversation routing data",409);
-    return value;
-  };
-  const conversationKey=body=>{
-    const id=body?.request?.labels?.root_cascade_id||body?.request?.labels?.cascade_id;
-    if(typeof id!=="string"||!id||id.length>160||/[\u0000-\u001f\u007f]/.test(id))return null;
-    compactionSalt||=readClientGatewayKeys({...options,create:false}).codex;
-    return createHmac("sha256",compactionSalt).update("antigravity-compression\0"+id).digest("hex");
-  };
+  let app={status:"unknown"},route=null,lastOperation=null;
+  const bindings=createAntigravityBindings(options,guard);
   const settings=()=>{
     const saved=readUserSettings({...options,strict:true});
     if(saved[key]!==undefined&&typeof saved[key]!=="boolean")throw httpError("Invalid Gemini integration setting",409);
@@ -72,7 +54,6 @@ export function createAntigravityRuntime({client,models=()=>[],refreshModels,pri
   };
   const profileFor=source=>source==="github"?"codex:"+githubTokenFingerprint(readToken()||"")
     :source==="google"?"google:gemini-native":getSource(source)?.profileId("gemini");
-  const hashProfile=profile=>createHmac("sha256",compactionSalt).update(profile).digest("hex");
   const sourceGuard=guardSource||(async(body,source,signal)=>{
     const labels=body.request?.labels||{},id=labels.root_cascade_id||labels.cascade_id;
     if(typeof id!=="string"||!id||id.length>160)throw httpError("Antigravity request has no stable conversation identifier",400);
@@ -90,48 +71,24 @@ export function createAntigravityRuntime({client,models=()=>[],refreshModels,pri
       const source=getSource(model.source);return source?.client?.gemini?{...model,transport:source}:null;
     },
     imageFn:imageFn||createAntigravityImages({client,models:available,privacy}),guardSource:sourceGuard,compactionProfile:()=>githubTokenFingerprint(readToken()||""),
-    async rememberConversationSource(body,source,signal,observedProfile){
-      const key=conversationKey(body);if(!key||!validModel(body.model))return;
-      const profile=typeof observedProfile==="string"?observedProfile:profileFor(source);if(!profile)return;
-      const owner=hashProfile(profile), cached=conversationRoutes?.[key];
-      if(cached?.owner===owner&&cached.model===body.model)return;
-      const remember=routes=>{
-        delete routes[key];routes[key]={owner,model:body.model};
-        const keys=Object.keys(routes);for(const id of keys.slice(0,Math.max(0,keys.length-256)))delete routes[id];
-      };
-      try{
-        await withFileLock(routeFile+".lock",async()=>{
-          const routes=await readRoutes();signal?.throwIfAborted();
-          if(routes[key]?.owner!==owner||routes[key].model!==body.model){
-            remember(routes);
-            await atomicWriteFile(routeFile,JSON.stringify(routes)+"\n",{mode:0o600});
-          }
-          conversationRoutes=routes;
-        },{timeoutMs:1000,signal});
-      }catch{
-        signal?.throwIfAborted();
-        // Existing source ownership still governs routing if this optional model record cannot be saved.
-        remember(conversationRoutes||={});
-      }
+    prepareConversationBinding(body,source,profile,startedAt){
+      return bindings.prepare(body,profile||profileFor(source),startedAt);
     },
     async resolveCompactionSource(body,saved=settings()){
-      const key=conversationKey(body);if(!key)return null;
-      const id=body.request.labels.root_cascade_id||body.request.labels.cascade_id;
-      const owner=await guard.owner("gemini",id,compactionSalt);
-      if(!owner)return null;
-      conversationRoutes ||= await readRoutes();
-      const entry=conversationRoutes[key], pinned=entry?.owner===owner?entry.model:null;
-      if(owner===hashProfile(profileFor("google"))){
+      const binding=await bindings.resolve(body);
+      if(!binding)return null;
+      const {owner,pinned}=binding;
+      if(owner===bindings.hashProfile(profileFor("google"))){
         const model=pinned||body.model;
         if(!validModel(model)||model.startsWith(ANTIGRAVITY_MODEL_PREFIX)||model.startsWith(ANTIGRAVITY_NATIVE_PREFIX))throw httpError("The conversation belongs to another model source",409);
         return{source:"google",model};
       }
-      if(owner===hashProfile(profileFor("github"))){
+      if(owner===bindings.hashProfile(profileFor("github"))){
         const model=pinned||(validAlias(body.model)?body.model:null);
         return model?{source:"github",model}:{source:"github",background:true};
       }
       const selected=saved.native_source, profile=selected&&profileFor(selected);
-      const model=profile&&owner===hashProfile(profile)&&nativeModels(selected).find(entry=>entry.id===(pinned||body.model));
+      const model=profile&&owner===bindings.hashProfile(profile)&&nativeModels(selected).find(entry=>entry.id===(pinned||body.model));
       if(model)return{source:selected,model:model.id};
       throw httpError("The conversation belongs to another model source",409);
     },fetchGoogle:googleFetch,acquireRequest,upstreamTimeoutMs,...timeouts,generationSettings(saved){

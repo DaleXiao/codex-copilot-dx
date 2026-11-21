@@ -240,3 +240,14 @@ test("numeric tool secrets remain protected independently of model false-positiv
   const session = await maskPrivacyRequest(input, options);assert.equal(session.count, 1);
   assert.notEqual(session.body.messages[0].content[0].input.secret, "123456");assert.deepEqual(session.restoreToolValue(session.body.messages[0].content[0].input), { secret: "123456" });
 });
+
+test("large no-replacement requests keep their input and record only numeric phase timings", async () => {
+  const input = body("ordinary fixture text ".repeat(26000));
+  let measured;
+  const session = await maskPrivacyRequest(input, { ...options, onTiming: value => { measured = value; } });
+  assert.equal(session.body, input);
+  assert.equal(session.count, 0);
+  assert.deepEqual(Object.keys(measured), ["scan_ms", "detection_ms", "merge_ms"]);
+  assert.ok(Object.values(measured).every(value => Number.isSafeInteger(value) && value >= 0));
+  session.release();
+});

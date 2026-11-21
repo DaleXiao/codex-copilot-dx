@@ -165,10 +165,16 @@ function cloneGemini(value) {
   if (!value || typeof value !== "object" || JSON.isRawJSON(value)) return value;
   return Array.isArray(value) ? value.map(cloneGemini) : Object.fromEntries(Object.entries(value).map(([key, item]) => [key, cloneGemini(item)]));
 }
-export async function maskPrivacyRequest(body, { protocol, client = "api", personal = false, secret, find, signal, onPlan, rules = ruleSpans, seedMappings }) {
-  const copy = protocol === "gemini" ? cloneGemini(body) : structuredClone(body), { items, nested } = requestTexts(copy, protocol), texts = items.map(item => item.text);
-  if (items.length > 8192 || texts.reduce((n, text) => n + Buffer.byteLength(text), 0) > 8 * 1024 * 1024) throw privacyFailure("request_too_large");
-  const found = texts.length ? await find(texts, { signal, onPlan }) : [], values = new Map(seedMappings), kinds = {}, total = { count: 0, bytes: 0 };
+export async function maskPrivacyRequest(body, { protocol, client = "api", personal = false, secret, find, signal, onPlan, onTiming, rules = ruleSpans, seedMappings }) {
+  const started=onTiming&&performance.now();
+  const { items } = requestTexts(body, protocol), texts = items.map(item => item.text);
+  let copy=body, target;
+  const bytes=texts.reduce((n,text)=>n+Buffer.byteLength(text),0);
+  if (items.length > 8192 || bytes > 8 * 1024 * 1024) throw privacyFailure("request_too_large");
+  const measure=onTiming&&bytes>=512*1024;
+  const scanEnd=measure&&performance.now();
+  const found=texts.length?await find(texts,{signal,onPlan}):[];
+  const detectionEnd=measure&&performance.now(),values=new Map(seedMappings),kinds={},total={count:0,bytes:0};
   if (!Array.isArray(found) || found.length !== texts.length) throw privacyFailure("engine_invalid");
   for (let i = 0; i < items.length; i++) {
     const item = items[i], spans = rules(item.text, personal);let bytes;
@@ -192,13 +198,22 @@ export async function maskPrivacyRequest(body, { protocol, client = "api", perso
       if (!values.has(token)) { total.bytes += Buffer.byteLength(value);if (values.size >= 8192 || total.bytes > 4 * 1024 * 1024) throw privacyFailure("mapping_limit");values.set(token, value); }
       output += item.text.slice(end, span.start) + token;end = span.end;total.count++;kinds[span.kind] = (kinds[span.kind] || 0) + 1;
     }
-    if (end) item.parent[item.key] = output + item.text.slice(end);
+    if(end){
+      if(!target){
+        copy=protocol==="gemini"?cloneGemini(body):structuredClone(body);
+        target=requestTexts(copy,protocol);
+      }
+      const field=target.items[i];
+      field.parent[field.key]=output+item.text.slice(end);
+    }
   }
-  if (total.count) for (const item of nested) {
+  if(target)for(const item of target.nested){
     const ordinary = JSON.stringify(item.value), original = item.parent[item.key];
     item.parent[item.key] = ordinary !== original && possibleLossyNumber.test(original)
       ? JSON.stringify(overlayToolStrings(parseToolArguments(original), item.value)) : ordinary;
   }
+  if(measure)onTiming({ scan_ms: Math.round(scanEnd-started), detection_ms: Math.round(detectionEnd-scanEnd),
+    merge_ms: Math.round(performance.now()-detectionEnd) });
   const restoreText = text => text.replace(tokenPattern, token => values.get(token) ?? token);
   function restoreValue(value, inToolData = false) {
     if (typeof value === "string") return restoreText(value);

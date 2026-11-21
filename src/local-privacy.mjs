@@ -58,7 +58,7 @@ export function createLocalPrivacy(options = {}) {
     if (disposed) throw privacyFailure("engine_unavailable");
     loadKey();
     const start = performance.now();
-    const deadline = new AbortController();let session, timer, textKeys, budget = options.checkTimeoutMs ?? 15000;
+    const deadline = new AbortController();let session, timer, textKeys, timing, budget = options.checkTimeoutMs ?? 15000;
     const arm = () => {
       clearTimeout(timer);timer = setTimeout(() => deadline.abort(privacyFailure("check_timeout", "waiting")), Math.max(1, budget - (performance.now() - start)));
       timer.unref?.();
@@ -72,7 +72,7 @@ export function createLocalPrivacy(options = {}) {
     };
     try { session = await maskPrivacyRequest(body, { protocol, client, personal: saved.personal, secret,
       find: (texts, context) => detection.find(texts, { ...context, onKey(text, key) { if (text.length >= 256) (textKeys ||= new Map()).set(text, key); } }),
-      rules: (text, personal) => rules.find(text, personal, textKeys?.get(text)), onPlan,
+      rules: (text, personal) => rules.find(text, personal, textKeys?.get(text)), onPlan, onTiming: value => { timing=value; },
       signal: signal ? AbortSignal.any([signal, deadline.signal]) : deadline.signal }); }
     catch (error) {
       const failure = deadline.signal.aborted && !signal?.aborted ? privacyFailure("check_timeout", "waiting") : error;
@@ -83,7 +83,7 @@ export function createLocalPrivacy(options = {}) {
     } finally { clearTimeout(timer);textKeys?.clear(); }
     if (signal?.aborted) { session.release();throw signal.reason; }
     markRequestObservation({ privacy_count: session.count, privacy_ms: Math.round(performance.now() - start), privacy_state: "checked" });
-    actionError = null;lastCheck = { state: "checked", at: new Date().toISOString(), elapsed_ms: Math.round(performance.now() - start), count: session.count, wait_budget_ms: budget };changes.changed();
+    actionError = null;lastCheck = { state: "checked", at: new Date().toISOString(), elapsed_ms: Math.round(performance.now() - start), count: session.count, wait_budget_ms: budget, ...(timing ? {timing} : {}) };changes.changed();
     if (onSession) { onSession(session);return session.body; }
     if (res && session.count) attachSession(res, session);
     return session.body;

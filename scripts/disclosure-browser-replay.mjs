@@ -152,9 +152,9 @@ for (const name of (options.get("--engines") || "chromium,webkit").split(",")) {
             });
             if (options.get("--output") && language === "zh" && width === 1440 && reducedMotion === "no-preference") {
               const output = options.get("--output");await fs.mkdir(output, { recursive: true });
-              await page.evaluate(() => { document.documentElement.dataset.palette = "mono";document.documentElement.dataset.theme = "light";document.getElementById("request-context").open = true;document.querySelectorAll("#context-body details").forEach(detail => { detail.open = false; }); });
+              await page.evaluate(() => { document.documentElement.dataset.palette = "mono";document.documentElement.dataset.theme = "light";document.getElementById("request-context").open = true;document.querySelectorAll('#context-body .request-disclosure[aria-expanded="true"]').forEach(trigger => trigger.click()); });
               await page.locator("#request-context").screenshot({ path: `${output}/${name}-requests-closed.png` });
-              await page.locator("#context-body details > summary").first().click();
+              await page.locator("#context-body .request-disclosure").first().click();
               await page.waitForTimeout(220);
               await page.locator("#request-context").screenshot({ path: `${output}/${name}-requests-open.png` });
             }

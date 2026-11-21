@@ -281,3 +281,25 @@ test("runtime status is loopback-only, owns request ids, and excludes its probes
   assert.deepEqual(JSON.parse(remote.body), { error: "Runtime status is available only from loopback" });
   assert.equal(metrics.snapshot().total, 1);
 });
+
+test("summary status bypasses provider and stream diagnostics while matching the full projection", async () => {
+  let snapshots = 0;
+  const metrics = createRequestMetrics();
+  const finish = metrics.begin("responses");
+  const handler = createAdapterHandler({
+    requestMetrics: metrics,
+    providerRuntime: { snapshot() { snapshots++;return { codex_provider: "github" }; } },
+  });
+  const headers = { host: "127.0.0.1:2026" };
+  try {
+    const summary = JSON.parse((await invoke(handler, { url: ADAPTER_STATUS_PATH + "?scope=summary", headers })).body);
+    assert.equal(snapshots, 0);
+    const full = JSON.parse((await invoke(handler, { url: ADAPTER_STATUS_PATH, headers })).body);
+    assert.equal(snapshots, 1);
+    assert.equal(summary.model_activity.active, 1);
+    assert.deepEqual(summary, Object.fromEntries(Object.keys(summary).map(key =>
+      [key, key === "scope" || key === "uptime_ms" ? summary[key] : full[key]])));
+  } finally {
+    finish();handler.cleanup?.();
+  }
+});

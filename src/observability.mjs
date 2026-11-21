@@ -165,6 +165,14 @@ function safeClientRuntimeStatus(client) {
   };
 }
 
+export function activeModels(requests, activeImages) {
+  const activityCounts = ["responses", "responses_compact", "messages", "search", "antigravity"].map(route => requests.by_route[route]?.active || 0);
+  activityCounts.push(activeImages);
+  const active = activityCounts.every(value => Number.isSafeInteger(value) && value >= 0)
+    && Number.isSafeInteger(activityCounts.reduce((sum, value) => sum + value, 0)) ? activityCounts.reduce((sum, value) => sum + value, 0) : null;
+  return active;
+}
+
 export function runtimeStatusPayload({
   metrics,
   streamPerformance,
@@ -200,10 +208,7 @@ export function runtimeStatusPayload({
   }
   const history = responseHistoryStats();
   const requests = metrics?.snapshot?.() || createRequestMetrics().snapshot();
-  const activityCounts = ["responses", "responses_compact", "messages", "search", "antigravity"].map(route => requests.by_route[route]?.active || 0);
-  activityCounts.push(imageGeneration?.active ?? 0);
-  const active = activityCounts.every(value => Number.isSafeInteger(value) && value >= 0)
-    && Number.isSafeInteger(activityCounts.reduce((sum, value) => sum + value, 0)) ? activityCounts.reduce((sum, value) => sum + value, 0) : null;
+  const active = activeModels(requests, imageGeneration?.active ?? 0);
   return {
     ...adapterHealthPayload(),
     uptime_ms: Math.round(process.uptime() * 1000),

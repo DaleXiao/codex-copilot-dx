@@ -19,6 +19,7 @@ import { createLocalPrivacy } from "./local-privacy.mjs";
 import { status } from "./status.mjs";
 import { exportResponseHistory, importResponseHistory } from "./response-history.mjs";
 import { createTerminalActivityIndicator } from "./terminal-activity.mjs";
+import {runtimeStatusSummary} from "./status-summary.mjs";
 import { ADAPTER_HEALTH_PATH, ADAPTER_PREDICTION_FIX_PATH, adapterHealthPayload } from "./running-adapter.mjs";
 import { ACTIVITY_EVENTS_PATH, createActivityEvents } from "./activity-events.mjs";
 import { runtimeUsageSnapshot } from "./usage-store.mjs";
@@ -249,6 +250,7 @@ export function createAdapterHandler(options = {}) {
   let statusSnapshot;
   const managementHandler = createManagementHandler({
     activityEvents,
+    summarySnapshot: () => runtimeStatusSummary(requestMetrics.snapshot(), nativeImages.stats().active),
     nativePredictionPac: options.nativePredictionPac, fixPrediction: options.fixPrediction, requestBodyTimeoutMs,
     statusSnapshot: statusSnapshot = () => {
       const snapshot = runtimeStatusPayload({ metrics: requestMetrics, streamPerformance: streamPerformanceMetrics, admission: acquireRequest,

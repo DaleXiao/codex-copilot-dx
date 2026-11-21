@@ -13,7 +13,7 @@ export function isManagementRoute(method, pathname) {
 
 // Management retains its own access checks; it receives snapshots and explicit
 // actions, never an inference client or a second integration lifecycle.
-export function createManagementHandler({ statusSnapshot, activityEvents, nativePredictionPac, fixPrediction, requestBodyTimeoutMs } = {}) {
+export function createManagementHandler({ statusSnapshot, summarySnapshot, activityEvents, nativePredictionPac, fixPrediction, requestBodyTimeoutMs } = {}) {
   const options = { nativePredictionPac, fixPrediction };
   return async (req, res, pathname) => {
     if (req.method === "GET" && pathname === ACTIVITY_EVENTS_PATH) {
@@ -32,8 +32,8 @@ export function createManagementHandler({ statusSnapshot, activityEvents, native
         return;
       }
       res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-      const snapshot = statusSnapshot();
-      res.end(JSON.stringify(new URL(req.url, "http://localhost").searchParams.get("scope") === "summary" ? statusSummary(snapshot) : snapshot));
+      const summary = new URL(req.url, "http://localhost").searchParams.get("scope") === "summary";
+      res.end(JSON.stringify(summary ? (summarySnapshot ? summarySnapshot() : statusSummary(statusSnapshot())) : statusSnapshot()));
       return;
     }
 

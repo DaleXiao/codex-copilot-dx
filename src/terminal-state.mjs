@@ -4,7 +4,11 @@ const integer = value => Number.isSafeInteger(value) && value >= 0;
 const appIds = { codex_app: "codex", codex_cli: "codex", codex: "codex", claude_app: "claude_app", claude_code: "claude_code", gemini_app: "antigravity" };
 export const TERMINAL_CLIENT_NAMES = Object.freeze({ codex: "Codex", claude_app: "Claude App", claude_code: "Claude Code", gemini: "Antigravity", antigravity: "Antigravity" });
 export function terminalRequestState(row) {
-  if (!row.active) return row.state || "unknown";
+  if (!row.active) {
+    if (row.state === "incomplete" && row.stop_reason === "max_tokens") return "Output limit";
+    if (row.state === "incomplete" && row.stop_reason === "content_filter") return "Content filtered";
+    return row.state || "unknown";
+  }
   if (row.terminal_outcome) return "Finishing";
   if (row.first_output_ms != null) return "Responding";
   if (row.phase === "admission") return "Queued";

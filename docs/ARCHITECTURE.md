@@ -75,6 +75,8 @@ Explicit concurrency rejections contract once per observed burst. Stable success
 
 The upstream references are deliberately narrow: [Floway's model-scoped quota correction](https://github.com/Menci/Floway/commit/49813611aac1f7d0cccb10cfd343c1df7541790e) and [single Chat output cap](https://github.com/Menci/Floway/commit/63f1100af6bc2823e7f0f478fbd785aa56dc0cd7), [Magpie's quota/compaction boundary](https://github.com/yetone/magpie/issues/2725), and [LiteLLM's disconnect outcome report](https://github.com/BerriAI/litellm/issues/51978). CCDX preserves an already observed terminal result while marking delivery cancellation separately; an unfinished stream is not promoted to success. The existing CC Switch-style separation of configuration, discovery and application activation is retained. No upstream runtime, distributed queue or automatic account rotation is introduced.
 
+A deployment epoch distinguishes a newly applied configuration from an earlier activation with the same revision. Old leases still release their slots, while their feedback cannot train the current deployment. Privacy settings read failures are reported within the activity snapshot without dropping other activity.
+
 Antigravity's management views group per-effort catalog entries only when the record declares a valid `base_model_id` and `reasoning_effort`. Group selection continues to store the existing individual aliases. Requests keep the original model IDs and capabilities.
 
 ### Manual connection graph

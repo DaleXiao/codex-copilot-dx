@@ -9,7 +9,18 @@ const MAX_ENTRIES = 2;
 const MAX_BYTES = 2 * 1024 * 1024;
 const MAX_PENDING_BYTES = 256 * 1024;
 const cache = new Map(), activeReads = createAbortAwareSingleflight();
+const dateFormatters = new Map();
 let unsubscribe;
+
+function dateFormatter(timeZone) {
+  let formatter = dateFormatters.get(timeZone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat("sv-SE", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" });
+    if (dateFormatters.size >= 8) dateFormatters.delete(dateFormatters.keys().next().value);
+    dateFormatters.set(timeZone, formatter);
+  }
+  return formatter;
+}
 
 async function completeLines(file) {
   for (const candidate of [file + ".1", file]) {
@@ -32,7 +43,7 @@ function appendOnly(before, after, bytes) {
   const a = before.split("\0"), b = after.split("\0");
   if (a.length !== 2 || b.length !== 2 || a[0] !== b[0]) return false;
   const oldFiles = a[1].split("|"), nextFiles = b[1].split("|");
-  if (oldFiles.length !== 2 || nextFiles.length !== 2 || oldFiles[0] !== nextFiles[0]) return false;
+  if (oldFiles.length !== 3 || nextFiles.length !== 3 || oldFiles[0] !== nextFiles[0] || oldFiles[2] !== nextFiles[2]) return false;
   const old = oldFiles[1].split(":"), next = nextFiles[1].split(":");
   return next.length === 5 && (oldFiles[1] === "missing" ? Number(next[2]) === bytes
     : old.length === 5 && old[0] === next[0] && old[1] === next[1] && Number(next[2]) === Number(old[2]) + bytes);
@@ -59,7 +70,7 @@ function observe() {
 
 export async function analyzeUsageLogs(filePath = usageLogPath(), { timeZone = "UTC", now = Date.now(), warn = console.error, provider = "", model = "", purpose = "", days = "all", from = "", to = "", signal } = {}) {
   const selection = createUsageQuery({ provider, model, purpose, days, from, to, timeZone, now });
-  const zone = new Intl.DateTimeFormat("sv-SE", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" });
+  const zone = dateFormatter(timeZone);
   const file = path.resolve(filePath), query = `${file}\0${selection.key}\0${zone.format(new Date(now))}`;
   const version = warn === console.error ? await usageSummaryVersion(file, { settled: false }) : null;
   const collect = async () => {

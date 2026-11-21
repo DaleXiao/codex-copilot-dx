@@ -11,13 +11,23 @@ import { readBoundedResponseText } from "../src/upstream-body.mjs";
 
 test("an API's private limit evidence survives safe error projection without leaking vendor text", async () => {
   const scheduler = createSourceAdmission();
+  let upstreamAttempts = 0;
   const raw = createApiProvider({ config: { id: "api_feedback", name: "synthetic", secret_ref: "a".repeat(32), auth_header: "bearer", base_url: "https://synthetic.test/v1",
     endpoints: { messages: "https://synthetic.test/v1/messages" }, models: [{ id: "model", protocols: ["messages"] }] }, secrets: { get: async () => "synthetic-key" },
-    networkFactory: async () => ({ close() {}, fetch: async () => Response.json({ error: { code: "concurrency_limit", limit: 1, message: "vendor private sentence" } }, { status: 429 }) }) });
+    networkFactory: async () => ({ close() {}, fetch: async () => {
+      upstreamAttempts++;
+      return Response.json({ error: { code: "concurrency_limit", limit: 1, message: "vendor private sentence" } },
+        { status: 429, headers: { "Retry-After": "1.25" } });
+    } }) });
   const provider = admittedSource(raw, scheduler), response = await provider.client.messages({ model: "model", max_tokens: 4, messages: [{ role: "user", content: "synthetic" }] });
+  assert.equal(response.status, 429);
+  assert.equal(response.headers.get("Retry-After"), "2");
+  assert.equal(upstreamAttempts, 1);
   assert.equal(scheduler.snapshot()[0].limit, 1);
   const text = await response.text();assert.doesNotMatch(text, /vendor private sentence|synthetic-key|source limit evidence/);
-  assert.match(text, /ccdx_api_http_429/);assert.equal(scheduler.snapshot()[0].active, 0);provider.close();scheduler.close();
+  assert.equal(JSON.parse(text).error.type, "rate_limit_error");
+  assert.equal(JSON.parse(text).error.code, "ccdx_api_http_429");
+  assert.equal(scheduler.snapshot()[0].active, 0);provider.close();scheduler.close();
 });
 
 test("typed raw source limits apply even when the caller discards the HTTP error body", async () => {

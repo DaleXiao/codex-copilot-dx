@@ -468,369 +468,376 @@
     press(r, ...axis, phase, top + 8.3, 67);
   }
 
-  const pressureAngle = Math.PI / 9;
-  const involute = angle => Math.tan(angle) - angle;
-  function makeWheel(teeth, windows, bore, moduleSize) {
-    const pitchRadius = moduleSize * teeth / 2;
-    const outerRadius = pitchRadius + moduleSize;
-    const rootRadius = pitchRadius - 1.25 * moduleSize;
-    const base = pitchRadius * Math.cos(pressureAngle);
-    const rootFlank = Math.max(base, rootRadius);
-    const step = tau / teeth;
-    const halfTooth = step * 0.245;
-    const halfAngle = (radius) => halfTooth + involute(pressureAngle) - involute(Math.acos(base / radius));
-    const path = new Path2D();
-    function point(radius, angle, move = false) {
-      const x = radius * Math.cos(angle), y = radius * Math.sin(angle);
-      const method = move ? "moveTo" : "lineTo";
-      path[method](x, y);
-    }
-    for (let i = 0; i < teeth; i++) {
-      const angle = i * step;
-      point(rootRadius, angle - step / 2, i === 0);
-      point(rootRadius, angle - halfAngle(rootFlank) - step * 0.055);
-      for (let j = 0; j <= 4; j++) {
-        const radius = rootFlank + (outerRadius - rootFlank) * j / 4;
-        point(radius, angle - halfAngle(radius));
-      }
-      for (let j = 4; j >= 0; j--) {
-        const radius = rootFlank + (outerRadius - rootFlank) * j / 4;
-        point(radius, angle + halfAngle(radius));
-      }
-      point(rootRadius, angle + halfAngle(rootFlank) + step * 0.055);
-      point(rootRadius, angle + step / 2);
-    }
-    path.closePath();
-    const outerWindow = rootRadius - 3.2;
-    const innerWindow = bore + 2.8;
-    for (let i = 0; i < windows; i++) {
-      const middle = i * tau / windows;
-      const half = Math.PI / windows - 0.15;
-      const from = middle - half, to = middle + half;
-      path.moveTo(outerWindow * Math.cos(from), outerWindow * Math.sin(from));
-      path.arc(0, 0, outerWindow, from, to);
-      path.lineTo(innerWindow * Math.cos(to - 0.17), innerWindow * Math.sin(to - 0.17));
-      path.arc(0, 0, innerWindow, to - 0.17, from + 0.17, true);
-      path.closePath();
-    }
-    return { teeth, pitchRadius, rootRadius, path, bore };
-  }
-
-  function polar(radius, angle) {
-    return [radius * Math.cos(angle), radius * Math.sin(angle)];
-  }
-
-  function offset([x, y], radius, angle) {
-    const [dx, dy] = polar(radius, angle);
-    return [x + dx, y + dy];
-  }
-
-  const minuteAxis = [-54, -27];
-  const minuteWheel = makeWheel(72, 6, 5.5, 0.75);
-  const minutePinion = makeWheel(12, 0, 3.2, 1);
-  const barrelWheel = makeWheel(58, 0, 4, 1);
-  const barrelOpening = 24;
-  barrelWheel.path.moveTo(barrelOpening, 0);
-  barrelWheel.path.arc(0, 0, barrelOpening, 0, tau);
-  barrelWheel.path.closePath();
-  const barrelMesh = -1.46;
-  const barrelAxis = offset(minuteAxis, barrelWheel.pitchRadius + minutePinion.pitchRadius, barrelMesh + Math.PI);
-
-  const thirdPinion = makeWheel(12, 0, 2.5, 0.75);
-  const thirdWheel = makeWheel(80, 5, 4.1, 0.67);
-  const thirdMesh = 0.12;
-  const thirdAxis = offset(minuteAxis, minuteWheel.pitchRadius + thirdPinion.pitchRadius, thirdMesh);
-
-  const secondsPinion = makeWheel(8, 0, 1.7, 0.67);
-  const secondsWheel = makeWheel(60, 5, 3.5, 0.60);
-  const secondsMesh = 0.45;
-  const secondsAxis = offset(thirdAxis, thirdWheel.pitchRadius + secondsPinion.pitchRadius, secondsMesh);
-
-  const escapePinion = makeWheel(10, 0, 1.8, 0.60);
-  const escapeMesh = -0.57;
-  const escapeAxis = offset(secondsAxis, secondsWheel.pitchRadius + escapePinion.pitchRadius, escapeMesh);
-  const leverAxis = -0.38;
-  const palletSpan = 22.5;
-  const balanceSpan = 46.5;
-  const balanceCenter = offset(escapeAxis, balanceSpan, leverAxis);
-  const palletCenter = offset(escapeAxis, palletSpan, leverAxis);
-  const escapeTeeth = 15;
-  const toothPitch = tau / escapeTeeth;
-  const toothTip = 15.2;
-  const lockAngle = 3.5 * toothPitch / 2;
-  const banking = 0.116;
-
-  const escapeWheel = new Path2D();
-  const clubTooth = [[10.7, -0.49], [10.7, -0.30], [13.65, 0.025], [toothTip, 0],
-    [15.05, 0.16], [13.85, 0.24], [10.7, 0.32]];
-  for (let i = 0; i < escapeTeeth; i++) {
-    for (const [j, [radius, fraction]] of clubTooth.entries()) {
-      const point = polar(radius, (i + fraction) * toothPitch);
-      if (i === 0 && j === 0) escapeWheel.moveTo(...point);
-      else escapeWheel.lineTo(...point);
-    }
-  }
-  escapeWheel.closePath();
-  for (let i = 0; i < 5; i++) {
-    const start = i * tau / 5 + 0.13, end = start + tau / 5 - 0.26;
-    escapeWheel.moveTo(...polar(8.95, start));
-    escapeWheel.arc(0, 0, 8.95, start, end);
-    escapeWheel.lineTo(...polar(3.6, end - 0.17));
-    escapeWheel.arc(0, 0, 3.6, end - 0.17, start + 0.17, true);
-    escapeWheel.closePath();
-  }
-
-  // External mesh phases, solved backwards from the intermittent escape-wheel motion.
-  function drivingAngle(wheel, pinion, driven, axis) {
-    const alignment = (wheel.teeth + pinion.teeth) * axis + pinion.teeth * Math.PI - Math.PI;
-    return (alignment - driven * pinion.teeth) / wheel.teeth;
-  }
-
-  function clockPose(distance) {
-    const time = distance * 5.6;
-    const beat = Math.floor(time);
-    const phase = time - beat;
-    const direction = beat % 2 === 0 ? 1 : -1;
-    const advance = (beat + segment(phase, 0.50, 0.70)) * toothPitch / 2;
-    const escape = leverAxis + lockAngle - advance;
-    const seconds = drivingAngle(secondsWheel, escapePinion, escape, escapeMesh);
-    const third = drivingAngle(thirdWheel, secondsPinion, seconds, secondsMesh);
-    const minute = drivingAngle(minuteWheel, thirdPinion, third, thirdMesh);
-    const barrel = drivingAngle(barrelWheel, minutePinion, minute, barrelMesh);
-    return {
-      escape, seconds, third, minute, barrel,
-      pallet: direction * banking * (1 - 2 * segment(phase, 0.42, 0.61)),
-      balance: -1.78 * Math.cos(Math.PI * time)
-    };
-  }
-
-  const initialClock = clockPose(0);
-
-  function gearFace(r, axis, height, gear, angle, finish = "paper") {
-    const { path, bore, rootRadius } = gear;
-    for (const z of [height - 1.8, height - 0.9]) {
-      r.plane(...axis, z, angle, () => r.outline(path, "flank", null));
-    }
-    r.plane(...axis, height, angle, () => r.outline(path, finish));
-    if (rootRadius - bore > 6) r.circle(...axis, height + 0.02, rootRadius - 1.27, null, "soft", 0.38);
-    r.flange(...axis, height, bore, 1.25, 0, "side");
-    r.circle(...axis, height + 1.27, bore * 0.5, "recess", "line", 0.44);
-    r.line([...offset(axis, -bore * 0.39, angle), height + 1.31],
-      [...offset(axis, bore * 0.39, angle), height + 1.31], "ink", 0.48);
-  }
-
-  function drawCoil(r, center, height, inner, outer, turns, wind, weight) {
-    const path = new Path2D();
-    const count = Math.ceil(turns * 29);
-    for (let i = 0; i <= count; i++) {
-      const fraction = i / count;
-      const point = polar(mix(inner, outer, fraction), tau * turns * fraction + wind * (1 - fraction));
-      if (i === 0) path.moveTo(...point);
-      else path.lineTo(...point);
-    }
-    r.plane(...center, height, 0, () => r.outline(path, null, "line", weight));
-  }
-
-  function clockBridge(r, from, bearing, height, width, pillar = 2.9) {
-    r.flange(...from, 5, pillar, height - 9.65, 0, "metal");
-    armLink(r, from, bearing, height, width);
-    r.hole(...from, height + 0.04, width - 0.75);
-    r.flange(...bearing, height - 0.8, width + 0.95, 1.35, 0, "metal");
-    r.circle(...bearing, height + 0.57, width * 0.54, "recess", "ink", 0.55);
-    r.circle(...bearing, height + 0.60, width * 0.25, "paper", "soft", 0.46);
-  }
-
-  function dialHand(r, axis, length, width, height, angle, fill) {
-    r.plane(...axis, height, angle - Math.PI / 2, () => {
+  function buildClock() {
+    const pressureAngle = Math.PI / 9;
+    const involute = angle => Math.tan(angle) - angle;
+    function makeWheel(teeth, windows, bore, moduleSize) {
+      const pitchRadius = moduleSize * teeth / 2;
+      const outerRadius = pitchRadius + moduleSize;
+      const rootRadius = pitchRadius - 1.25 * moduleSize;
+      const base = pitchRadius * Math.cos(pressureAngle);
+      const rootFlank = Math.max(base, rootRadius);
+      const step = tau / teeth;
+      const halfTooth = step * 0.245;
+      const halfAngle = (radius) => halfTooth + involute(pressureAngle) - involute(Math.acos(base / radius));
       const path = new Path2D();
-      path.moveTo(-3.4, -width * 0.65);
-      path.lineTo(length - 3.2, -width);
-      path.lineTo(length, 0);
-      path.lineTo(length - 3.2, width);
-      path.lineTo(-3.4, width * 0.65);
+      function point(radius, angle, move = false) {
+        const x = radius * Math.cos(angle), y = radius * Math.sin(angle);
+        const method = move ? "moveTo" : "lineTo";
+        path[method](x, y);
+      }
+      for (let i = 0; i < teeth; i++) {
+        const angle = i * step;
+        point(rootRadius, angle - step / 2, i === 0);
+        point(rootRadius, angle - halfAngle(rootFlank) - step * 0.055);
+        for (let j = 0; j <= 4; j++) {
+          const radius = rootFlank + (outerRadius - rootFlank) * j / 4;
+          point(radius, angle - halfAngle(radius));
+        }
+        for (let j = 4; j >= 0; j--) {
+          const radius = rootFlank + (outerRadius - rootFlank) * j / 4;
+          point(radius, angle + halfAngle(radius));
+        }
+        point(rootRadius, angle + halfAngle(rootFlank) + step * 0.055);
+        point(rootRadius, angle + step / 2);
+      }
       path.closePath();
-      r.outline(path, fill, "ink", 0.46);
-    });
-  }
-
-  function drawDial(r, rotations) {
-    const top = 33;
-    const radius = 25.6;
-    r.flange(...minuteAxis, 19.65, 1.57, top - 19.65, 0, "metal");
-    for (const angle of [-2.6, -1.35, 2.55]) {
-      const stud = offset(minuteAxis, 31.2, angle);
-      r.flange(...stud, 5, 2.9, top - 9.8, 0, "side");
-      armLink(r, stud, offset(minuteAxis, radius - 3, angle), top - 1.8, 2.1);
-      r.hole(...stud, top - 1.75, 1.29);
+      const outerWindow = rootRadius - 3.2;
+      const innerWindow = bore + 2.8;
+      for (let i = 0; i < windows; i++) {
+        const middle = i * tau / windows;
+        const half = Math.PI / windows - 0.15;
+        const from = middle - half, to = middle + half;
+        path.moveTo(outerWindow * Math.cos(from), outerWindow * Math.sin(from));
+        path.arc(0, 0, outerWindow, from, to);
+        path.lineTo(innerWindow * Math.cos(to - 0.17), innerWindow * Math.sin(to - 0.17));
+        path.arc(0, 0, innerWindow, to - 0.17, from + 0.17, true);
+        path.closePath();
+      }
+      return { teeth, pitchRadius, rootRadius, path, bore };
     }
-    r.flange(...minuteAxis, top - 2.1, radius, 2.1, 0, "paper");
-    r.circle(...minuteAxis, top + 0.03, 23.9, null, "soft", 0.44);
-    r.circle(...minuteAxis, top + 0.05, 17.6, null, "soft", 0.38);
-    for (let i = 0; i < 60; i++) {
-      const angle = i * tau / 60 - Math.PI / 2;
-      const inner = i % 15 === 0 ? 18.7 : i % 5 === 0 ? 19.85 : 21.75;
-      r.line([...offset(minuteAxis, inner, angle), top + 0.09],
-        [...offset(minuteAxis, 22.85, angle), top + 0.09], i % 5 === 0 ? "ink" : "soft", i % 15 === 0 ? 1.24 : 0.49);
+
+    function polar(radius, angle) {
+      return [radius * Math.cos(angle), radius * Math.sin(angle)];
     }
-    const traveled = rotations.minute - initialClock.minute;
-    const initialTime = 10 * 3600 + 8 * 60;
-    dialHand(r, minuteAxis, 13.9, 1.35, top + 0.57, initialTime * tau / 43200 + traveled / 12, "ink");
-    dialHand(r, minuteAxis, 21.4, 1.0, top + 1.08, initialTime * tau / 3600 + traveled, "ink");
-    r.flange(...minuteAxis, top + 1.1, 1.8, 1.25, 0, "side");
-  }
 
-  function drawSeconds(r, rotations) {
-    const height = 29.5;
-    const anchor = offset(secondsAxis, 14.3, 1.05);
-    r.flange(...anchor, 5, 2.15, height - 6, 0, "side");
-    const rim = new Path2D();
-    rim.arc(0, 0, 10.2, 0, tau);
-    rim.moveTo(8.1, 0);
-    rim.arc(0, 0, 8.1, 0, tau);
-    r.plane(...secondsAxis, height - 1.5, 0, () => r.outline(rim, "side"));
-    r.plane(...secondsAxis, height, 0, () => r.outline(rim, "paper"));
-    r.line([...offset(secondsAxis, 10.05, 1.05), height], [...anchor, height], "ink", 1.8);
-    r.hole(...anchor, height + 0.03, 1.23);
-    for (let i = 0; i < 12; i++) {
-      const angle = i * tau / 12;
-      r.line([...offset(secondsAxis, 8.5, angle), height + 0.04],
-        [...offset(secondsAxis, 9.7, angle), height + 0.04], "ink", i % 3 === 0 ? 0.75 : 0.43);
+    function offset([x, y], radius, angle) {
+      const [dx, dy] = polar(radius, angle);
+      return [x + dx, y + dy];
     }
-    r.flange(...secondsAxis, 27.2, 1.13, height - 25.7, 0, "metal");
-    dialHand(r, secondsAxis, 8.4, 0.33, height + 0.92, rotations.seconds - initialClock.seconds + 0.35, "ink");
-    r.circle(...secondsAxis, height + 1.02, 1.15, "recess", "line", 0.47);
-  }
 
-  function palletStone(side) {
-    // Transform the contact face at the tooth tip back into the lever's coordinates.
-    const angle = side * lockAngle;
-    const [x, y] = polar(toothTip + 0.04, angle);
-    const [nx, ny] = polar(1, angle);
-    const [tx, ty] = [-ny, nx];
-    const reverse = -side * banking;
-    const c = Math.cos(reverse), s = Math.sin(reverse);
-    return [[0, -1.35], [0, 1.35], [1.9, 1.35], [2.25, -1.35]].map(([a, b]) => {
-      const dx = x + nx * a + tx * b - palletSpan, dy = y + ny * a + ty * b;
-      return [dx * c - dy * s, dx * s + dy * c];
-    });
-  }
+    const minuteAxis = [-54, -27];
+    const minuteWheel = makeWheel(72, 6, 5.5, 0.75);
+    const minutePinion = makeWheel(12, 0, 3.2, 1);
+    const barrelWheel = makeWheel(58, 0, 4, 1);
+    const barrelOpening = 24;
+    barrelWheel.path.moveTo(barrelOpening, 0);
+    barrelWheel.path.arc(0, 0, barrelOpening, 0, tau);
+    barrelWheel.path.closePath();
+    const barrelMesh = -1.46;
+    const barrelAxis = offset(minuteAxis, barrelWheel.pitchRadius + minutePinion.pitchRadius, barrelMesh + Math.PI);
 
-  const palletStones = [-1, 1].map(palletStone);
+    const thirdPinion = makeWheel(12, 0, 2.5, 0.75);
+    const thirdWheel = makeWheel(80, 5, 4.1, 0.67);
+    const thirdMesh = 0.12;
+    const thirdAxis = offset(minuteAxis, minuteWheel.pitchRadius + thirdPinion.pitchRadius, thirdMesh);
 
-  function drawPallet(r, angle) {
-    const z = 22.7;
-    for (const side of [-1, 1]) {
-      const bank = offset(palletCenter, 12.7, leverAxis + side * 0.27);
-      r.flange(...bank, 5, 1.18, z - 4.2, 0, "metal");
+    const secondsPinion = makeWheel(8, 0, 1.7, 0.67);
+    const secondsWheel = makeWheel(60, 5, 3.5, 0.60);
+    const secondsMesh = 0.45;
+    const secondsAxis = offset(thirdAxis, thirdWheel.pitchRadius + secondsPinion.pitchRadius, secondsMesh);
+
+    const escapePinion = makeWheel(10, 0, 1.8, 0.60);
+    const escapeMesh = -0.57;
+    const escapeAxis = offset(secondsAxis, secondsWheel.pitchRadius + escapePinion.pitchRadius, escapeMesh);
+    const leverAxis = -0.38;
+    const palletSpan = 22.5;
+    const balanceSpan = 46.5;
+    const balanceCenter = offset(escapeAxis, balanceSpan, leverAxis);
+    const palletCenter = offset(escapeAxis, palletSpan, leverAxis);
+    const escapeTeeth = 15;
+    const toothPitch = tau / escapeTeeth;
+    const toothTip = 15.2;
+    const lockAngle = 3.5 * toothPitch / 2;
+    const banking = 0.116;
+
+    const escapeWheel = new Path2D();
+    const clubTooth = [[10.7, -0.49], [10.7, -0.30], [13.65, 0.025], [toothTip, 0],
+      [15.05, 0.16], [13.85, 0.24], [10.7, 0.32]];
+    for (let i = 0; i < escapeTeeth; i++) {
+      for (const [j, [radius, fraction]] of clubTooth.entries()) {
+        const point = polar(radius, (i + fraction) * toothPitch);
+        if (i === 0 && j === 0) escapeWheel.moveTo(...point);
+        else escapeWheel.lineTo(...point);
+      }
     }
-    r.flange(...palletCenter, 5, 1.63, z - 5, 0, "side");
-    const outline = (points, fill, stroke = "line", weight = 0.57) => {
-      const a = leverAxis + angle;
-      const c = Math.cos(a), s = Math.sin(a);
-      r.shape(points.map(([x, y]) => [palletCenter[0] + x * c - y * s,
-        palletCenter[1] + x * s + y * c, z]), fill, stroke, weight);
+    escapeWheel.closePath();
+    for (let i = 0; i < 5; i++) {
+      const start = i * tau / 5 + 0.13, end = start + tau / 5 - 0.26;
+      escapeWheel.moveTo(...polar(8.95, start));
+      escapeWheel.arc(0, 0, 8.95, start, end);
+      escapeWheel.lineTo(...polar(3.6, end - 0.17));
+      escapeWheel.arc(0, 0, 3.6, end - 0.17, start + 0.17, true);
+      escapeWheel.closePath();
+    }
+
+    // External mesh phases, solved backwards from the intermittent escape-wheel motion.
+    function drivingAngle(wheel, pinion, driven, axis) {
+      const alignment = (wheel.teeth + pinion.teeth) * axis + pinion.teeth * Math.PI - Math.PI;
+      return (alignment - driven * pinion.teeth) / wheel.teeth;
+    }
+
+    function clockPose(distance) {
+      const time = distance * 5.6;
+      const beat = Math.floor(time);
+      const phase = time - beat;
+      const direction = beat % 2 === 0 ? 1 : -1;
+      const advance = (beat + segment(phase, 0.50, 0.70)) * toothPitch / 2;
+      const escape = leverAxis + lockAngle - advance;
+      const seconds = drivingAngle(secondsWheel, escapePinion, escape, escapeMesh);
+      const third = drivingAngle(thirdWheel, secondsPinion, seconds, secondsMesh);
+      const minute = drivingAngle(minuteWheel, thirdPinion, third, thirdMesh);
+      const barrel = drivingAngle(barrelWheel, minutePinion, minute, barrelMesh);
+      return {
+        escape, seconds, third, minute, barrel,
+        pallet: direction * banking * (1 - 2 * segment(phase, 0.42, 0.61)),
+        balance: -1.78 * Math.cos(Math.PI * time)
+      };
+    }
+
+    const initialClock = clockPose(0);
+
+    function gearFace(r, axis, height, gear, angle, finish = "paper") {
+      const { path, bore, rootRadius } = gear;
+      for (const z of [height - 1.8, height - 0.9]) {
+        r.plane(...axis, z, angle, () => r.outline(path, "flank", null));
+      }
+      r.plane(...axis, height, angle, () => r.outline(path, finish));
+      if (rootRadius - bore > 6) r.circle(...axis, height + 0.02, rootRadius - 1.27, null, "soft", 0.38);
+      r.flange(...axis, height, bore, 1.25, 0, "side");
+      r.circle(...axis, height + 1.27, bore * 0.5, "recess", "line", 0.44);
+      r.line([...offset(axis, -bore * 0.39, angle), height + 1.31],
+        [...offset(axis, bore * 0.39, angle), height + 1.31], "ink", 0.48);
+    }
+
+    function drawCoil(r, center, height, inner, outer, turns, wind, weight) {
+      const path = new Path2D();
+      const count = Math.ceil(turns * 29);
+      for (let i = 0; i <= count; i++) {
+        const fraction = i / count;
+        const point = polar(mix(inner, outer, fraction), tau * turns * fraction + wind * (1 - fraction));
+        if (i === 0) path.moveTo(...point);
+        else path.lineTo(...point);
+      }
+      r.plane(...center, height, 0, () => r.outline(path, null, "line", weight));
+    }
+
+    function clockBridge(r, from, bearing, height, width, pillar = 2.9) {
+      r.flange(...from, 5, pillar, height - 9.65, 0, "metal");
+      armLink(r, from, bearing, height, width);
+      r.hole(...from, height + 0.04, width - 0.75);
+      r.flange(...bearing, height - 0.8, width + 0.95, 1.35, 0, "metal");
+      r.circle(...bearing, height + 0.57, width * 0.54, "recess", "ink", 0.55);
+      r.circle(...bearing, height + 0.60, width * 0.25, "paper", "soft", 0.46);
+    }
+
+    function dialHand(r, axis, length, width, height, angle, fill) {
+      r.plane(...axis, height, angle - Math.PI / 2, () => {
+        const path = new Path2D();
+        path.moveTo(-3.4, -width * 0.65);
+        path.lineTo(length - 3.2, -width);
+        path.lineTo(length, 0);
+        path.lineTo(length - 3.2, width);
+        path.lineTo(-3.4, width * 0.65);
+        path.closePath();
+        r.outline(path, fill, "ink", 0.46);
+      });
+    }
+
+    function drawDial(r, rotations) {
+      const top = 33;
+      const radius = 25.6;
+      r.flange(...minuteAxis, 19.65, 1.57, top - 19.65, 0, "metal");
+      for (const angle of [-2.6, -1.35, 2.55]) {
+        const stud = offset(minuteAxis, 31.2, angle);
+        r.flange(...stud, 5, 2.9, top - 9.8, 0, "side");
+        armLink(r, stud, offset(minuteAxis, radius - 3, angle), top - 1.8, 2.1);
+        r.hole(...stud, top - 1.75, 1.29);
+      }
+      r.flange(...minuteAxis, top - 2.1, radius, 2.1, 0, "paper");
+      r.circle(...minuteAxis, top + 0.03, 23.9, null, "soft", 0.44);
+      r.circle(...minuteAxis, top + 0.05, 17.6, null, "soft", 0.38);
+      for (let i = 0; i < 60; i++) {
+        const angle = i * tau / 60 - Math.PI / 2;
+        const inner = i % 15 === 0 ? 18.7 : i % 5 === 0 ? 19.85 : 21.75;
+        r.line([...offset(minuteAxis, inner, angle), top + 0.09],
+          [...offset(minuteAxis, 22.85, angle), top + 0.09], i % 5 === 0 ? "ink" : "soft", i % 15 === 0 ? 1.24 : 0.49);
+      }
+      const traveled = rotations.minute - initialClock.minute;
+      const initialTime = 10 * 3600 + 8 * 60;
+      dialHand(r, minuteAxis, 13.9, 1.35, top + 0.57, initialTime * tau / 43200 + traveled / 12, "ink");
+      dialHand(r, minuteAxis, 21.4, 1.0, top + 1.08, initialTime * tau / 3600 + traveled, "ink");
+      r.flange(...minuteAxis, top + 1.1, 1.8, 1.25, 0, "side");
+    }
+
+    function drawSeconds(r, rotations) {
+      const height = 29.5;
+      const anchor = offset(secondsAxis, 14.3, 1.05);
+      r.flange(...anchor, 5, 2.15, height - 6, 0, "side");
+      const rim = new Path2D();
+      rim.arc(0, 0, 10.2, 0, tau);
+      rim.moveTo(8.1, 0);
+      rim.arc(0, 0, 8.1, 0, tau);
+      r.plane(...secondsAxis, height - 1.5, 0, () => r.outline(rim, "side"));
+      r.plane(...secondsAxis, height, 0, () => r.outline(rim, "paper"));
+      r.line([...offset(secondsAxis, 10.05, 1.05), height], [...anchor, height], "ink", 1.8);
+      r.hole(...anchor, height + 0.03, 1.23);
+      for (let i = 0; i < 12; i++) {
+        const angle = i * tau / 12;
+        r.line([...offset(secondsAxis, 8.5, angle), height + 0.04],
+          [...offset(secondsAxis, 9.7, angle), height + 0.04], "ink", i % 3 === 0 ? 0.75 : 0.43);
+      }
+      r.flange(...secondsAxis, 27.2, 1.13, height - 25.7, 0, "metal");
+      dialHand(r, secondsAxis, 8.4, 0.33, height + 0.92, rotations.seconds - initialClock.seconds + 0.35, "ink");
+      r.circle(...secondsAxis, height + 1.02, 1.15, "recess", "line", 0.47);
+    }
+
+    function palletStone(side) {
+      // Transform the contact face at the tooth tip back into the lever's coordinates.
+      const angle = side * lockAngle;
+      const [x, y] = polar(toothTip + 0.04, angle);
+      const [nx, ny] = polar(1, angle);
+      const [tx, ty] = [-ny, nx];
+      const reverse = -side * banking;
+      const c = Math.cos(reverse), s = Math.sin(reverse);
+      return [[0, -1.35], [0, 1.35], [1.9, 1.35], [2.25, -1.35]].map(([a, b]) => {
+        const dx = x + nx * a + tx * b - palletSpan, dy = y + ny * a + ty * b;
+        return [dx * c - dy * s, dx * s + dy * c];
+      });
+    }
+
+    const palletStones = [-1, 1].map(palletStone);
+
+    function drawPallet(r, angle) {
+      const z = 22.7;
+      for (const side of [-1, 1]) {
+        const bank = offset(palletCenter, 12.7, leverAxis + side * 0.27);
+        r.flange(...bank, 5, 1.18, z - 4.2, 0, "metal");
+      }
+      r.flange(...palletCenter, 5, 1.63, z - 5, 0, "side");
+      const outline = (points, fill, stroke = "line", weight = 0.57) => {
+        const a = leverAxis + angle;
+        const c = Math.cos(a), s = Math.sin(a);
+        r.shape(points.map(([x, y]) => [palletCenter[0] + x * c - y * s,
+          palletCenter[1] + x * s + y * c, z]), fill, stroke, weight);
+      };
+      for (const stone of palletStones) {
+        const back = [(stone[2][0] + stone[3][0]) / 2, (stone[2][1] + stone[3][1]) / 2];
+        outline([[-1.8, -1.18], [back[0] - 0.5, back[1] - 1.04],
+          [back[0] + 0.96, back[1] + 0.9], [-1.1, 1.25]], "metal");
+        outline(stone, "recess", "ink", 0.5);
+      }
+      outline([[-2.7, -1.7], [10.3, -1.35], [16.1, -2.64], [19, -2.5], [17.15, -0.77],
+        [15.7, -0.58], [15.7, 0.58], [17.15, 0.77], [19, 2.5], [16.1, 2.64],
+        [10.3, 1.35], [-2.7, 1.7]], "paper");
+      r.flange(...palletCenter, z, 2.1, 1.0, 0, "side");
+      r.circle(...palletCenter, z + 1.05, 0.77, "recess", "ink", 0.45);
+    }
+
+    const balanceRadius = 20.8;
+    const balanceRim = new Path2D();
+    for (const radius of [balanceRadius, balanceRadius - 2.85]) {
+      balanceRim.moveTo(radius, 0);
+      balanceRim.arc(0, 0, radius, 0, tau);
+      balanceRim.closePath();
+    }
+
+    function drawBalance(r, angle, palletAngle) {
+      const height = 33.3;
+      r.flange(...balanceCenter, 5, 2.7, height - 6, 0, "side");
+      r.flange(...balanceCenter, 20.4, 7.65, 1.05, 0, "flank");
+      drawPallet(r, palletAngle);
+      const impulse = offset(balanceCenter, 6.65, leverAxis + Math.PI + angle);
+      r.flange(...impulse, 21.45, 0.83, 1.63, 0, "recess");
+      for (const z of [height - 2.5, height - 1.25]) {
+        r.plane(...balanceCenter, z, angle, () => r.outline(balanceRim, "flank", null));
+      }
+      for (let i = 0; i < 3; i++) {
+        const tip = offset(balanceCenter, balanceRadius - 1.7, angle + i * tau / 3 + 0.3);
+        armLink(r, balanceCenter, tip, height - 0.08, 1.32);
+      }
+      r.plane(...balanceCenter, height, angle, () => r.outline(balanceRim, "paper"));
+      r.circle(...balanceCenter, height + 0.025, balanceRadius - 0.87, null, "soft", 0.36);
+      for (let i = 0; i < 12; i++) {
+        const direction = angle + i * tau / 12;
+        const outer = offset(balanceCenter, balanceRadius - 1.43, direction);
+        r.circle(...outer, height + 0.04, 0.58, "recess", "ink", 0.33);
+      }
+      r.flange(...balanceCenter, height, 2.9, 1.1, 0, "metal");
+      drawCoil(r, balanceCenter, height + 2.15, 2.3, 11.9, 3.5, angle, 0.59);
+      const stud = offset(balanceCenter, 11.9, Math.PI);
+      r.flange(...stud, height + 1.5, 1.34, 1.44, 0, "side");
+      // Two narrow, stationary supports expose the spring and the regulating rim.
+      clockBridge(r, offset(balanceCenter, 23.8, -1.15), balanceCenter, height + 6.4, 2.0);
+      const studBase = offset(balanceCenter, 22.4, 2.04);
+      r.flange(...studBase, 5, 2.32, height - 4, 0, "metal");
+      armLink(r, studBase, stud, height + 2.98, 1.08);
+      r.hole(...studBase, height + 3.03, 0.91);
+    }
+
+    return function drawClock(r, distance) {
+      const pose = clockPose(distance);
+      r.layer("plate", r => {
+        const edge = [[-84, -65], [78, -65], [89, -54], [89, 2],
+          [64, 30], [27, 48], [-84, 48], [-95, 38], [-95, -54]];
+        const face = edge.map(([x, y]) => [x, y, 5]);
+        r.shape(edge.map(([x, y]) => [x + 3.1, y + 4.1, 0]), "shadow", null);
+        for (const i of [2, 3, 4, 5, 6]) {
+          const a = face[i], b = face[i + 1];
+          r.shape([a, b, [b[0], b[1], 0], [a[0], a[1], 0]], i === 5 ? "flank" : "side");
+        }
+        r.shape(face, "metal");
+        const rim = edge.map(([x, y]) => [x * 0.958, (y + 7) * 0.94 - 7, 5.04]);
+        r.shape([...rim, rim[0]], null, "soft", 0.48);
+        for (const [x, y] of [[-86, -55], [-86, 37], [79, -54], [60, 26]]) {
+          r.circle(x, y, 5.06, 2.62, "flank", "soft", 0.47);
+          r.hole(x, y, 5.1, 1.56);
+        }
+        for (const axis of [minuteAxis, thirdAxis, secondsAxis, escapeAxis]) r.flange(...axis, 5, 2.18, 2.28, 0, "side");
+
+      });
+      r.flange(...barrelAxis, 5, 26.25, 3.4, 0, "side");
+      r.circle(...barrelAxis, 8.43, barrelOpening, "flank", "soft", 0.46);
+      drawCoil(r, barrelAxis, 8.50, 5.2, barrelOpening - 0.72, 5.5, pose.barrel, 0.66);
+      gearFace(r, barrelAxis, 10.7, barrelWheel, pose.barrel);
+      gearFace(r, minuteAxis, 10.7, minutePinion, pose.minute, "side");
+      r.flange(...minuteAxis, 11.94, 1.75, 4.25, 0, "metal");
+      r.flange(...secondsAxis, 7.25, 1.57, 3.45, 0, "metal");
+      gearFace(r, secondsAxis, 13.7, secondsWheel, pose.seconds);
+      r.flange(...escapeAxis, 7.26, 1.17, 3.55, 0, "metal");
+      gearFace(r, escapeAxis, 13.7, escapePinion, pose.escape, "side");
+
+      r.flange(...thirdAxis, 7.25, 1.6, 9.1, 0, "metal");
+      gearFace(r, minuteAxis, 18.4, minuteWheel, pose.minute);
+      gearFace(r, thirdAxis, 18.4, thirdPinion, pose.third, "side");
+      r.flange(...thirdAxis, 19.6, 1.83, 4.64, 0, "metal");
+      r.flange(...secondsAxis, 14.9, 1.55, 9.37, 0, "metal");
+      r.flange(...escapeAxis, 14.95, 1.32, 6.0, 0, "metal");
+      gearFace(r, escapeAxis, 22.7, { path: escapeWheel, bore: 2.2, rootRadius: 10.7 }, pose.escape);
+      gearFace(r, thirdAxis, 26.2, thirdWheel, pose.third);
+      gearFace(r, secondsAxis, 26.2, secondsPinion, pose.seconds, "side");
+
+      clockBridge(r, offset(barrelAxis, 28.2, 2.1), barrelAxis, 16.2, 2.35);
+      clockBridge(r, offset(thirdAxis, 26, -1.22), thirdAxis, 31.3, 2.14);
+      drawBalance(r, pose.balance, pose.pallet);
+      drawSeconds(r, pose);
+      drawDial(r, pose);
     };
-    for (const stone of palletStones) {
-      const back = [(stone[2][0] + stone[3][0]) / 2, (stone[2][1] + stone[3][1]) / 2];
-      outline([[-1.8, -1.18], [back[0] - 0.5, back[1] - 1.04],
-        [back[0] + 0.96, back[1] + 0.9], [-1.1, 1.25]], "metal");
-      outline(stone, "recess", "ink", 0.5);
-    }
-    outline([[-2.7, -1.7], [10.3, -1.35], [16.1, -2.64], [19, -2.5], [17.15, -0.77],
-      [15.7, -0.58], [15.7, 0.58], [17.15, 0.77], [19, 2.5], [16.1, 2.64],
-      [10.3, 1.35], [-2.7, 1.7]], "paper");
-    r.flange(...palletCenter, z, 2.1, 1.0, 0, "side");
-    r.circle(...palletCenter, z + 1.05, 0.77, "recess", "ink", 0.45);
   }
-
-  const balanceRadius = 20.8;
-  const balanceRim = new Path2D();
-  for (const radius of [balanceRadius, balanceRadius - 2.85]) {
-    balanceRim.moveTo(radius, 0);
-    balanceRim.arc(0, 0, radius, 0, tau);
-    balanceRim.closePath();
-  }
-
-  function drawBalance(r, angle, palletAngle) {
-    const height = 33.3;
-    r.flange(...balanceCenter, 5, 2.7, height - 6, 0, "side");
-    r.flange(...balanceCenter, 20.4, 7.65, 1.05, 0, "flank");
-    drawPallet(r, palletAngle);
-    const impulse = offset(balanceCenter, 6.65, leverAxis + Math.PI + angle);
-    r.flange(...impulse, 21.45, 0.83, 1.63, 0, "recess");
-    for (const z of [height - 2.5, height - 1.25]) {
-      r.plane(...balanceCenter, z, angle, () => r.outline(balanceRim, "flank", null));
-    }
-    for (let i = 0; i < 3; i++) {
-      const tip = offset(balanceCenter, balanceRadius - 1.7, angle + i * tau / 3 + 0.3);
-      armLink(r, balanceCenter, tip, height - 0.08, 1.32);
-    }
-    r.plane(...balanceCenter, height, angle, () => r.outline(balanceRim, "paper"));
-    r.circle(...balanceCenter, height + 0.025, balanceRadius - 0.87, null, "soft", 0.36);
-    for (let i = 0; i < 12; i++) {
-      const direction = angle + i * tau / 12;
-      const outer = offset(balanceCenter, balanceRadius - 1.43, direction);
-      r.circle(...outer, height + 0.04, 0.58, "recess", "ink", 0.33);
-    }
-    r.flange(...balanceCenter, height, 2.9, 1.1, 0, "metal");
-    drawCoil(r, balanceCenter, height + 2.15, 2.3, 11.9, 3.5, angle, 0.59);
-    const stud = offset(balanceCenter, 11.9, Math.PI);
-    r.flange(...stud, height + 1.5, 1.34, 1.44, 0, "side");
-    // Two narrow, stationary supports expose the spring and the regulating rim.
-    clockBridge(r, offset(balanceCenter, 23.8, -1.15), balanceCenter, height + 6.4, 2.0);
-    const studBase = offset(balanceCenter, 22.4, 2.04);
-    r.flange(...studBase, 5, 2.32, height - 4, 0, "metal");
-    armLink(r, studBase, stud, height + 2.98, 1.08);
-    r.hole(...studBase, height + 3.03, 0.91);
-  }
-
+  let clockRenderer;
   function displayClock(r, distance) {
-    const pose = clockPose(distance);
-    r.layer("plate", r => {
-      const edge = [[-84, -65], [78, -65], [89, -54], [89, 2],
-        [64, 30], [27, 48], [-84, 48], [-95, 38], [-95, -54]];
-      const face = edge.map(([x, y]) => [x, y, 5]);
-      r.shape(edge.map(([x, y]) => [x + 3.1, y + 4.1, 0]), "shadow", null);
-      for (const i of [2, 3, 4, 5, 6]) {
-        const a = face[i], b = face[i + 1];
-        r.shape([a, b, [b[0], b[1], 0], [a[0], a[1], 0]], i === 5 ? "flank" : "side");
-      }
-      r.shape(face, "metal");
-      const rim = edge.map(([x, y]) => [x * 0.958, (y + 7) * 0.94 - 7, 5.04]);
-      r.shape([...rim, rim[0]], null, "soft", 0.48);
-      for (const [x, y] of [[-86, -55], [-86, 37], [79, -54], [60, 26]]) {
-        r.circle(x, y, 5.06, 2.62, "flank", "soft", 0.47);
-        r.hole(x, y, 5.1, 1.56);
-      }
-      for (const axis of [minuteAxis, thirdAxis, secondsAxis, escapeAxis]) r.flange(...axis, 5, 2.18, 2.28, 0, "side");
-
-    });
-    r.flange(...barrelAxis, 5, 26.25, 3.4, 0, "side");
-    r.circle(...barrelAxis, 8.43, barrelOpening, "flank", "soft", 0.46);
-    drawCoil(r, barrelAxis, 8.50, 5.2, barrelOpening - 0.72, 5.5, pose.barrel, 0.66);
-    gearFace(r, barrelAxis, 10.7, barrelWheel, pose.barrel);
-    gearFace(r, minuteAxis, 10.7, minutePinion, pose.minute, "side");
-    r.flange(...minuteAxis, 11.94, 1.75, 4.25, 0, "metal");
-    r.flange(...secondsAxis, 7.25, 1.57, 3.45, 0, "metal");
-    gearFace(r, secondsAxis, 13.7, secondsWheel, pose.seconds);
-    r.flange(...escapeAxis, 7.26, 1.17, 3.55, 0, "metal");
-    gearFace(r, escapeAxis, 13.7, escapePinion, pose.escape, "side");
-
-    r.flange(...thirdAxis, 7.25, 1.6, 9.1, 0, "metal");
-    gearFace(r, minuteAxis, 18.4, minuteWheel, pose.minute);
-    gearFace(r, thirdAxis, 18.4, thirdPinion, pose.third, "side");
-    r.flange(...thirdAxis, 19.6, 1.83, 4.64, 0, "metal");
-    r.flange(...secondsAxis, 14.9, 1.55, 9.37, 0, "metal");
-    r.flange(...escapeAxis, 14.95, 1.32, 6.0, 0, "metal");
-    gearFace(r, escapeAxis, 22.7, { path: escapeWheel, bore: 2.2, rootRadius: 10.7 }, pose.escape);
-    gearFace(r, thirdAxis, 26.2, thirdWheel, pose.third);
-    gearFace(r, secondsAxis, 26.2, secondsPinion, pose.seconds, "side");
-
-    clockBridge(r, offset(barrelAxis, 28.2, 2.1), barrelAxis, 16.2, 2.35);
-    clockBridge(r, offset(thirdAxis, 26, -1.22), thirdAxis, 31.3, 2.14);
-    drawBalance(r, pose.balance, pose.pallet);
-    drawSeconds(r, pose);
-    drawDial(r, pose);
+    clockRenderer ||= buildClock();
+    clockRenderer(r, distance);
   }
 
   function motionDistance(seconds) {

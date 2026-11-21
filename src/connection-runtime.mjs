@@ -149,19 +149,35 @@ export function createConnectionRuntime({
   }
   const codexRequiresKey = () => codexAccessMode() === "gateway";
   function requireCodexKey(req) {
-    if (gatewayClient(req.headers, identities()) === "codex") return;
+    if (gatewayClient(req.headers, identities()) === "codex") {
+      const context = currentRequestContext();
+      if (context) {
+        context.verifiedApplication = "codex";
+        context.streamPerformance?.observeContext({ verified_application: "codex" });
+      }
+      return;
+    }
     // An old native process may still send its ChatGPT bearer. A local access
     // denial must not trigger recovery/replacement of that unrelated sign-in.
     throw accessError("ccdx_client_credential_required", req.headers?.authorization ? 403 : 401);
   }
   const permitted = (id, source) =>
     binding(id)?.enabled && binding(id).allowed.includes(source) && enabled(source);
+  const sourceRevisions = new WeakMap();
+  function revisionFor(config) {
+    const envValue = config.key_env ? env[config.key_env] || "" : "";
+    const previous = sourceRevisions.get(config);
+    if (previous?.envValue === envValue) return previous.revision;
+    const revision = deploymentRevision(config, env);
+    sourceRevisions.set(config, { envValue, revision });
+    return revision;
+  }
   function getSource(id) {
     if (!id?.startsWith("api_")) return legacy.source(id);
     const config = settings.apis.find(value => value.id === id);
     if (!config) return null;
     const previous = instances.get(id),
-      revision = deploymentRevision(config, env);
+      revision = revisionFor(config);
     if (previous?.config === config && previous.revision === revision) return previous.source;
     const signature = JSON.stringify(config) + revision;
     if (previous?.signature === signature) return previous.source;
@@ -264,7 +280,7 @@ export function createConnectionRuntime({
       const current = settings.apis.find(api => api.id === id);
       if (
         !current?.enabled ||
-        JSON.stringify(current) + deploymentRevision(current, env) !== item.signature
+        JSON.stringify(current) + revisionFor(current) !== item.signature
       ) {
         instances.delete(id);
         retire(item.source);

@@ -133,6 +133,18 @@
     }
     
     function renderUsageState() {
+      const stored = usageData?.storage;
+      if (element("usage-storage")) element("usage-storage").hidden = !stored;
+      if (stored) {
+        if (element("usage-storage-note")) text("usage-storage-note", "usage_storage_limit", {
+          days: number(stored.archive_days), limit: number(stored.archive_max_bytes / 1048576),
+        });
+        const warning = element("usage-storage-warning");
+        if (warning) {
+          warning.hidden = !(stored.unconfirmed_records || stored.dropped_records || stored.archive_read_failures);
+          if (!warning.hidden) text("usage-storage-warning", "usage_storage_gap");
+        }
+      }
       if (selectedUsageDate.startsWith("<")) text("usage-state", "usage_earlier_before", { date: selectedUsageDate.slice(1) });
       else text("usage-state", selectedUsageDate || "local_log");
     }
@@ -182,13 +194,18 @@
       analyticsSignature = signature;
       const days = analytics.days;
       const range = element("analytics-range").value === "date" ? previousRange : element("analytics-range").value;
-      const daily = usageData.filters ? [...(analytics.earlier ? [analytics.earlier] : []), ...days] : range === "all" ? days : days.slice(-Number(range));
+      const displayedDays = usageData.filters ? [...(analytics.earlier ? [analytics.earlier] : []), ...days] : range === "all" ? days : days.slice(-Number(range));
+      const firstAvailable = displayedDays.findIndex(day => day.available);
+      const daily = firstAvailable < 0 ? [] : displayedDays.slice(firstAvailable);
       const maximum = Math.max(1, ...daily.map((day) => {
         const point = analyticsPoint(day, model);
         return point.input_tokens + point.output_tokens;
       }));
       renderDaily(daily, model, maximum);
-      text("daily-from", daily[0].date === "earlier" ? "usage_earlier" : daily[0].date);
+      const empty = daily.length === 0;
+      for (const id of ["daily-bars", "daily-axis", "daily-legend"]) if (element(id)) element(id).hidden = empty;
+      if (element("daily-empty")) element("daily-empty").hidden = !empty;
+      text("daily-from", daily[0]?.date === "earlier" ? "usage_earlier" : daily[0]?.date || "—");
       text("daily-to", analytics.to);
       if (commonSignature === calendarSignature) return;
       calendarSignature = commonSignature;
@@ -229,7 +246,7 @@
         calendar.append(button);
       }
       text("analytics-note", "zone_from_to_retained_history_starts_first_oldest_day_may_be_par", {
-        zone: analytics.time_zone, from: analytics.earlier ? analytics.first_date : daily[0].date, to: analytics.to, first: analytics.first_date || phrase("unknown"),
+        zone: analytics.time_zone, from: displayedDays[0]?.date === "earlier" ? analytics.first_date : displayedDays[0]?.date || analytics.from, to: analytics.to, first: analytics.first_date || phrase("unknown"),
         excluded: analytics.undated_records ? phrase("count_records_with_invalid_future_timestamps_excluded", { count: number(analytics.undated_records) }) : "",
         limit: analytics.models_truncated ? phrase("model_filters_limited_to_100_all_model_totals_include_the_remain") : "",
       });

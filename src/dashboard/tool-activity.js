@@ -11,6 +11,7 @@
   const motion = globalThis.matchMedia?.("(prefers-reduced-motion: reduce)") || { matches: false, addEventListener() {} };
   let records = [], fresh = false, supported = false, visible = true, raf = 0, last = 0, start = performance.now(), expiry = null;
   let drawnTime = null;
+  let visibleToolRows = new Map();
   let signature = "", box = { width: 0, height: 0 }, color = "", surface = "", omitted = 0, requests = [], requestDeadline = 0;
   const animating = () => ["calling", "parallel", "waiting", "processing", "responding"].includes(state.scene);
   const shown = () => document.visibilityState === "visible" && !root.closest("[hidden]") && visible;
@@ -87,29 +88,47 @@
     const groups = new Map(displayed.map(row => [`${row.application}:${row.provider}:${row.model}`, row]));
     el("tool-context").hidden = !displayed.length;
     el("tool-context").textContent = groups.size === 1 ? phrase("model_action_label", { name: appName(displayed[0].application), action: displayed[0].model === "other" ? phrase("flow_model_pending") : displayed[0].model }) : phrase("tool_groups", { count: groups.size });
-    const list = el("tool-list");list.replaceChildren();
-    for (const row of displayed.slice(0, 6)) {
-      const agent = row.responding !== undefined;
-      const item = document.createElement("div");item.className = "tool-entry";item.dataset.state = agent ? "preparing" : row.state;
-      const mark = document.createElement("span");mark.className = "tool-mark";mark.setAttribute("aria-hidden", "true");
-      const name = document.createElement("span");name.className = "tool-name";name.textContent = phrase(agent ? row.responding ? "tool_response_action" : "tool_processing_action" : category(row.name));
-      const status = document.createElement("span");status.textContent = phrase(agent ? "tool_row_active" : `tool_row_${row.state}`);
-      item.append(mark, name, status);list.append(item);
-    }
-    el("tool-details").hidden = !rows.length;
-    el("tool-technical").replaceChildren();
-    for (const row of rows) {
-      const line = document.createElement("tr");
-      for (const [label, value] of [["client", appName(row.application)], ["source", sourceName(row.provider)], ["model", row.model],
-        ["tool_name", row.name || phrase("tool_action_generic")], ["outcome", phrase(`tool_row_${row.state}`)]]) {
-        const cell = document.createElement("td");cell.textContent = value;cell.dataset.label = phrase(label);line.append(cell);
+    const list = el("tool-list");
+    const nextToolRows = new Map();
+    const children = displayed.slice(0, 6).map((row, index) => {
+      const agent = row.responding !== undefined, rowKey = agent ? `agent-${index}` : row.id;
+      let item = visibleToolRows.get(rowKey);
+      if (!item) {
+        item = document.createElement("div");item.className = "tool-entry";
+        const mark = document.createElement("span");mark.className = "tool-mark";mark.setAttribute("aria-hidden", "true");
+        const name = document.createElement("span");name.className = "tool-name";
+        const status = document.createElement("span");
+        item.append(mark, name, status);
       }
-      el("tool-technical").append(line);
+      item.dataset.state = agent ? "preparing" : row.state;
+      const name = phrase(agent ? row.responding ? "tool_response_action" : "tool_processing_action" : category(row.name));
+      const status = phrase(agent ? "tool_row_active" : `tool_row_${row.state}`);
+      if (item.children[1].textContent !== name) item.children[1].textContent = name;
+      if (item.children[2].textContent !== status) item.children[2].textContent = status;
+      nextToolRows.set(rowKey, item);
+      return item;
+    });
+    if (list.children.length !== children.length || children.some((child, index) => list.children[index] !== child)) list.replaceChildren(...children);
+    visibleToolRows = nextToolRows;
+    const details = el("tool-details");
+    details.hidden = !rows.length;
+    if (details.open) {
+      el("tool-technical").replaceChildren();
+      for (const row of rows) {
+        const line = document.createElement("tr");
+        for (const [label, value] of [["client", appName(row.application)], ["source", sourceName(row.provider)], ["model", row.model],
+          ["tool_name", row.name || phrase("tool_action_generic")], ["outcome", phrase(`tool_row_${row.state}`)]]) {
+          const cell = document.createElement("td");cell.textContent = value;cell.dataset.label = phrase(label);line.append(cell);
+        }
+        el("tool-technical").append(line);
+      }
     }
     el("tool-more").hidden = rows.length <= 6 && !omitted;
     text("tool-more", "tool_more", { count: Math.max(0, rows.length - 6) + omitted });
-    measure();
+    if (force || !box.width) measure();
+    else if (wasAnimating !== animating()) refreshAnimation();
   }
+  el("tool-details").addEventListener("toggle", () => { if (el("tool-details").open) render(true); });
   el("tool-style").addEventListener("change", () => {
     const next = el("tool-style").value;if (!styles.has(next)) return;state.style = next;
     try { localStorage.setItem(storageKey, next); } catch {}render(true);

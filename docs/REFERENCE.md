@@ -180,6 +180,8 @@ CCDX renders the complete declared set independently of the native menu. When th
 
 A saved fallback is applied as Messages `output_config.effort` only when the App omits that field. Effort and thinking mode stay separate; the gateway does not enable, disable or rewrite `thinking`. Explicit App values are retained and pass through the existing capability validation; unsupported values are never mapped to nearby levels. Existing output-format fields, model IDs, history and tool permissions are preserved. Count-token requests and other clients do not receive the fallback. If the source stops advertising the saved level, the value remains visible as unavailable and generation needing that default fails with `ccdx_client_effort_unavailable` until it is corrected or cleared. Native configuration synchronization remains independent of this request preference; changing the preference does not add native model metadata or require an App restart for the parameter itself.
 
+Claude App's native one-token health checks share an identical request while it is in flight and can reuse a successful result for 250 milliseconds. The scope includes the effective endpoint, credential, headers and body. A reused check has zero outbound attempts of its own and does not record usage a second time. Failed responses do not enter the reuse window. Ordinary messages, token counts and other clients retain their usual behavior.
+
 ## API import and request validation
 
 **Model sources → Import** and `ccdx source import --file FILE` preview explicitly supplied JSON. Supported shapes are CCDX API metadata/connection exports, CC Switch Claude provider JSON (`settingsConfig.env`), and Magpie `providers.json` with native API bases. Cached deployment evidence, foreign route aliases, account rotation, commands and tool permissions are not adopted. Credential values are not copied; use a private key input or `key_env` when saving. Client access remains a separate explicit choice.
@@ -282,7 +284,7 @@ The initial internal ceiling is 128 concurrent requests per source/account. This
 
 Settings separates saved preferences from effective state. Auto-save applies changes by default; required restarts remain explicit. Restore-defaults creates a backup first and keeps accounts, keys, model plans and chats. CLI preference reset/restore uses its own service-only backup; it does not change browser appearance or replace the Web UI's backup.
 
-Web and terminal colors are independent. Web appearance is browser-local. The terminal keeps its selected color and animation; NO_COLOR, dumb/non-TTY and narrow output remain supported. Reduced motion disables decorative movement. Closed tabs and hidden views stop scheduled work. Model/usage data loads on demand; the Web UI adds no inference calls.
+Web and terminal colors are independent. Web appearance is browser-local. **Settings → Web appearance → Grid paper** gives the light theme a warm paper color and faint gray grid, with a matching dark variant. The terminal keeps its selected color and animation; NO_COLOR, dumb/non-TTY and narrow output remain supported. Reduced motion disables decorative movement. Closed tabs and hidden views stop scheduled work. Model/usage data loads on demand; the Web UI adds no inference calls.
 
 Activity, flow and current-run counters use one visible-page SSE connection at `/_ccdx/activity`. TUI activity subscribes to the same in-process notifications. Request starts, model/provider selection, first output, retries and completion coalesce within 50 ms; ordinary output chunks do not trigger pushes. A connection starts with current memory-only state, including the existing recent-request limits. Reconnection restores current state and totals; it does not replay animations or recover arbitrary old history. No replay buffer or durable event store is added.
 
@@ -861,7 +863,7 @@ The old external image provider, Qwen-specific generation/editing, `/mcp/image`,
 | `CCDX_RESPONSE_HISTORY_MAX_BYTES` | `67108864` | Higher-precedence total in-memory byte budget for locally expanded Responses history; `ccdx doctor cache --limit` provides a persistent 16–1024 MiB setting when this is unset |
 | `CCDX_RESPONSE_HISTORY_MAX_ENTRIES` | `4096` | Maximum stored incremental Responses history nodes |
 | `CCDX_USAGE_PATH` | `~/.local/share/codex-copilot-dx/usage.jsonl` | Local JSONL token-usage log |
-| `CCDX_USAGE_MAX_BYTES` | `33554432` | Rotate the usage log at this size and retain one `.1` backup; set to `0` to disable rotation |
+| `CCDX_USAGE_MAX_BYTES` | `33554432` | Rotate the usage log at this size; older backups enter the verified archive. Set to `0` to disable rotation |
 | `CCDX_DISABLE_USAGE` | unset | Set to `1` to disable usage logging |
 | `CCDX_SHUTDOWN_TIMEOUT_MS` | `5000` | Time to drain active HTTP connections before forcing shutdown |
 
@@ -875,7 +877,7 @@ When upstream responses contain usage fields, CCDX records token counts, model n
 ccdx usage
 ```
 
-The summary covers the current log and its single rotated backup, not an unbounded lifetime history. It reports recorded responses and per-model input, cache-read, cache-write, output, and total token metadata.
+The summary reads the current log, the last rotated backup, and verified compressed archives. Rotation preserves the outgoing backup before replacing it. The archive retains up to 365 days and targets 256 MiB; an oversized latest segment is preserved. Usage trends start at the first retained date within the selected range. The activity calendar retains the full date grid and distinguishes unavailable days from zero usage. The CLI and Web UI report possible write gaps and unreadable archives.
 
 M365 preserves system instructions at their original mid-conversation position. This avoids moving each new reminder ahead of the already cached history. Other Claude App API endpoints keep legacy behavior unless the model's `mid_conversation_system` capability is explicitly true. A false override selects legacy hoisting; Responses and Chat use their existing paths. This preserves instruction priority rather than converting system messages to user text.
 
@@ -887,7 +889,7 @@ Usage writes are asynchronous and batched under the existing cross-process rotat
 
 On Windows, asynchronous lock acquisition retries a transient `EPERM` within the existing lock deadline. It does not replay a protected write or remove another live owner's lock; persistent denial retains its original error.
 
-Repeated plain usage summaries reuse one bounded entry when retained files are unchanged, with the existing two-second recent-write guard and 256 KiB/128-group limit. Dashboard analytics keeps up to two independent aggregate checkpoints within 2 MiB. Its first read scans both retained logs. Later reads apply only append batches witnessed by this process under the existing write lock, with a 256 KiB pending-delta limit per checkpoint. Another process's writes, rotation, truncation, replacement, incomplete tails, warnings, future/undated records and oversized results fall back to a complete read. Queries remain scoped by source, time zone and local date; returned results are cloned and identical concurrent reads share work. The asynchronous writer supplies file-version evidence only while analytics checkpoints exist. There is no persistent index, background poll or added model request.
+Repeated plain usage summaries reuse one bounded entry when retained files are unchanged, with the existing two-second recent-write guard and 256 KiB/128-group limit. Dashboard analytics keeps up to two independent aggregate checkpoints within 2 MiB. Its first read scans the retained logs and archive segments. Later reads apply only append batches witnessed by this process under the existing write lock, with a 256 KiB pending-delta limit per checkpoint. Another process's writes, rotation, truncation, replacement, incomplete tails, warnings, future/undated records and oversized results fall back to a complete read. Queries remain scoped by source, time zone and local date; returned results are cloned and identical concurrent reads share work. The asynchronous writer supplies file-version evidence only while analytics checkpoints exist. There is no persistent index, background poll or added model request.
 
 Diagnostic redaction removes Basic authorization payloads and URL userinfo, and consumes escaped quotes inside sensitive JSON fields. Ordinary Basic-related prose, safe host/path information and error codes are retained. These protections apply to existing failure/status/debug diagnostics, not forwarded requests or upstream response bodies. They do not make arbitrary upstream prose guaranteed safe to share.
 

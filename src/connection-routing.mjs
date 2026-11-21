@@ -164,6 +164,8 @@ export function createConnectionRouting({ legacy, legacyClaudeAccess, isManaged,
       }
       const id = gatewayClient(req.headers, identities());
       if (!id || id === "codex") throw accessError("ccdx_client_credential_required", 401);
+      const caller = currentRequestContext();
+      if (caller) caller.verifiedApplication = id;
       if (id === "claude_app" && catalogRequest) applicationEvidence?.notice(req, res, id, "catalog");
       const compiled = plan(id);
       if (!binding(id).enabled || !compiled.models.length)

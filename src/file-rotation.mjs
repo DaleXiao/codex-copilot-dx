@@ -31,7 +31,7 @@ export function rotateFileIfNeededSync(filePath, incomingBytes, maxBytes) {
 
 // Callers serialize writers (usage also holds its cross-process file lock).
 // Group adjacent lines without changing the existing per-record rotation rule.
-export async function appendRotatingLines(filePath, lines, maxBytes) {
+export async function appendRotatingLines(filePath, lines, maxBytes, { sealBackup } = {}) {
   let size = 0;
   try {
     const stat = await fs.promises.stat(filePath);
@@ -51,6 +51,7 @@ export async function appendRotatingLines(filePath, lines, maxBytes) {
     const length = Buffer.byteLength(line);
     if (maxBytes > 0 && size > 0 && size + length > maxBytes) {
       await flush();
+      await sealBackup?.(filePath);
       await fs.promises.rm(rotatedFilePath(filePath), { force: true });
       await fs.promises.rename(filePath, rotatedFilePath(filePath));
       size = 0;

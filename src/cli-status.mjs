@@ -190,6 +190,10 @@ export function formatAdapterStatus({ baseUrl, data }, { commandName = "ccdx", c
       if (logging?.enabled === false) continue;
       lines.push(status(logging.dropped_records || logging.write_failures ? "warn" : "info",
         `${name === "usage" ? "Usage" : "Debug"} logging: ${count(logging.pending_records)} pending (${mebibytes(logging.pending_bytes)}), ${count(logging.dropped_records)} dropped, ${count(logging.write_failures)} write failures`));
+      if (name === "usage" && logging.archive_days) {
+        lines.push(status("info", `Usage archive: up to ${count(logging.archive_days)} days, ${mebibytes(logging.archive_max_bytes)}`));
+        if (logging.unconfirmed_records) lines.push(status("warn", `Usage records with unconfirmed writes: ${count(logging.unconfirmed_records)}`));
+      }
     }
   }
   if (responseFailures && typeof responseFailures === "object") {

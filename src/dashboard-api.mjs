@@ -14,7 +14,7 @@ import {
   renderTerminalAnimationFrame,
   TERMINAL_ANIMATION_THEMES,
 } from "./terminal-animation.mjs";
-import { cacheReadTokens, summarizeUsageLogs, usageCacheHitRate, usageModelGroups, usageProvider } from "./usage-store.mjs";
+import { cacheReadTokens, summarizeUsageLogs, usageCacheHitRate, usageModelGroups, usageProvider, usageLoggingStats } from "./usage-store.mjs";
 import { createUsageAnalytics } from "./usage-analytics.mjs";
 import { analyzeUsageLogs } from "./usage-analysis.mjs";
 import { createUsageQuery } from "./usage-query.mjs";
@@ -418,7 +418,7 @@ export async function handleDashboardApi(req, res, pathname, {
         ...(filtered ? { recordFilter } : {}), ...(analytics ? { onRecord: analytics.record } : {}) });
       const availableModels = analysis?.analytics.models || (observedModels.size ? [...observedModels].sort() : Object.keys(provider ? summary.byModel : summary.bySourceModel || summary.byModel).sort().slice(0, 100));
       if (!abort.signal.aborted) sendJson(res, 200, { source: "local_usage_log", provider: provider || "all", providers: summary.providers, filters: selection.filters, available_models: availableModels,
-        ...usageTable(summary), ...(analytics ? { analytics: analysis?.analytics || analytics.snapshot() } : {}) });
+        ...usageTable(summary), storage: { ...usageLoggingStats(), archive_read_failures: summary.archive_read_failures || 0 }, ...(analytics ? { analytics: analysis?.analytics || analytics.snapshot() } : {}) });
     } catch {
       if (!abort.signal.aborted) sendJson(res, 500, { error: "Could not read local usage summary" });
     } finally { abort.cleanup(); }

@@ -234,13 +234,17 @@ export function createAdapterHandler(options = {}) {
       providerStateFn: () => options.providerRuntime.dashboardProviders(),
       providerAccountsFn: () => options.providerRuntime.action({ action: "accounts" }),
       connectionsFn: input => options.providerRuntime.manageConnections(input) } : {}) } });
+  function privacyStatus() {
+    try { return privacy.snapshot(); }
+    catch { return { state: "error", error: "ccdx_privacy_settings_invalid" }; }
+  }
   const activityEvents = createActivityEvents({
     sources: [requestMetrics, streamPerformanceMetrics, options.providerRuntime?.claudePerformance, privacy],
     snapshot: () => {
       const requests = requestMetrics.snapshot(), image = nativeImages.stats();
       const active = ["responses", "responses_compact", "messages", "search", "antigravity"].reduce((sum, route) => sum + (requests.by_route[route]?.active || 0), image?.active || 0);
       const claude = options.providerRuntime?.claudePerformance?.activitySnapshot?.();
-      return { ...adapterHealthPayload(), scope: "activity", uptime_ms: Math.round(process.uptime() * 1000), local_privacy: privacy.snapshot(),
+      return { ...adapterHealthPayload(), scope: "activity", uptime_ms: Math.round(process.uptime() * 1000), local_privacy: privacyStatus(),
         model_activity: { active }, requests, runtime_usage: runtimeUsageSnapshot(),
         stream_performance: streamPerformanceMetrics.activitySnapshot(),
         ...(claude ? { providers: { claude: { requests: { performance: claude } } } } : {}),
@@ -269,8 +273,7 @@ export function createAdapterHandler(options = {}) {
         snapshot.routing = { ...snapshot.routing, responses: providers.codex_provider };
         snapshot.models = { ...snapshot.models, provider: providers.codex_provider, source: "configured", models: source?.codex_model_count || 0, refresh_in_flight: false };
       }
-      try { snapshot.local_privacy = privacy.snapshot(); }
-      catch { snapshot.local_privacy = { state: "error", error: "ccdx_privacy_settings_invalid" }; }
+      snapshot.local_privacy = privacyStatus();
       let gemini;
       try { const saved=readUserSettings({env:options.env,home:options.dashboardOptions?.home});gemini=antigravity?antigravity.snapshot():{configured:Object.hasOwn(saved,"gemini_antigravity_enabled"),enabled:saved.gemini_antigravity_enabled===true,route_observed:false}; }
       catch { gemini={enabled:false,error:"ccdx_antigravity_settings_invalid"}; }
@@ -536,7 +539,8 @@ export function createAdapterHandler(options = {}) {
           request_options: context?.requestOptions, upstream_attempts: streamPerformance?.attemptCount?.() ?? context?.upstreamAttempts ?? 0,
           attempt_timings: streamPerformance?.attemptTimings?.(),
           requested_model: context?.requestedModel, provider: context?.provider, application: context?.application || requestApplication(req.headers),
-          capability_cached: context?.countObservation?.cached, shared_upstream: context?.countObservation?.shared,
+          verified_application: context?.verifiedApplication,
+          capability_cached: context?.countObservation?.cached, shared_upstream: context?.countObservation?.shared || context?.claudeHealthProbe?.reused,
         })); } catch {}
       }
       try { complete({ statusCode, aborted }); } catch {}

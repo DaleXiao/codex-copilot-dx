@@ -27,6 +27,8 @@ import { currentRequestContext } from "../request-context.mjs";
 import { redactDiagnosticText } from "../diagnostic-text.mjs";
 import { createProviderCooldown, confirmedNetworkFailure } from "../provider-cooldown.mjs";
 import { SOURCE_LIMIT_EVIDENCE, sourceLimitFeedback } from "../source-admission.mjs";
+import { upstreamRetryAfter } from "../upstream-headers.mjs";
+import { createClaudeHealthProbes } from "./claude-health-probes.mjs";
 
 const paths = { messages: "/v1/messages", responses: "/v1/responses", chat: "/v1/chat/completions", gemini: "/v1beta/models:generateContent" };
 const geminiModelId = id => typeof id === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,139}$/.test(id) && !id.includes("..");
@@ -54,6 +56,7 @@ export function createApiProvider({ config, secrets, env = process.env, platform
   if (config.endpoints.responses) targets.push(config.endpoints.responses.replace(/\/+$/, "") + "/compact");
   let network, closed = false;
   const initialization = createAbortAwareSingleflight(), lifetime = new AbortController();
+  const healthProbes = createClaudeHealthProbes();
   const retiring = new Set();
   const registry = { models: { data: catalog.filter(model => model.supported_endpoints.includes(paths.responses)) }, source: "configured", generation };
   const getNetwork = async signal => {
@@ -97,6 +100,18 @@ export function createApiProvider({ config, secrets, env = process.env, platform
     }
     const serialized = body ? options.bodyText ?? JSON.stringify(body) : undefined;
     if (serialized !== undefined) headers["Content-Length"] = String(Buffer.byteLength(serialized));
+    const wire = { key, stream, requestModel, headers, serialized };
+    if (api === "messages" && options.onClaudeHealthProbe && !options.countTokens && !stream) {
+      return healthProbes.run({ url, headers, bodyText: serialized, signal: options.signal, record: options.onClaudeHealthProbe,
+        maxResponseBytes: loadRuntimeConfig(env).maxUpstreamResponsesResponseBytes }, signal => sendRequest(url, body, {
+        ...options, signal: AbortSignal.any([signal, lifetime.signal]),
+        onUpstreamStart() { if (!options.signal?.aborted) options.onUpstreamStart?.(); },
+        onUpstreamErrorHeaders(status) { if (!options.signal?.aborted) options.onUpstreamErrorHeaders?.(status); },
+      }, api, wire));
+    }
+    return sendRequest(url, body, options, api, wire);
+  }
+  async function sendRequest(url, body, options, api, { key, stream, requestModel, headers, serialized }) {
     const cooldown = body && !options.countTokens ? cooldowns[api] : null;
     const recovery = cooldown?.enter();let observed = false;
     try {
@@ -143,7 +158,9 @@ export function createApiProvider({ config, secrets, env = process.env, platform
         }
         if (adapted || schemaCandidate) try { options.onUpstreamErrorHeaders?.(result.status); } catch { /* Preserve the original upstream failure. */ }
         const code = `ccdx_api_http_${result.status}`;
-        const safeHeaders = { "Content-Type": "application/json" }, retry = result.headers.get("retry-after");
+        const messagesRateLimit = api === "messages" && result.status === 429;
+        const safeHeaders = { "Content-Type": "application/json" };
+        const retry = messagesRateLimit ? upstreamRetryAfter(result.headers) : result.headers.get("retry-after");
         for (const name of ["x-request-id", "x-correlation-id", "request-id"]) {
           const value = result.headers.get(name);
           if (value && /^[a-z\d_.:-]{1,80}$/i.test(value) && redactDiagnosticText(value) === value) { safeHeaders["X-Request-Id"] = value;break; }
@@ -153,7 +170,8 @@ export function createApiProvider({ config, secrets, env = process.env, platform
         const requestId=currentRequestContext()?.requestId;
         const contextOverflow = api === "messages" && ["context_length_exceeded", "context_window_exceeded"].includes(reason?.code);
         const message=(contextOverflow ? "prompt is too long. " : "")+(reason?.message||"The source rejected the request (HTTP "+result.status+"); no recognised technical reason was returned.")+" Source: "+redactDiagnosticText(config.name||config.id)+". Model: "+redactDiagnosticText(body?.model||"unknown")+". API: "+api+"."+(requestId?" Request: "+requestId+".":"");
-        const errorType = api === "messages" && ["input_length_invalid", "context_length_exceeded", "context_window_exceeded"].includes(reason?.code) ? "invalid_request_error" : "api_error";
+        const errorType = messagesRateLimit ? "rate_limit_error"
+          : api === "messages" && ["input_length_invalid", "context_length_exceeded", "context_window_exceeded"].includes(reason?.code) ? "invalid_request_error" : "api_error";
         const failure = new Response(JSON.stringify({ type: "error", error: { type: errorType, code, message,
           ...(reason ? { upstream_code: reason.code, ...(reason.parameter ? { param: reason.parameter } : {}), ...(reason.maximum ? { maximum: reason.maximum } : {}) } : {}) } }), { status: result.status, headers: safeHeaders });
         if (sourceLimit) Object.defineProperty(failure, SOURCE_LIMIT_EVIDENCE, { value: sourceLimit });
@@ -305,6 +323,6 @@ export function createApiProvider({ config, secrets, env = process.env, platform
         }
         return { resp, reqContext: context, errorText: undefined, usedRetryPolicies: new Set() };
       } },
-    close() { closed = true;lifetime.abort();network?.close();for (const previous of retiring) previous.close();retiring.clear(); },
+    close() { closed = true;lifetime.abort();healthProbes.clear();network?.close();for (const previous of retiring) previous.close();retiring.clear(); },
   };
 }

@@ -43,6 +43,16 @@ function groundedSearch(result,query){
     groundingMetadata:{webSearchQueries:[query],groundingChunks:sources.map(item=>({web:{uri:item.url,title:item.title||item.url}}))}}]};
 }
 
+function geminiTerminalDetails(finish) {
+  if (finish === "MAX_TOKENS") return { stopReason: "max_tokens", reason: "max_output_tokens" };
+  if (finish === "SAFETY" || finish === "RECITATION" || finish === "PROHIBITED_CONTENT") return { stopReason: "content_filter", reason: "content_filter" };
+  return finish === "STOP" ? { stopReason: "end_turn" } : undefined;
+}
+
+function geminiFinish(candidates) {
+  return candidates.find(candidate => candidate.finishReason && candidate.finishReason !== "STOP")?.finishReason || candidates.find(candidate => candidate.finishReason)?.finishReason;
+}
+
 export function createAntigravityHandler({client,models=()=>[],selectedModels=()=>null,defaultModel=()=>null,enabled=()=>false,privacy,searchFn,imageFn,guardSource,acquireRequest=async()=>()=>{},sourceAdmission,applicationEvidence,
   nativeModels=()=>[],resolveNativeModel=()=>null,
   compaction,compactionProfile=()=>"github",prepareConversationBinding=()=>{},resolveCompactionSource=()=>null,recordUsageFn=recordUsage,fetchGoogle=fetch,googleOrigin=GOOGLE_ORIGIN,requestBodyTimeoutMs=120000,upstreamTimeoutMs=180000,copilotTimeoutMs,streamIdleTimeoutMs=60000,
@@ -52,7 +62,7 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
   let active=0,observed=false,catalogModels=null,catalogDefaultSupported=null,catalogDefaultModel=null;const nativeWindows=new Map();
   const counts={total:0,google:0,copilot:0,search:0,images:0,failed:0};
   const handler=async(req,res)=>{
-    const startedAt=performance.timeOrigin+performance.now(),abort=createRequestAbort(req,res);let commitBinding,release=()=>{},releaseControl,session,body,request,converted,phase="validation",usageEvent=null,usageModel=null,outcome=null,usageMode,usageProvider;
+    const startedAt=performance.timeOrigin+performance.now(),abort=createRequestAbort(req,res);let commitBinding,release=()=>{},releaseControl,session,body,request,converted,finish,phase="validation",usageEvent=null,usageModel=null,outcome=null,usageMode,usageProvider;
     const releaseInput=()=>{
       body=null;request=null;if(converted)converted.chat=null;if(session)session.body=null;
       const done=release;release=()=>{};done();
@@ -156,6 +166,7 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
           if(response?.error){outcome="failed";markResponseErrorOrigin("upstream_event");sourceResponseFailed(upstream)}
           else if(outcome!=="failed"&&candidates.some(candidate=>candidate.finishReason)){
             sourceResponseAccepted(upstream);
+            finish=geminiFinish(candidates);
             outcome=candidates.every(candidate=>candidate.finishReason==="STOP")?"completed":"incomplete";
           }
         }}):null;
@@ -177,7 +188,7 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
         if(generation&&!upstream.ok)outcome="failed";
         if(observedEof&&!unavailable&&commitBinding)await confirmBinding();
         if(outcome==="failed")counts.failed++;
-        if(outcome)markResponseTerminal(outcome,outcome==="failed"?{origin:upstream.ok?"upstream_event":"upstream_http"}:undefined);
+        if(outcome)markResponseTerminal(outcome,outcome==="failed"?{origin:upstream.ok?"upstream_event":"upstream_http"}:geminiTerminalDetails(finish));
         res.end();
       };
       if(method==="countTokens"&&req.method==="POST"&&typeof body?.model==="string"&&body.model.startsWith(ANTIGRAVITY_NATIVE_PREFIX)){
@@ -245,7 +256,7 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
           const reply=session.restoreValue(value),candidates=reply?.candidates||[];
           markToolActivity(reply,"gemini");
           if(candidates.some(candidate=>candidate.content?.parts?.some(part=>part.functionCall||!part.thought&&part.text)))markFirstOutput("delta");
-          if(candidates.some(candidate=>candidate.finishReason)){outcome=candidates.every(candidate=>candidate.finishReason==="STOP")?"completed":"incomplete";sourceResponseAccepted(upstream);}
+          if(candidates.some(candidate=>candidate.finishReason)){finish=geminiFinish(candidates);outcome=candidates.every(candidate=>candidate.finishReason==="STOP")?"completed":"incomplete";sourceResponseAccepted(upstream);}
           const wrapped=JSON.stringify({response:reply});
           if(stream){if(!await writeOrDrain(res,"data: "+wrapped+"\n\n",{signal:abort.signal}))throw httpError("Antigravity client disconnected",499);}
           else {if(commitBinding)await confirmBinding();res.end(wrapped);}
@@ -272,7 +283,7 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
             await emit(value);
           }
           if(!outcome)throw httpError("Gemini response ended without a terminal result",502);
-          markResponseTerminal(outcome);if(stream){if(commitBinding)await confirmBinding();res.end();}
+          markResponseTerminal(outcome,geminiTerminalDetails(finish));if(stream){if(commitBinding)await confirmBinding();res.end();}
         }catch(error){sourceResponseFailed(upstream);await cancelSourceResponse(upstream).catch(()=>{});markResponseErrorOrigin("upstream_event");throw error;}
         return;
       }
@@ -323,6 +334,8 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
       const stream=method==="streamGenerateContent";usageModel=target.model;usageMode=stream?"sse":"json";usageProvider="github";
       converted=antigravityToChat(request,{model:target.model,effort:target.effort,reasoningEfforts:target.effort?[target.effort]:[],stream});
       markResponseModel(target.model);markRequestObservation({usage_state:"pending",context_window_tokens:target.maxTokens,
+        max_output_tokens_requested:request.generationConfig?.maxOutputTokens,
+        max_output_tokens_sent:converted.chat.max_completion_tokens??converted.chat.max_tokens,
         routing_reason:bound?"conversation_model":target.model==="gemini-4-carbon"&&target.effort==="low"?"background_default":"background_available"});
       session=privacy?.prepareSession?await privacy.prepareSession(converted.chat,{protocol:"chat",client:"gemini",signal:abort.signal}):passthrough(converted.chat);
       const callOptions={signal:abort.signal,sourceBodyManaged:true,observeBodyWrite:true,retryOptions:{retries:0},
@@ -346,7 +359,7 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
         const data=JSON.parse(await readBoundedResponseText(upstream,{maxBytes:MAX_REPLY,signal:abort.signal,label:"Copilot response"}));
         const usage=mergeChatUsage(null,data.usage);captureUsage(data,usage);
         const result=chatToAntigravity(data,converted.originalNames,usage);markToolActivity(result,"gemini");
-        outcome=result.candidates[0].finishReason==="STOP"?"completed":"incomplete";markResponseTerminal(outcome);
+        outcome=result.candidates[0].finishReason==="STOP"?"completed":"incomplete";markResponseTerminal(outcome,geminiTerminalDetails(result.candidates[0].finishReason));
         const response=JSON.stringify({response:session.restoreValue(result)});
         if(commitBinding)await confirmBinding();
         res.writeHead(200,{"Content-Type":"application/json"});res.end(response);return;
@@ -374,7 +387,7 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
           if(part.functionCall){const tail=text.finish();if(tail)await emit({response:{candidates:[{index:0,content:{role:"model",parts:[{text:tail}]}}]}});Object.assign(part,session.restoreToolValue(part));}
           else if(typeof part.text==="string"&&!part.thought)part.text=text.push(part.text);
         }
-        if(candidate?.finishReason){const tail=text.finish();if(tail)await emit({response:{candidates:[{index:0,content:{role:"model",parts:[{text:tail}]}}]}});outcome=candidate.finishReason==="STOP"?"completed":"incomplete";markResponseTerminal(outcome)}
+        if(candidate?.finishReason){const tail=text.finish();if(tail)await emit({response:{candidates:[{index:0,content:{role:"model",parts:[{text:tail}]}}]}});outcome=candidate.finishReason==="STOP"?"completed":"incomplete";markResponseTerminal(outcome,geminiTerminalDetails(candidate.finishReason))}
         if(candidate?.finishReason&&commitBinding)await confirmBinding();
         if(!await emit(chunk))throw httpError("Antigravity client disconnected",499);
       }

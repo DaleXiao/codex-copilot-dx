@@ -189,7 +189,7 @@ export function isDiscoveryRequest(method, pathname) {
 
 export function buildHttpFailureDetails({ statusCode, route, requestId, model, code, origin, headers, model_error,
   error_body, error_type, upstream_code, parameter, diagnostic_message, method, target, request_options, upstream_attempts, attempt_timings, requested_model, provider,
-  application, reason, capability_cached, shared_upstream, transport }) {
+  application, verified_application, reason, capability_cached, shared_upstream, transport }) {
   if (!reason && code === "ccdx_client_source_disabled" && upstream_attempts === 0 && origin !== "upstream_http") {
     reason = code;origin = "client_validation";
   }
@@ -229,6 +229,7 @@ export function buildHttpFailureDetails({ statusCode, route, requestId, model, c
     ...(requested_model ? { requested_model, request_kind: requested_model === "codex-auto-review" ? "auto_review" : "unknown" } : {}),
     ...(["codex_app", "codex_cli", "codex", "claude_app", "claude_code", "claude", "gemini_app", "api"].includes(application) ? { application } : {}),
     ...(Object.hasOwn(reasons, reason) ? { reason } : {}),
+    ...(["codex", "claude_app", "claude_code"].includes(verified_application) ? { verified_application } : {}),
     ...(capability_cached === true ? { capability_cached: true } : {}), ...(shared_upstream === true ? { shared_upstream: true } : {}),
     ...(transport ? { transport: transportErrorDetails({ transport }) } : {}),
     ...(Number.isSafeInteger(upstream_attempts) ? { upstream_attempts } : {}) };

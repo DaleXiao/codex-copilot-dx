@@ -31,11 +31,11 @@ export async function runAppCommand({ path, ids, flags, output, request, readSta
         ids=listed.flatMap(id=>state.model_groups?.find(model=>model.id===id)?.efforts.map(item=>item.id)||[id]);
       }
       else if(Array.isArray(state.model_groups)){
-        const groups=state.model_groups,selected=await choose(groups.map(model=>model.name),groups.flatMap((model,index)=>model.efforts.some(item=>item.selected)?[index]:[]));
+        const groups=state.model_groups,selected=await choose(groups.map(model=>model.name),groups.flatMap((model,index)=>model.efforts.some(item=>item.selected)?[index]:[]),"Choose models");
         ids=[];
         for(const index of selected){
           const model=groups[index],previous=model.efforts.flatMap((item,i)=>item.selected?[i]:[]);
-          const efforts=await choose(model.efforts.map(item=>model.name+" / "+(item.effort||"default")),previous.length?previous:model.efforts.map((_,i)=>i));
+          const efforts=await choose(model.efforts.map(item=>item.effort||"default"),previous.length?previous:model.efforts.map((_,i)=>i),`Reasoning levels for ${model.name}`);
           ids.push(...efforts.map(i=>model.efforts[i].id));
         }
       }else ids=(await choose(state.models.map(model=>model.name),state.models.flatMap((model,index)=>model.selected!==false?[index]:[]))).map(index=>state.models[index].id);

@@ -86,7 +86,7 @@ export function createSourceAdmission({ now = Date.now, initialLimit = MAX_LIMIT
       const activeRevision = deployment?.account === account ? deployment.revision : revision;
       const key = fingerprint(activeRevision ? identity + "\0" + activeRevision : identity);
       const saved = learned[key], restored = validLimit(saved?.limit) && saved?.limit !== null && now() >= saved.at && now() - saved.at < 86400000;
-      group = { source, key, revision: activeRevision, limit: restored ? saved.limit : initialLimit, active: 0, queue: [], models: new Map(), lastClient: null,
+      group = { source, key, revision: activeRevision, deploymentEpoch: 0, limit: restored ? saved.limit : initialLimit, active: 0, queue: [], models: new Map(), lastClient: null,
         epoch: 0, stableAt: now(), successes: 0, readyToGrow: false, lastStableNotice: now(), pausedUntil: 0, reason: null, timer: null, completed: 0, rejected: 0 };
       groups.set(identity, group);
     }
@@ -126,7 +126,7 @@ export function createSourceAdmission({ now = Date.now, initialLimit = MAX_LIMIT
     arm(group);
   }
   function feedback(group, entry, value) {
-    if (!value || entry.revision !== group.revision) return;
+    if (!value || !entry.currentDeployment()) return;
     const until = now() + Math.min(7 * 86400000, value.delay);
     const model = modelState(group, entry.model);
     if (value.scope === "source") { group.pausedUntil = Math.max(group.pausedUntil, until);group.reason = value.kind; }
@@ -147,12 +147,13 @@ export function createSourceAdmission({ now = Date.now, initialLimit = MAX_LIMIT
     arm(group);
   }
   class Lease {
-    constructor(group, model, client, revision) { this.group = group;this.model = model;this.client = client;this.revision = revision;this.epoch = group.epoch;this.bytes = 0;this.released = false;this.observed = false; }
+    constructor(group, model, client, revision) { this.group = group;this.model = model;this.client = client;this.revision = revision;this.deploymentEpoch = group.deploymentEpoch;this.epoch = group.epoch;this.bytes = 0;this.released = false;this.observed = false; }
+    currentDeployment() { return this.revision === this.group.revision && this.deploymentEpoch === this.group.deploymentEpoch; }
     limit(value) { this.observed = true;feedback(this.group, this, value); }
     streamFailure(error, headers) { const value = sourceLimitFeedback(429, headers, { error }, now());if (value?.kind !== "unknown") this.limit(value); }
     observe(status, headers, body) {
       const group = this.group, entry = this;
-      if (entry.revision !== group.revision) return;
+      if (!entry.currentDeployment()) return;
       if (!this.headersObserved) {
         this.headersObserved = true;
         const declared = headers?.get?.("x-ratelimit-concurrency-limit");
@@ -170,7 +171,7 @@ export function createSourceAdmission({ now = Date.now, initialLimit = MAX_LIMIT
     release(success = false) {
       if (this.released) return;this.released = true;
       const group = this.group, entry = this, model = this.modelState;group.active--;if (model) model.active--;group.completed++;
-      if (success && !this.observed && entry.revision === group.revision) {
+      if (success && !this.observed && entry.currentDeployment()) {
         group.successes = Math.min(8, group.successes + 1);
         const mature = group.successes >= 8 && now() - group.stableAt >= stableMs;
         group.readyToGrow ||= mature;
@@ -301,6 +302,7 @@ export function createSourceAdmission({ now = Date.now, initialLimit = MAX_LIMIT
       Object.assign(group, { key: fingerprint(identity + "\0" + revision), revision, limit: initialLimit,
         epoch: 0, stableAt: time, successes: 0, readyToGrow: false, lastStableNotice: time,
         pausedUntil: 0, reason: null, advertised: undefined, advertisedUntil: 0 });
+      group.deploymentEpoch++;
       group.models.clear();
       drain(group);
     },

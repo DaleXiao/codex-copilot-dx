@@ -132,7 +132,7 @@
         if (!request.failed || request.outcome === "cancelled" || request.rejection_reason || recorded.has(request.request_id)) continue;
         failures.push({ at: request.at, model: request.model, request_id: request.request_id,
           event_type: `request.${request.outcome}`, code: request.origin, timeline: request,
-          message: request.stop_reason === "max_tokens" ? "Output limit reached." : "Request ended without successful completion.", local_message: true, retried: request.upstream_attempts > 1 });
+          message: request.stop_reason === "max_tokens" ? "Output limit reached." : request.stop_reason === "content_filter" ? "Content filtered" : "Request ended without successful completion.", local_message: true, retried: request.upstream_attempts > 1 });
       }
       failures.sort((a, b) => (Date.parse(a.at) || 0) - (Date.parse(b.at) || 0));
       failures.splice(0, Math.max(0, failures.length - 10));
@@ -478,7 +478,8 @@
           ...(Number.isSafeInteger(context.privacy_count) ? [["request_masking", phrase("privacy_result", { count: context.privacy_count, ms: context.privacy_ms || 0 })]] : []),
           ["wire_mib", finite(context.payload_bytes) ? `${(Number(context.payload_bytes) / 1048576).toFixed(2)} MiB` : "—"],
           ["images", number(context.images)], ["model_window", number(context.context_window_tokens)], ["input_window", ratio],
-          ["output_requested", number(context.max_output_tokens_requested)], ["output_sent", number(context.max_output_tokens_sent)], ["output_used", number(context.output_tokens)], ["stop_reason", request.stop_reason || "—"],
+          ["output_requested", number(context.max_output_tokens_requested)], ["output_sent", number(context.max_output_tokens_sent)], ["output_used", number(context.output_tokens)],
+          ["stop_reason", request.stop_reason === "max_tokens" ? phrase("stop_output_limit") : request.stop_reason === "content_filter" ? phrase("stop_content_filter") : request.stop_reason || "—"],
           ...(["conversation_model", "background_default", "background_available"].includes(context.routing_reason)
             ? [["routing_reason", phrase(`routing_${context.routing_reason}`)]] : []),
           ...(context.requested_model && context.requested_model !== request.model ? [["requested_model", context.requested_model]] : []),

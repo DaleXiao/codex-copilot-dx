@@ -25,6 +25,7 @@ import { isCompactionRequest, compactionScope } from "./context-compaction.mjs";
 import { compactionSummarizer } from "./context-compaction-wire.mjs";
 import { requestPurpose } from "./request-context.mjs";
 import { messagesWithEffortDefault } from "./client-effort.mjs";
+import { isClaudeHealthProbe } from "./providers/claude-health-probes.mjs";
 import { sourceResponseReader, observeSourceRead, failSourceRead, cancelSourceReader, releaseSourceReader, cancelSourceResponse, sourceResponseAccepted } from "./source-response.mjs";
 
 function observeMessagesWindow(provider, model, capability, entry) {
@@ -245,6 +246,7 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
     if (!countTokens) context.purpose = purpose;
     context.provider = selectedProvider.id;context.application = requestApplication(req.headers, "claude");
     context.streamPerformance = tracker;context.route = countTokens ? "messages_count_tokens" : "messages";
+    if (context.verifiedApplication) tracker?.observeContext({ verified_application: context.verifiedApplication });
     await runWithRequestContext(context, async () => {
       try {
         release = await acquireRequest(req, { signal: abort.signal, streamingBody: true });
@@ -257,6 +259,12 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
         if (context.requestOptions.client_tool_errors_received) markRequestObservation({ client_tool_errors_received: context.requestOptions.client_tool_errors_received });
         if (!body || typeof body.model !== "string" || !Array.isArray(body.messages)) {
           send(res, 400, apiError("ccdx_messages_invalid", "Expected a model and messages array"));return;
+        }
+        const healthProbe = Boolean(resolveRequest && privacyClient === "claude_app" && !countTokens
+          && !compacting && isClaudeHealthProbe(body, req.headers));
+        if (healthProbe) {
+          context.purpose = "diagnostic";
+          tracker?.setPurpose("diagnostic");
         }
         if (resolveRequest) {
           const resolved = await resolveRequest(body, req);
@@ -299,6 +307,10 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
         const call = privacy?.wrap(sourceCall, { res, protocol: "messages", client: privacyClient }) || sourceCall;
         let upstreamHeadersObserved = false;
         const callOptions = { headers: req.headers, countTokens, signal: abort.signal, sourceBodyManaged: true,
+          ...(healthProbe ? { onClaudeHealthProbe(result) {
+            context.claudeHealthProbe = result;
+            if (result.reused) markRequestObservation({ health_probe_reused: 1 });
+          } } : {}),
           onUpstreamErrorHeaders(status) { upstreamHeadersObserved = true;tracker?.upstreamHeaders(status);body = null;release();release = () => {}; },
           onCountObservation(value) {
             context.countObservation = { ...context.countObservation, ...value };
@@ -450,7 +462,9 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
           tracker?.setModel(configuredModel || model, { configured: Boolean(configuredModel) });tracker?.setOutputTokens(usage?.output_tokens);
           tracker?.terminal(outcome, { origin: failedEvent ? "upstream_event" : terminalOrigin, stopReason, reason: stopReason === "max_tokens" ? "max_output_tokens" : undefined });
           tracker?.finish({ failed: outcome === "failed" || outcome === "cancelled" || deliveryCancelled, aborted: deliveryCancelled, statusCode: failureStatus || res.statusCode, rejectionReason });
-          try { void Promise.resolve(record(usageRecord)).catch(() => {}); } catch {}
+          if (!context.claudeHealthProbe || usageRecord && context.claudeHealthProbe.claimUsage()) {
+            try { void Promise.resolve(record(usageRecord)).catch(() => {}); } catch {}
+          }
         }
       }
     });

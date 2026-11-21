@@ -82,22 +82,24 @@ export function createTerminalConsole({ output = process.stdout, errorOutput = p
     if (dirty) {
       const usage = data.runtime_usage || {}, view = projection;
       const heading = readFailed ? updatedAt === null ? "Status unavailable" : `Previous data / ${new Date(updatedAt).toLocaleTimeString("en-GB")}`
-        : `Running · up ${terminalUptime(data.uptime_ms)}`;
+        : `Running for ${terminalUptime(data.uptime_ms)}`;
       const webAddress = baseUrl ? `Web UI: ${baseUrl}` : "Web UI: address unavailable";
       const sourceHeader = view.sources ? `Enabled sources: ${view.sources.length}` : "Enabled sources: unknown";
       const appSize = width < 64 ? 13 : 15, setupSize = Math.max(10, Math.min(20, width - appSize - 7));
       const appRows = view.clients.map(client => `${clip(client.name, appSize - 1).padEnd(appSize)}${clip(client.setup, setupSize - 1).padEnd(setupSize)}${String(readFailed || client.active === null ? "—" : client.active).padStart(6)}`);
       const issue = view.issue?.label;
-      const notice = notices ? `${notices} ${notices === 1 ? "notice" : "notices"}${issue ? ` · last model issue: ${issue}` : " · ccdx status --details"}` : issue ? `Last model issue: ${issue}` : `Image evidence: ${imageRuntime?.tool_registration === "observed" ? "tool registered" : imageRuntime?.connected ? "host connected" : "unconfirmed"} · ccdx app codex image repair`;
+      const notice = issue ? `Last request issue: ${issue}`
+        : notices ? `${notices} ${notices === 1 ? "notice" : "notices"}. Run ccdx status --details.`
+          : imageRuntime?.error ? "Image tools need attention. Run ccdx app codex image status." : "";
       content = [clip(heading, width), clip(webAddress, width), sourceHeader,
-        ...(view.sources ? wrap(view.sources.map(source => source.name).join(" · "), width) : []),
+        ...(view.sources ? wrap(view.sources.map(source => source.name).join(", "), width) : []),
         `${"App".padEnd(appSize)}${"Setup".padEnd(setupSize)}${"Active".padStart(6)}`, ...appRows,
         ...table(width, usage, view.requests, readFailed ? null : view.active, key => view.outcomes[key]),
-        clip("Help: ccdx help · Stop: Ctrl+C", width), clip(notice, width)];
+        clip("Help: ccdx help   Stop: Ctrl+C", width), notice ? clip(notice, width) : ""];
       if (content.length + 1 >= (Number(output.rows) || 24)) {
         const grouped = Object.entries(view.clients.reduce((counts, client) => ({ ...counts, [client.setup]: (counts[client.setup] || 0) + 1 }), {})).map(([state, count]) => `${count} ${state.toLowerCase()}`).join(" · ");
         content = [clip(readFailed ? heading : webAddress, width), sourceHeader, clip(`Apps: ${grouped}`, width),
-          ...table(width, usage, view.requests, readFailed ? null : view.active, key => view.outcomes[key], true), clip(notice, width)];
+          ...table(width, usage, view.requests, readFailed ? null : view.active, key => view.outcomes[key], true), notice ? clip(notice, width) : ""];
       }
       dirty = false;
     }

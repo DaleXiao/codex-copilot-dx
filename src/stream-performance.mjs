@@ -360,6 +360,8 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
           if (values.body_queue) context.body_queue = values.body_queue;
           if (Number.isSafeInteger(values.source_queue_ms) && values.source_queue_ms >= 0) context.source_queue_ms = values.source_queue_ms;
           if (values.delivery_cancelled === 1) context.delivery_cancelled = 1;
+          if (values.health_probe_reused === 1) context.health_probe_reused = 1;
+          if (["codex", "claude_app", "claude_code"].includes(values.verified_application)) context.verified_application = values.verified_application;
           if (Number.isSafeInteger(values.cached_input_tokens) && values.cached_input_tokens >= 0) cachedInput = values.cached_input_tokens;
           for (const key of [...Object.keys(context), "compaction", "requested_model", "routing_reason", "reasoning_effort_requested", "reasoning_effort_sent", "usage_state", "capability_revision", "capability_constraints", "privacy_count", "privacy_ms", "privacy_state", "privacy_pending_bytes", "privacy_new_bytes", "privacy_pending_windows", "privacy_wait_budget_ms", "privacy_error", "privacy_event_type", "privacy_channel_type", "privacy_buffered_bytes", "privacy_terminal_seen", "client_tool_errors_received"]) {
             const value = values[key];
@@ -387,7 +389,7 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
           if (terminalModel !== undefined) model = modelLabel(terminalModel);
           if (TERMINAL_ORIGINS.has(origin)) terminalOrigin = origin;
           if (outcome === "incomplete") incompleteReason = INCOMPLETE_REASONS.has(reason) ? reason : "other";
-          if (["end_turn", "max_tokens", "tool_use", "stop_sequence", "pause_turn", "refusal", "model_context_window_exceeded"].includes(stopped)) stopReason = stopped;
+          if (["end_turn", "max_tokens", "tool_use", "stop_sequence", "pause_turn", "refusal", "model_context_window_exceeded", "content_filter"].includes(stopped)) stopReason = stopped;
           if (outcome !== "completed") failed = true;
         },
         fail() {

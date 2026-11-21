@@ -9,6 +9,8 @@ import { appendRotatingLines, parseByteLimit, rotatedFilePath } from "./file-rot
 import { withFileLock } from "./lock.mjs";
 import { terminalCell } from "./terminal-text.mjs";
 import { currentRequestContext, requestPurpose } from "./request-context.mjs";
+import { archivedUsageBackup, sealUsageBackup, usageArchiveFiles, USAGE_ARCHIVE_DAYS, USAGE_ARCHIVE_MAX_BYTES } from "./usage-archive.mjs";
+import { createGunzip } from "node:zlib";
 
 const DEFAULT_USAGE_PATH = path.join(os.homedir(), ".local", "share", "codex-copilot-dx", "usage.jsonl");
 const DEFAULT_USAGE_MAX_BYTES = 32 * 1024 * 1024;
@@ -25,6 +27,7 @@ let pendingRecords = 0;
 let pendingBytes = 0;
 let droppedRecords = 0;
 let writeFailures = 0;
+let unconfirmedRecords = 0;
 const appendObservers = new Set();
 export function subscribeUsageAppends(listener) {
   appendObservers.add(listener);return () => appendObservers.delete(listener);
@@ -41,7 +44,9 @@ export function runtimeUsageSnapshot() {
 
 export function usageLoggingStats() {
   return { pending_records: pendingRecords, pending_bytes: pendingBytes, dropped_records: droppedRecords,
-    write_failures: writeFailures, max_records: USAGE_QUEUE_MAX_RECORDS, max_bytes: USAGE_QUEUE_MAX_BYTES };
+    write_failures: writeFailures,
+    unconfirmed_records: unconfirmedRecords, max_records: USAGE_QUEUE_MAX_RECORDS, max_bytes: USAGE_QUEUE_MAX_BYTES,
+    archive_days: USAGE_ARCHIVE_DAYS, archive_max_bytes: USAGE_ARCHIVE_MAX_BYTES };
 }
 
 export function usageLogPath() {
@@ -158,10 +163,13 @@ function takePendingWrites(filePath, maxBytes) {
 async function writeUsageBatch(batch) {
   const { filePath, maxBytes } = batch[0];
   await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
-  await withFileLock(`${path.resolve(filePath)}.lock`, async () => {
+  let entered = false;
+  const write = timeoutMs => withFileLock(`${path.resolve(filePath)}.lock`, async () => {
+    entered = true;
     batch.push(...takePendingWrites(filePath, maxBytes));
+    await separateUsageTail(filePath);
     const before = appendObservers.size ? await usageSummaryVersion(filePath, { settled: false }) : null;
-    await appendRotatingLines(filePath, batch.map(({ line }) => line), maxBytes);
+    await appendRotatingLines(filePath, batch.map(({ line }) => line), maxBytes, { sealBackup: sealUsageBackup });
     if (before && appendObservers.size) {
       const after = await usageSummaryVersion(filePath, { settled: false });
       const change = { filePath: path.resolve(filePath), before, after,
@@ -169,10 +177,32 @@ async function writeUsageBatch(batch) {
       for (const listener of appendObservers) { try { listener(change); } catch { /* Analytics cannot fail a log write. */ } }
     }
   }, {
-    timeoutMs: USAGE_WRITE_LOCK_TIMEOUT_MS,
+    timeoutMs,
     staleMs: USAGE_WRITE_LOCK_STALE_MS,
     pollMs: USAGE_WRITE_LOCK_POLL_MS,
   });
+  const deadline = Date.now() + USAGE_WRITE_LOCK_TIMEOUT_MS;
+  try { await write(USAGE_WRITE_LOCK_TIMEOUT_MS - 100); }
+  catch (error) {
+    if (entered || !/^Timed out waiting for lock:/.test(error.message)) throw error;
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw error;
+    await write(remaining);
+  }
+}
+
+async function separateUsageTail(filePath) {
+  let file;
+  try { file = await fs.promises.open(filePath, "r+"); }
+  catch (error) { if (error.code === "ENOENT") return;throw error; }
+  try {
+    const { size } = await file.stat();
+    if (!size) return;
+    const last = Buffer.alloc(1);
+    await file.read(last, 0, 1, size - 1);
+    // A partial line is still reported by the reader. Keep the next record separate.
+    if (last[0] !== 10) await file.write("\n", size, "utf8");
+  } finally { await file.close(); }
 }
 
 function scheduleUsageWriteDrain() {
@@ -186,6 +216,7 @@ function scheduleUsageWriteDrain() {
       } catch (error) {
         writeFailures += 1;
         batch.push(...takePendingWrites(first.filePath, first.maxBytes));
+        unconfirmedRecords += batch.length;
         console.error(`codex-copilot-dx usage log write failed: ${error.message}`);
       } finally {
         for (const entry of batch) {
@@ -266,10 +297,10 @@ export async function flushUsageWrites({
   }
 }
 
-async function* iterateUsageRecords(filePath, { warn = console.error } = {}) {
+async function* iterateUsageRecords(filePath, { warn = console.error, compressed = false } = {}) {
   let input;
   try {
-    input = fs.createReadStream(filePath, { encoding: "utf8" });
+    input = fs.createReadStream(filePath, compressed ? undefined : { encoding: "utf8" });
     await new Promise((resolve, reject) => {
       input.once("open", resolve);
       input.once("error", reject);
@@ -280,7 +311,9 @@ async function* iterateUsageRecords(filePath, { warn = console.error } = {}) {
     throw e;
   }
 
-  const lines = readline.createInterface({ input, crlfDelay: Infinity });
+  const decoded = compressed ? input.pipe(createGunzip()) : input;
+  if (compressed) input.on("error", error => decoded.destroy(error));
+  const lines = readline.createInterface({ input: decoded, crlfDelay: Infinity });
   let invalidRecords = 0;
   for await (const line of lines) {
     if (!line) continue;
@@ -361,13 +394,26 @@ export function summarizeUsage(records, { provider = "" } = {}) {
 
 async function summarizeUsageLogFiles(filePath, { warn = console.error, onRecord, recordFilter, provider = "" } = {}) {
   const summary = summarizeUsage([], { provider });
-  for (const candidate of [rotatedFilePath(filePath), filePath]) {
-    for await (const record of iterateUsageRecords(candidate, { warn })) {
-      if (provider && provider !== usageProvider(record)) continue;
-      if (recordFilter && !recordFilter(record)) continue;
-      const one = summarizeUsage([record]);
-      onRecord?.(record, one);
-      mergeUsageSummary(summary, one);
+  const archive = await usageArchiveFiles(filePath);
+  let archivedBackup = false;
+  if (archive.length) {
+    try { archivedBackup = await archivedUsageBackup(filePath, archive); }
+    catch (error) { if (error.code !== "ENOENT") throw error; }
+  }
+  for (const candidate of [...archive, ...(archivedBackup ? [] : [rotatedFilePath(filePath)]), filePath]) {
+    const compressed = archive.includes(candidate);
+    try {
+      for await (const record of iterateUsageRecords(candidate, { warn, compressed })) {
+        if (provider && provider !== usageProvider(record)) continue;
+        if (recordFilter && !recordFilter(record)) continue;
+        const one = summarizeUsage([record]);
+        onRecord?.(record, one);
+        mergeUsageSummary(summary, one);
+      }
+    } catch (error) {
+      if (!compressed) throw error;
+      summary.archive_read_failures = (summary.archive_read_failures || 0) + 1;
+      warn("A usage archive could not be read. Its totals may be incomplete.");
     }
   }
   return summary;
@@ -389,7 +435,7 @@ const activeSummaries = createAbortAwareSingleflight();
 
 export async function usageSummaryVersion(filePath, { settled = true } = {}) {
   try {
-    const files = await Promise.all([rotatedFilePath(filePath), filePath].map(async (file) => {
+    const [files, archive] = await Promise.all([Promise.all([rotatedFilePath(filePath), filePath].map(async (file) => {
       try {
         const stat = await fs.promises.stat(file, { bigint: true });
         if (!stat.isFile()) return null;
@@ -400,8 +446,12 @@ export async function usageSummaryVersion(filePath, { settled = true } = {}) {
         if (error?.code === "ENOENT") return "missing";
         throw error;
       }
+    })), usageArchiveFiles(filePath)]);
+    const metadata = await Promise.all(archive.map(async name => {
+      const stat = await fs.promises.stat(name, { bigint: true });
+      return [path.basename(name), stat.dev, stat.ino, stat.size, stat.mtimeNs, stat.ctimeNs].join(":");
     }));
-    return files.some((version) => version === null) ? null : `${path.resolve(filePath)}\0${files.join("|")}`;
+    return files.some((version) => version === null) ? null : `${path.resolve(filePath)}\0${[...files, metadata.join(",")].join("|")}`;
   } catch { return null; } // Uncacheable metadata never replaces the normal read/error path.
 }
 

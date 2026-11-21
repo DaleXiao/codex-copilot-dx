@@ -116,7 +116,7 @@ test("appearance controls are readable in English before the language script run
   const appearance = html.slice(html.indexOf('<h2 id="web-appearance-title"'), html.indexOf('<div class="setting-row terminal-animation-toggle">'));
   const language = load().language;
   const labels = [...appearance.matchAll(/<(?:h2|label|option)\b[^>]*data-i18n="([^"]+)"[^>]*>([^<]+)</g)];
-  assert.equal(labels.length, 13);
+  assert.equal(labels.length, 14);
   for (const [, key, fallback] of labels) {
     assert.equal(fallback.replaceAll("&amp;", "&").toLowerCase(), language.format(key).toLowerCase(), key);
   }

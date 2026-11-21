@@ -369,3 +369,53 @@ test("one client selects same-named models from two APIs on the shared port with
   assert.equal(runtime.selection().codex, ids[0]);assert.equal(runtime.connections().clients.find(c => c.id === "codex").deployments, null);
   assert.equal(calls.length, 9, "Empty selection and legacy switching make no upstream request");
 });
+
+test("authenticated Claude App health probes share a real result without caching failures or normal conversations", async t => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-health-probe-")), env = { CCDX_M365: "0" };
+  const entered = Promise.withResolvers(), release = Promise.withResolvers();
+  let handler, calls = 0, status = 200, warming = true;
+  const runtime = createProviderRuntime({ home, env, githubClient: {}, githubRegistry: { models: { data: [] } },
+    secretStore: { set: async () => {}, get: async () => "synthetic-key", close() {} }, inspectDesktop: async () => false,
+    configureClaude: () => ({ app: "configured" }), restoreClaude: () => ({ preserved: 0 }),
+    createApi: options => createApiProvider({ ...options, networkFactory: async () => ({ close() {}, fetch: async (_url, init) => {
+      if (init.method === "GET") return Response.json({ data: [{ id: "demo" }] });
+      calls++;
+      if (warming) { entered.resolve();await release.promise; }
+      return status === 429 ? Response.json({ type: "error", error: { type: "rate_limit_error" } }, { status })
+        : Response.json({ id: "msg_synthetic", type: "message", role: "assistant", model: "demo", stop_reason: "max_tokens",
+          content: [{ type: "text", text: "." }], usage: { input_tokens: 1, output_tokens: 1 } });
+    } }) }) });
+  const server = http.createServer((req, res) => handler(req, res));
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  handler = createAdapterHandler({ providerRuntime: runtime, dashboardOptions: { home, env } });
+  t.after(async () => { release.resolve();handler.cleanup?.();server.closeAllConnections();await new Promise(resolve => server.close(resolve));
+    await runtime.close();fs.rmSync(home, { recursive: true, force: true }); });
+  const saved = await runtime.manageConnections({ operation: "save_api", config: { name: "API", base_url: "https://example.test/v1",
+    endpoints: { messages: "https://example.test/v1/messages" }, auth_header: "bearer", models: [{ id: "demo", protocols: ["messages"] }] },
+    key: "synthetic-key", allowed: ["claude_app"] });
+  const api = saved.providers.find(p => !p.builtin).id;
+  await runtime.manageConnections({ operation: "client", id: "claude_app", enabled: true, source: api, allowed: [api] });
+  const base = `http://127.0.0.1:${server.address().port}`, key = readClientGatewayKeys({ home, env }).claude_app;
+  const state = async () => (await (await fetch(base + "/_ccdx/status")).json());
+  const run = (content = ".", version = "2023-06-01") => fetch(base + "/anthropic/v1/messages", {
+    method: "POST", headers: { "content-type": "application/json", "x-api-key": key, "anthropic-version": version },
+    body: JSON.stringify({ model: "demo", max_tokens: 1, messages: [{ role: "user", content }] }),
+  });
+  const first = run();
+  await entered.promise;
+  const second = run();
+  warming = false;release.resolve();
+  assert.deepEqual(await Promise.all([first, second].map(async call => (await (await call).json()).id)), ["msg_synthetic", "msg_synthetic"]);
+  assert.equal(calls, 1);
+  const after = await state(), timeline = after.providers.claude.requests.performance.recent_requests;
+  assert.equal(timeline.filter(row => row.purpose === "diagnostic").length, 2);
+  assert.equal(timeline.filter(row => row.context.health_probe_reused === 1 && row.upstream_attempts === 0).length, 1);
+  await (await run("A normal short conversation")).json();
+  await (await run("A normal short conversation")).json();
+  assert.equal(calls, 3);
+  status = 429;
+  const refused = await run(".", "2026-01-01");
+  assert.equal(refused.status, 429);
+  assert.equal((await refused.json()).error.type, "rate_limit_error");
+  assert.equal(calls, 4);
+});

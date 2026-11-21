@@ -649,3 +649,31 @@ test("explicit plain usage preserves record meaning without terminal injection",
   assert.match(output, /Cache hit:/);
   assert.doesNotMatch(output, /\x1b|^FORGED/m);
 });
+
+test("repeated usage rotation seals complete history and an interrupted rotation does not double count", async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "ccdx-usage-archive-"));
+  const file = path.join(dir, "usage.jsonl");
+  const { sealUsageBackup, usageArchiveFiles } = await import("../src/usage-archive.mjs");
+  t.mock.method(console, "error", () => {});
+  const beforePath = process.env.CCDX_USAGE_PATH, beforeMax = process.env.CCDX_USAGE_MAX_BYTES;
+  process.env.CCDX_USAGE_PATH = file;
+  process.env.CCDX_USAGE_MAX_BYTES = "100";
+  try {
+    for (let i = 1; i <= 5; i++) await recordUsage({ model: "fixture", usage: { total_tokens: i } });
+    assert.equal((await usageArchiveFiles(file)).length, 3);
+    await sealUsageBackup(file);
+    assert.equal((await usageArchiveFiles(file)).length, 4);
+    await sealUsageBackup(file);
+    assert.equal((await usageArchiveFiles(file)).length, 4);
+    assert.equal((await summarizeUsageLogs(file)).requests, 5);
+    assert.equal((await summarizeUsageLogs(file)).totals.total_tokens, 15);
+    await fs.appendFile(file, '{"partial":');
+    await recordUsage({ model: "fixture", usage: { total_tokens: 6 } });
+    assert.equal((await summarizeUsageLogs(file)).requests, 6);
+    assert.equal((await summarizeUsageLogs(file)).totals.total_tokens, 21);
+  } finally {
+    if (beforePath === undefined) delete process.env.CCDX_USAGE_PATH;else process.env.CCDX_USAGE_PATH = beforePath;
+    if (beforeMax === undefined) delete process.env.CCDX_USAGE_MAX_BYTES;else process.env.CCDX_USAGE_MAX_BYTES = beforeMax;
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});

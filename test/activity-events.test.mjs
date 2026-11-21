@@ -74,15 +74,16 @@ async function nextEvent(reader) {
   for (;;) { const {value,done}=await reader.read();assert.equal(done,false);text+=new TextDecoder().decode(value);const at=text.indexOf('data: ');const end=text.indexOf('\n\n',at);if(at>=0&&end>=0)return JSON.parse(text.slice(at+6,end)); }
 }
 test('real HTTP SSE excludes itself from work, rejects foreign origins, resyncs and exits without forced shutdown',async t=>{
-  const claude=createStreamPerformanceMetrics({routeNames:['messages']});let fullReads=0;
-  const server=await startAdapter(0,'127.0.0.1',{terminalActivity:{beginRequest:()=>()=>{}},providerRuntime:{claudePerformance:claude,snapshot(){fullReads++;return {};}}});
+  const claude=createStreamPerformanceMetrics({routeNames:['messages']});let fullReads=0, privacyInvalid=true;
+  const privacy = { snapshot() { if (privacyInvalid) throw Error("Invalid local settings");return {state:"ready"}; }, close() {} };
+  const server=await startAdapter(0,'127.0.0.1',{terminalActivity:{beginRequest:()=>()=>{}},providerRuntime:{claudePerformance:claude,privacy,snapshot(){fullReads++;return {};}}});
   t.after(()=>closeHttpServer(server));const base=`http://127.0.0.1:${server.address().port}`;
   const bad=await openStream(base+'/_ccdx/activity',{Origin:'https://example.test'});assert.equal(bad.status,403);bad.close();
   const stream=await openStream(base+'/_ccdx/activity');assert.equal(stream.status,200);
-  const reader=stream.reader,first=await nextEvent(reader);assert.equal(first.model_activity.active,0);assert.equal(first.requests.total,0);assert.equal(fullReads,0);assert.equal(server.ccdxBusy(),false);
+  const reader=stream.reader,first=await nextEvent(reader);assert.equal(first.model_activity.active,0);assert.equal(first.local_privacy.error,"ccdx_privacy_settings_invalid");privacyInvalid=false;assert.equal(first.requests.total,0);assert.equal(fullReads,0);assert.equal(server.ccdxBusy(),false);
   const tui=[];const off=server.ccdxSubscribeActivity(value=>tui.push(value));
   const request=claude.begin('messages',{requestId:'background-task',application:'claude_app'});request.setModel('claude-test');request.setProvider('m365');request.upstreamStarted();
-  const active=await nextEvent(reader);assert.equal(active.providers.claude.requests.performance.active_total,1);
+  const active=await nextEvent(reader);assert.equal(active.local_privacy.state,"ready");assert.equal(active.providers.claude.requests.performance.active_total,1);
   assert.equal(tui.at(-1).providers.claude.requests.performance.active_total,1);
   stream.close();await wait(5);
   request.terminal('completed',{origin:'upstream_response'});request.finish({statusCode:200});await wait(65);off();

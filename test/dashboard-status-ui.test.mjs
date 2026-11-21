@@ -153,7 +153,7 @@ test("dashboard usage renders percentages, zero hits and unknown rates alongside
   }
   assert.equal(usageValues({ ...row, cache_hit_rate_partial: true }).at(-1), "~80.0%");
   assert.equal(usageValues({ ...row, cache_hit_rate: null, cache_hit_rate_partial: true }).at(-1), "—");
-  assert.match(html, /<th scope="col" data-i18n="cache_hit">REUSE RATE<\/th>/);
+  assert.match(html, /<th data-width="compact" scope="col" data-i18n="cache_hit">REUSE RATE<\/th>/);
   assert.match(html, /id="usage-body"><tr><td colspan="8" data-i18n="loading">Loading/);
 });
 

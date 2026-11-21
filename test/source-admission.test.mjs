@@ -157,3 +157,18 @@ test("replacing an endpoint clears its feedback while retaining account slots an
   assert.deepEqual(await (await pending).json(), { ok: true });
   assert.equal(scheduler.snapshot()[0].model_limits.length, 0);
 });
+
+test("rolling back to a deployment does not admit feedback from an earlier request to it", async t => {
+  const scheduler = createSourceAdmission();
+  t.after(() => scheduler.close());
+  const a = { ...descriptor("api_a"), revision: "a" }, b = { ...a, revision: "b" };
+  scheduler.registerDeployment(a);
+  const held = Promise.withResolvers();
+  const pending = scheduler.run(a, () => held.promise, { model: "fixture" });
+  scheduler.registerDeployment(b);
+  scheduler.registerDeployment(a);
+  held.resolve(Response.json({ error: { code: "model_quota_exceeded" } }, { status: 429 }));
+  assert.equal((await pending).status, 429);
+  assert.equal(scheduler.snapshot()[0].active, 0);
+  assert.deepEqual(scheduler.snapshot()[0].model_limits, []);
+});

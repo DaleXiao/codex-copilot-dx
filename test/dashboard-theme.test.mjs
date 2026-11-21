@@ -68,6 +68,24 @@ test("dashboard restores light mode before the stylesheet loads and tolerates un
   assert.equal(blocked.root.dataset.theme, "light");
 });
 
+test("grid paper is saved as an independent WebUI palette in either mode", () => {
+  const saved = new Map([["ccdx.dashboard.theme", "light"]]);
+  const { root, select, button, favicon } = loadTheme({
+    getItem: key => saved.get(key),
+    setItem: (key, value) => saved.set(key, value),
+  });
+  select.value = "paper";
+  select.change({ target: select });
+  assert.equal(saved.get("ccdx.dashboard.palette"), "paper");
+  assert.equal(root.dataset.palette, "paper");
+  assert.equal(root.dataset.theme, "light");
+  assert.match(decodeURIComponent(favicon.href), /stroke="#4c493e"/);
+  button.click();
+  assert.equal(root.dataset.theme, "dark");
+  assert.equal(root.dataset.palette, "paper");
+  assert.match(decodeURIComponent(favicon.href), /stroke="#e4ceb0"/);
+});
+
 test("dashboard uses inline SVG sun in dark mode and moon in light mode", () => {
   assert.match(html, /<link id="favicon" rel="icon" type="image\/svg\+xml" href="data:,">[\s\S]*<script src="\/theme\.js"><\/script>/);
   assert.match(html, /<script src="\/theme\.js"><\/script>[\s\S]*<link rel="stylesheet"/);

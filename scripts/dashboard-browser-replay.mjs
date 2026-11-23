@@ -977,6 +977,19 @@ try {
         assert.equal(await page.locator("#preferences-auto").isChecked(), true);
         assert.equal(await page.locator("#privacy-settings").evaluate(node => node.previousElementSibling.id), "version-updates");
         assert.equal(await page.locator("#settings-preferences").evaluate(node => node.previousElementSibling.id), "request-limits");
+        assert.equal(await page.locator("#bark-enabled").isChecked(), false);
+        assert.equal(await page.locator("#bark-minutes").inputValue(), "30");
+        assert.equal(await page.locator("#bark-url").getAttribute("type"), "password");
+        await page.waitForFunction(() => document.querySelector("#bark-heading img").naturalWidth > 0);
+        for (const value of [45, 30]) {
+          await page.locator("#bark-minutes").fill(String(value));
+          const savedBark = page.waitForResponse(response => response.url().endsWith("/_ccdx/ui/settings") && response.request().method() === "POST");
+          await page.locator("#bark-settings button[type=submit]").click();
+          const saved = await savedBark;
+          assert.equal(saved.ok(), true);
+          assert.equal(serviceControl.snapshot().bark.minutes, value);
+          assert.equal(serviceControl.snapshot().bark.enabled, false);
+        }
         await page.locator("#preferences-auto").uncheck();await settlePreferences();
         assert.equal(serviceControl.snapshot().preferences.values.auto_save_settings, false);
         await page.locator("#terminal-color-theme").selectOption("pink");

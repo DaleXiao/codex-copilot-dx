@@ -1115,6 +1115,10 @@ try {
           assert.equal(await page.locator("#image-models").count(), 1);
           await nav("system");
           await page.locator("#request-limits").evaluate(node => { node.open = true; });
+          const limitColumns = await page.locator("#request-limits").evaluate(node => [...node.querySelectorAll(".section-actions")].map(row =>
+            [...row.querySelectorAll("input,button")].map(control => control.getBoundingClientRect().left)));
+          assert.equal(limitColumns.length, 2);
+          assert.ok(limitColumns[0].every((left, index) => Math.abs(left - limitColumns[1][index]) <= 1), "Request limit controls share aligned columns");
           await page.locator("#decoded-limit").fill("257");await page.locator("#decoded-limit").blur();
           await page.locator("#refresh").click();await page.waitForFunction(() => !document.getElementById("refresh").disabled);
           assert.equal(await page.locator("#decoded-limit").inputValue(), "257", "A blurred draft survives status refresh");

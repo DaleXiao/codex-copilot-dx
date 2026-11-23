@@ -544,7 +544,27 @@
           </form>
         </details>
 
-        <details class="panel dashboard-section" id="request-limits"><summary data-i18n="advanced_limits">Advanced: request limits</summary><div class="section-actions"><label><span data-i18n="decoded_limit">Decoded request limit (MiB)</span><input id="decoded-limit" type="number" min="128" max="512" step="1"></label><button id="decoded-limit-save" type="button" data-i18n="api_save">Save</button><button id="decoded-limit-default" type="button" data-i18n="limit_default">Use default</button></div><p id="decoded-limit-note" class="hint" role="status"></p><div class="section-actions"><label><span data-i18n="inflight_body_limit">Shared request-body limit (MiB)</span> <input id="inflight-body-limit" type="number" min="32" max="128" step="1" required aria-describedby="inflight-body-limit-note" disabled></label><button id="inflight-body-limit-save" type="button" data-i18n="api_save" disabled>Save</button><button id="inflight-body-limit-default" type="button" data-i18n="limit_default" disabled>Use default</button></div><p id="inflight-body-limit-note" class="hint" role="status"></p></details>
+        <details class="panel dashboard-section" id="request-limits">
+          <summary data-i18n="advanced_limits">Advanced: request limits</summary>
+          <div class="request-limit">
+            <label for="decoded-limit" data-i18n="decoded_limit">Decoded request limit (MiB)</label>
+            <div class="section-actions">
+              <input id="decoded-limit" type="number" min="128" max="512" step="1">
+              <button id="decoded-limit-save" type="button" data-i18n="api_save">Save</button>
+              <button id="decoded-limit-default" type="button" data-i18n="limit_default">Use default</button>
+            </div>
+            <p id="decoded-limit-note" class="hint" role="status"></p>
+          </div>
+          <div class="request-limit">
+            <label for="inflight-body-limit" data-i18n="inflight_body_limit">Shared request-body limit (MiB)</label>
+            <div class="section-actions">
+              <input id="inflight-body-limit" type="number" min="32" max="128" step="1" required aria-describedby="inflight-body-limit-note" disabled>
+              <button id="inflight-body-limit-save" type="button" data-i18n="api_save" disabled>Save</button>
+              <button id="inflight-body-limit-default" type="button" data-i18n="limit_default" disabled>Use default</button>
+            </div>
+            <p id="inflight-body-limit-note" class="hint" role="status"></p>
+          </div>
+        </details>
 
         <section class="panel dashboard-section" id="settings-preferences" aria-labelledby="preferences-heading">
           <h2 id="preferences-heading" data-i18n="preferences_heading">SAVE &amp; RESTORE</h2>

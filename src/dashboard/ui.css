@@ -795,6 +795,9 @@ input[role="switch"]:disabled { opacity: .5; cursor: wait; }
 .http-error-table :is(th,td) { text-align: right; white-space: normal; padding-block: 4px; font-variant-numeric: tabular-nums; }
 .http-error-grid { display: none; }
 .request-limits-line { display: flex; flex-wrap: wrap; gap: 4px 10px; }
+.request-limit { margin-top: 14px; }
+.request-limit > label { display: block; color: var(--muted); font-size: 12px; }
+.request-limit .section-actions { margin-top: 7px; }
 .recent-request-duration { text-align: right; font-variant-numeric: tabular-nums; }
 @media (max-width: 620px) {
   .http-error-table { display: none; }

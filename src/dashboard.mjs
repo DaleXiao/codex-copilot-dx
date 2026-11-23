@@ -25,6 +25,7 @@ const ASSETS = new Map([
   ["/animation.js", ["./dashboard/animation.js", "text/javascript; charset=utf-8"]],
   ["/ui.js", ["./dashboard/ui.js", "text/javascript; charset=utf-8"]],
   ["/preferences.js", ["./dashboard/preferences.js", "text/javascript; charset=utf-8"]],
+  ["/bark.js", ["./dashboard/bark.js", "text/javascript; charset=utf-8"]],
   ["/features.js", ["./dashboard/features.js", "text/javascript; charset=utf-8"]],
   ["/applications.js", ["./dashboard/applications.js", "text/javascript; charset=utf-8"]],
   ["/console.js", ["./dashboard/console.js", "text/javascript; charset=utf-8"]],
@@ -37,7 +38,11 @@ let bundle;
 function assets() {
   bundle ||= Promise.all([...ASSETS].map(async ([name, [file, type]]) => {
     let body = await readFile(new URL(file, import.meta.url));
-    if (name === "/") body = Buffer.from(body.toString().replace(/(src|href)="(\/[a-z-]+\.(?:js|css))"/g, `$1="$2?v=${ADAPTER_VERSION}"`));
+    if (name === "/") {
+      const icon = await readFile(new URL("./dashboard/bark-codex.png", import.meta.url));
+      body = Buffer.from(body.toString().replace("@@BARK_CODEX_PNG@@", "data:image/png;base64," + icon.toString("base64"))
+        .replace(/(src|href)="(\/[a-z-]+\.(?:js|css))"/g, `$1="$2?v=${ADAPTER_VERSION}"`));
+    }
     return [name, { body, type, etag: `"${createHash("sha256").update(body).digest("hex")}"` }];
   })).then(async entries => {
     const installed = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));

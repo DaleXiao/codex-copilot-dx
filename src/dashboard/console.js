@@ -87,6 +87,7 @@
     selectAnimation: theme => animationView.select(theme),
     refreshAnimation() { dashboardRefresh.invalidate("animation");if (current === "system") void dashboardRefresh.refresh("animation", { force: true }); } });
   globalThis.ccdxSettingsPreferences = preferences;
+  const bark = globalThis.ccdxBarkSettings?.create({ element: el, api });
   const features = globalThis.ccdxDashboardFeatures?.create({ element: el, api, apply: applySettings, change, localize: label });
   const applications = globalThis.ccdxApplications?.create({ element: el, change, localize: label, isBusy: () => settingsPending });
   globalThis.ccdxApplicationControls = applications;
@@ -193,7 +194,7 @@
       }
     }
     el("process-notice").textContent = data.terminal?.last_notice || "";
-    preferences?.sync(data, meta);
+    preferences?.sync(data, meta);bark?.sync(data.bark);
     applications?.sync(data);
   }
   window.addEventListener("ccdx:connections", event => { if (current === "codex" && event.detail?.imageChanged) void loadSettings(); });

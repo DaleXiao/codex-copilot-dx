@@ -12,14 +12,16 @@ import { predictionControlSnapshot, controlPrediction } from "./prediction-contr
 import { imageSetupSummary, configureImageSetup } from "./image-setup.mjs";
 import { createApplicationControl } from "./application-control.mjs";
 import { openCodex, autoLaunchEnabled } from "./launcher.mjs";
+import { createBarkNotifications } from "./bark-notifications.mjs";
 
 export function createServiceControl({ env = process.env, home, platform = process.platform, providerRuntime, clientIntegration, terminal,
   nightlyStatus = () => null, nightlyChanged = () => {},
   manualUpdate, predictionControl = controlPrediction, imageControl = configureImageSetup, imageHostControl = controlImage, codexLaunchControl = controlCodexLaunch,
   clientVersions, applicationControlFactory = createApplicationControl,
-  adapterPort = 2026, adapterHost = "127.0.0.1",
+  adapterPort = 2026, adapterHost = "127.0.0.1", bark,
   readImages = () => imageSetupSummary({ env, home }).configured, readPrediction = () => readPredictionSettings({ env, home }) } = {}) {
   const options = { env, home, platform };
+  const notifications = bark ?? createBarkNotifications(options);
   const imageHostState = createImageHostState();
   const applicationControl = applicationControlFactory({ ...options, providerRuntime, clientIntegration, imageHostState, port: adapterPort, host: adapterHost,
     async openCodexApp() {
@@ -44,7 +46,7 @@ export function createServiceControl({ env = process.env, home, platform = proce
     const enabled = nightlyUpdatePreference(options), nightly = nightlyStatus();
     const localPrivacy = providerRuntime?.privacy?.snapshot();
     return { source: "service_settings", saved, theme, color_theme, preferences: settingsPreferencesSnapshot(options), local_privacy: localPrivacy,
-      applications: applicationControl.snapshot(),
+      applications: applicationControl.snapshot(), bark: notifications.snapshot(),
       features: { prediction: { ...featureSnapshot(predictionControlSnapshot), bridge: prediction?.bridge || "stopped", active: prediction?.active === true }, image: { ...image, runtime: imageHostState.snapshot() } },
       decoded_body: decodedBodyLimitPreference(options), inflight_body: inflightBodyLimitPreference(options), manual_update: { available: typeof manualUpdate === "function" }, last_operation: lastOperation,
       ...(providerRuntime?.errorCaptureSnapshot ? { error_capture: providerRuntime.errorCaptureSnapshot() } : {}),
@@ -72,11 +74,14 @@ export function createServiceControl({ env = process.env, home, platform = proce
       application: ["action", "id", "operation", "confirmed", "fresh", "expected_pid", "expected_started"],
       update: ["action", "confirmed"], decoded_limit: ["action", "mib"], inflight_body_limit: ["action", "mib"],
       error_capture: ["action", "operation", "source", "model"],
+      bark: ["action", "enabled", "minutes", "title", "body", "url"],
       preferences: ["action", "values", "revision"], reset_preferences: ["action", "revision", "backup_id", "scope"], restore_preferences: ["action", "revision", "backup_id", "scope"],
       provider: ["action", "operation", "provider", "model", "auto_review_model", "auto_review_effort", "account_id"] }[input.action];
     if (!allowed || Object.keys(input).some(key => !allowed.includes(key))) throw new Error("Unknown setting action or field");
     lastOperation = null;
-    if (input.action === "application") {
+    if (input.action === "bark") {
+      await notifications.save(input);
+    } else if (input.action === "application") {
       if (input.fresh !== undefined && typeof input.fresh !== "boolean") throw new Error("Invalid application check");
       if (input.expected_pid !== undefined && (!Number.isSafeInteger(input.expected_pid) || input.expected_pid <= 0 || !Number.isFinite(Date.parse(input.expected_started)))) throw new Error("Invalid application identity");
       lastOperation = { feature: "application", result: await applicationControl.action(input) };
@@ -147,7 +152,7 @@ export function createServiceControl({ env = process.env, home, platform = proce
     }
     return snapshot();
   }
-  return { snapshot, applicationControl, busy: () => pending > 0 || applicationControl.busy?.() === true,
+  return { snapshot, applicationControl, closeNotifications: () => notifications.close(), busy: () => pending > 0 || applicationControl.busy?.() === true,
     async inspectApplication(id, fresh = false) { await applicationControl.check(id, fresh);return snapshot(); },
     action(input) {
     if (input?.action === "client_versions") {

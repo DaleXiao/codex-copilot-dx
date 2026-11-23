@@ -618,7 +618,7 @@ export function createAdapterHandler(options = {}) {
     if (state?.version !== 1) throw new Error("Unsupported service-state version");
     importResponseHistory(state.history);await optionalRoutes.importState(state.optional);
   };
-  handler.cleanup = () => { activityEvents.close();optionalRoutes.dispose();copilotWeb?.close();antigravity?.close();if (!options.providerRuntime?.privacy) privacy.close(); };
+  handler.cleanup = () => { activityEvents.close();optionalRoutes.dispose();options.dashboardOptions?.serviceControl?.closeNotifications?.();copilotWeb?.close();antigravity?.close();if (!options.providerRuntime?.privacy) privacy.close(); };
   return handler;
 }
 

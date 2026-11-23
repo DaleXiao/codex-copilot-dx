@@ -680,6 +680,9 @@ input[role="switch"]:disabled { opacity: .5; cursor: wait; }
 
 /* Settings-page preferences keep their own draft, save and recovery controls. */
 .preferences-status { color:var(--muted); font-size:11px; }
+#bark-heading { display:flex; align-items:center; gap:8px; }
+#bark-settings fieldset { margin:0; padding:0; min-width:0; border:0; }
+#bark-settings .appearance-row input { width:min(100%,340px); }
 .preferences-row { display:flex; align-items:center; justify-content:space-between; gap:20px; padding:12px 0; font-size:13px; }
 .preferences-row:last-of-type { padding-bottom:0; }
 .preferences-row .hint { margin-top:5px; }

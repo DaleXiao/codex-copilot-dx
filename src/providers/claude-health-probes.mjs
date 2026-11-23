@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHmac, randomBytes } from "node:crypto";
 import { createAbortAwareSingleflight } from "../bounded-result-cache.mjs";
 import { MAX_UPSTREAM_ERROR_BODY_BYTES, readBoundedResponseText } from "../http-transport.mjs";
 import { safeUpstreamResponseHeaders } from "../upstream-headers.mjs";
@@ -15,14 +15,21 @@ export function isClaudeHealthProbe(body, headers) {
     && SESSION_HEADERS.every(name => !headers[name]);
 }
 
-function reusableMessage(status, text) {
-  if (status !== 200 || Buffer.byteLength(text) > MAX_RETAINED_BYTES) return false;
+function responseShape(status, text) {
+  if (status !== 200) return "http_status";
+  if (Buffer.byteLength(text) > MAX_RETAINED_BYTES) return "too_large";
+  let message;
   try {
-    const message = JSON.parse(text);
-    return message?.type === "message" && message.role === "assistant" && !message.error
-      && ["end_turn", "max_tokens"].includes(message.stop_reason)
-      && Array.isArray(message.content) && message.content.some(part => part?.type === "text" && typeof part.text === "string");
-  } catch { return false; }
+    message = JSON.parse(text);
+  } catch { return "invalid_message"; }
+  if (message?.type !== "message" || message.role !== "assistant" || message.error
+    || !["end_turn", "max_tokens"].includes(message.stop_reason) || !Array.isArray(message.content)) return "invalid_message";
+  if (message.content.some(part => part?.type === "text" && typeof part.text === "string")) return "text";
+  // The startup check uses HTTP success. A valid terminal message can have no visible text.
+  if (!message.content.length) return "empty";
+  if (message.content.every(part => (part?.type === "thinking" && typeof part.thinking === "string")
+    || (part?.type === "redacted_thinking" && typeof part.data === "string"))) return "thinking_only";
+  return "other_content";
 }
 
 function responseHeaders(response) {
@@ -37,6 +44,7 @@ function responseHeaders(response) {
 
 export function createClaudeHealthProbes({ now = () => performance.now() } = {}) {
   const flights = createAbortAwareSingleflight(), recent = new Map();
+  let keySecret;
   function remove(key) {
     clearTimeout(recent.get(key)?.expiry);
     recent.delete(key);
@@ -46,18 +54,22 @@ export function createClaudeHealthProbes({ now = () => performance.now() } = {})
     clear() { for (const key of recent.keys()) remove(key); },
     async run({ url, headers, bodyText, maxResponseBytes, signal, record }, send) {
       signal?.throwIfAborted();
-      // The prepared header set includes the effective credential. The cache
-      // retains only a digest, never any request bytes or header values.
-      const key = createHash("sha256").update(JSON.stringify([url, headers, bodyText])).digest("hex");
+      // Use the complete prepared request, including the effective credential.
+      // Only a short prefix of this provider-instance keyed digest reaches diagnostics.
+      keySecret ??= randomBytes(32);
+      const key = createHmac("sha256", keySecret).update(JSON.stringify([url, headers, bodyText])).digest("hex");
       const at = now();
       for (const [id, result] of recent) if (at - result.at >= REUSE_MS) remove(id);
       const owner = Symbol();
-      const result = recent.get(key) || await flights.run(key, async signal => {
+      const retained = recent.get(key);
+      const result = retained || await flights.run(key, async signal => {
         const response = await send(signal);
         const text = await readBoundedResponseText(response, { signal, label: "Claude health check response",
           maxBytes: response.ok ? maxResponseBytes : MAX_UPSTREAM_ERROR_BODY_BYTES });
-        const result = { owner, status: response.status, headers: responseHeaders(response), text, at: now(), usageRecorded: false };
-        if (reusableMessage(result.status, text)) {
+        const shape = responseShape(response.status, text);
+        const stored = ["text", "empty", "thinking_only"].includes(shape);
+        const result = { owner, status: response.status, headers: responseHeaders(response), text, at: now(), shape, stored, usageRecorded: false };
+        if (stored) {
           remove(key);
           result.expiry = setTimeout(() => remove(key), REUSE_MS);
           result.expiry.unref?.();
@@ -67,8 +79,12 @@ export function createClaudeHealthProbes({ now = () => performance.now() } = {})
         return result;
       }, { signal });
       signal?.throwIfAborted();
+      const reused = owner !== result.owner;
       record({
-        reused: owner !== result.owner,
+        reused,
+        state: retained ? "reused_recent" : reused ? "reused_inflight" : result.stored ? "stored" : "not_stored",
+        shape: result.shape,
+        group: key.slice(0, 16),
         claimUsage() {
           if (result.usageRecorded) return false;
           result.usageRecorded = true;

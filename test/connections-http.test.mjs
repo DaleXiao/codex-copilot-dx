@@ -381,9 +381,10 @@ test("authenticated Claude App health probes share a real result without caching
       if (init.method === "GET") return Response.json({ data: [{ id: "demo" }] });
       calls++;
       if (warming) { entered.resolve();await release.promise; }
-      return status === 429 ? Response.json({ type: "error", error: { type: "rate_limit_error" } }, { status })
+      return status === 429 ? Response.json({ type: "error", error: { type: "rate_limit_error" } }, { status, headers: { "retry-after": "2" } })
         : Response.json({ id: "msg_synthetic", type: "message", role: "assistant", model: "demo", stop_reason: "max_tokens",
-          content: [{ type: "text", text: "." }], usage: { input_tokens: 1, output_tokens: 1 } });
+          content: [{ type: "thinking", thinking: "synthetic-probe-output", signature: "synthetic-probe-signature" }],
+          usage: { input_tokens: 1, output_tokens: 1 } });
     } }) }) });
   const server = http.createServer((req, res) => handler(req, res));
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
@@ -409,13 +410,25 @@ test("authenticated Claude App health probes share a real result without caching
   assert.equal(calls, 1);
   const after = await state(), timeline = after.providers.claude.requests.performance.recent_requests;
   assert.equal(timeline.filter(row => row.purpose === "diagnostic").length, 2);
-  assert.equal(timeline.filter(row => row.context.health_probe_reused === 1 && row.upstream_attempts === 0).length, 1);
+  const stored = timeline.find(row => row.context.health_probe_state === "stored");
+  const reused = timeline.find(row => row.context.health_probe_reused === 1 && row.upstream_attempts === 0);
+  assert.ok(stored && reused);
+  assert.match(reused.context.health_probe_state, /^reused_(recent|inflight)$/);
+  assert.equal(stored.context.health_probe_shape, "thinking_only");
+  assert.equal(reused.context.health_probe_group, stored.context.health_probe_group);
+  assert.doesNotMatch(JSON.stringify(timeline), /synthetic-probe-(output|signature)/);
   await (await run("A normal short conversation")).json();
   await (await run("A normal short conversation")).json();
   assert.equal(calls, 3);
   status = 429;
-  const refused = await run(".", "2026-01-01");
+  const refused = await run(".", "2026-10-21");
   assert.equal(refused.status, 429);
+  assert.equal(refused.headers.get("retry-after"), "2");
   assert.equal((await refused.json()).error.type, "rate_limit_error");
   assert.equal(calls, 4);
+  const latest = (await state()).providers.claude.requests.performance.recent_requests;
+  const failure = latest.find(row => row.context.health_probe_shape === "http_status");
+  assert.equal(failure.context.health_probe_state, "not_stored");
+  assert.notEqual(failure.context.health_probe_group, stored.context.health_probe_group);
+  assert.equal(latest.filter(row => row.purpose === "conversation").every(row => row.context.health_probe_state === undefined), true);
 });

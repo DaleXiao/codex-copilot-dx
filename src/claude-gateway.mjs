@@ -265,6 +265,7 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
         if (healthProbe) {
           context.purpose = "diagnostic";
           tracker?.setPurpose("diagnostic");
+          markRequestObservation({ health_probe_state: "recognized" });
         }
         if (resolveRequest) {
           const resolved = await resolveRequest(body, req);
@@ -309,7 +310,8 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
         const callOptions = { headers: req.headers, countTokens, signal: abort.signal, sourceBodyManaged: true,
           ...(healthProbe ? { onClaudeHealthProbe(result) {
             context.claudeHealthProbe = result;
-            if (result.reused) markRequestObservation({ health_probe_reused: 1 });
+            markRequestObservation({ health_probe_state: result.state, health_probe_shape: result.shape,
+              health_probe_group: result.group, ...(result.reused ? { health_probe_reused: 1 } : {}) });
           } } : {}),
           onUpstreamErrorHeaders(status) { upstreamHeadersObserved = true;tracker?.upstreamHeaders(status);body = null;release();release = () => {}; },
           onCountObservation(value) {

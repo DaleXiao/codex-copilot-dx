@@ -1,20 +1,28 @@
 import fs from "node:fs";
 import files from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { createHash, randomBytes } from "node:crypto";
 import { createApiSecretStore } from "./api-secrets.mjs";
 import { atomicWriteFileSync } from "./atomic-file.mjs";
 import { codexPaths } from "./codex-paths.mjs";
+import { claudeClientPaths } from "./claude-client-config.mjs";
 import { withFileLockSync } from "./lock.mjs";
-import { readBoundedFileSync } from "./bounded-file.mjs";
+import { readBoundedFile, readBoundedFileSync } from "./bounded-file.mjs";
 import { readBoundedResponseText } from "./http-transport.mjs";
 import { userSettingsPath } from "./user-settings.mjs";
 
-const DEFAULTS = { enabled: false, minutes: 30, title: "", body: "" };
+const DEFAULTS = { enabled: false, minutes: 30, title: "", body: "", language: "en" };
 const ID = /^[a-zA-Z0-9-]{1,120}$/;
 const ROLLOUT = /^rollout-[^/\\]+\.jsonl$/;
+const CLAUDE_SESSION = /^local_[0-9a-f-]{36}\.json$/i;
 const MB = 1024 * 1024;
-const ICON = "https://cdn.jsdelivr.net/npm/@lobehub/icons-static-png/light/codex-color.png";
+const ICONS = "https://cdn.jsdelivr.net/npm/@lobehub/icons-static-png/light/";
+const APPS = {
+  codex: { name: "Codex", icon: "codex-color.png" },
+  claude_app: { name: "Claude", icon: "claude-color.png" },
+  antigravity: { name: "Antigravity", icon: "antigravity-color.png" },
+};
 
 function invalid() { return new Error("ccdx_bark_invalid"); }
 
@@ -65,16 +73,87 @@ async function completions(file, since) {
         || turn.root_turn_id && turn.root_turn_id !== turn.turn_id
         || turn.status != null && turn.status !== "completed") return [];
       const id = createHash("sha256").update(meta.payload.id + "/" + turn.turn_id).digest("hex");
-      return [{ id, time, duration: turn.duration_ms }];
+      return [{ id, time, duration: turn.duration_ms, application: "codex" }];
     });
   } finally { await handle.close(); }
 }
 
-export function createBarkNotifications({ env = process.env, home, platform = process.platform, fetchImpl = fetch,
+async function claudeCompletion(file, since, previousCount) {
+  const session = record(await readBoundedFile(file, { encoding: "utf8", maxBytes: MB }));
+  if (!session || path.basename(file) !== session.sessionId + ".json") return null;
+  const count = session.completedTurns ?? 0;
+  if (!Number.isSafeInteger(count) || count < 0) return null;
+  const start = session.latestUserFrameAt, time = session.lastTurnEdgeAt;
+  // Claude Desktop's Code mode increments completedTurns only on a successful SDK result.
+  const advanced = previousCount === undefined ? count === 1 && session.createdAt >= since : count > previousCount;
+  if (!advanced || session.spawnedFrom || session.lastTurnCutShort || session.lastTurnStopped || session.interruptedAwaitingPerson
+    || !Number.isSafeInteger(start) || !Number.isSafeInteger(time) || time < since || time <= start
+    || Number.isSafeInteger(session.errorAt) && session.errorAt >= start) return { count };
+  const id = createHash("sha256").update("claude_app/" + session.sessionId + "/" + count).digest("hex");
+  return { count, event: { id, time, duration: time - start, application: "claude_app" } };
+}
+
+function notificationMessage(settings, event) {
+  const { name, icon } = APPS[event.application];
+  const zh = settings.language === "zh";
+  return { title: settings.title || (zh ? name + " 任务完成" : name + " task completed"),
+    body: settings.body || (zh ? "一个 " + name + " 任务已完成。" : "A " + name + " task has finished."),
+    icon: ICONS + icon, group: "CCDX" };
+}
+
+async function antigravityCompletion(file, size, row, since) {
+  const handle = await files.open(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+  try {
+    const tail = Buffer.alloc(Math.min(size, MB));
+    const offset = size - tail.length;
+    const read = await handle.read(tail, 0, tail.length, offset);
+    const lines = tail.subarray(0, read.bytesRead).toString("utf8").split("\n");
+    if (offset) lines.shift();
+    if (lines.pop() !== "") return null;
+    const end = record(lines.pop());
+    // An idle summary alone also occurs on errors, interruption or overdue background work.
+    if (end?.type !== "PLANNER_RESPONSE" || end.source !== "MODEL" || end.status !== "DONE"
+      || !Number.isSafeInteger(end.step_index) || end.step_index + 1 !== row.step_count
+      || typeof end.content !== "string" || !end.content.trim()
+      || end.tool_calls != null && (!Array.isArray(end.tool_calls) || end.tool_calls.length)) return null;
+    const input = lines.map(record).findLast(step => step?.type === "USER_INPUT");
+    const startIndex = row.last_user_input_step_index === -1 ? 0 : row.last_user_input_step_index;
+    if (end.step_index <= startIndex || (input ? input.step_index !== startIndex : !offset || row.last_user_input_step_index < 0)) return null;
+    // Long turns may have pushed their input row out of the bounded transcript tail.
+    const time = Date.parse(end.created_at), start = Date.parse(input?.created_at ?? row.last_user_input_time);
+    if (!Number.isFinite(time) || !Number.isFinite(start) || time < since || time < start
+      || Date.parse(row.last_modified_time) < time) return null;
+    const id = createHash("sha256").update("antigravity/" + row.conversation_id + "/" + startIndex).digest("hex");
+    return { id, time, duration: time - start, application: "antigravity" };
+  } finally { await handle.close(); }
+}
+
+async function antigravityIdleConversations(root) {
+  const file = path.join(root, "conversation_summaries.db");
+  if (!(await files.lstat(file)).isFile()) return [];
+  const { DatabaseSync } = await import("node:sqlite");
+  const db = new DatabaseSync(file, { readOnly: true });
+  try {
+    return db.prepare(`SELECT conversation_id, last_user_input_step_index, last_user_input_time, last_modified_time, step_count
+      FROM conversation_summaries
+      WHERE status = 'CASCADE_RUN_STATUS_IDLE' AND not_fully_idle = 0 AND killed = 0
+        AND nesting_depth = 0 AND COALESCE(parent_conversation_id, '') = ''
+      ORDER BY last_modified_time DESC LIMIT 256`).all();
+  } finally { db.close(); }
+}
+
+export function createBarkNotifications({ env = process.env, home = os.homedir(), platform = process.platform, fetchImpl = fetch,
   secretStore = createApiSecretStore({ env, home, platform }), now = Date.now, scanIntervalMs = 10000 } = {}) {
   const folder = path.dirname(userSettingsPath({ env, home }));
   const file = path.join(folder, "bark.json"), ledger = path.join(folder, "bark-delivered.json");
-  const sessions = path.join(codexPaths({ env, home }).directory, "sessions");
+  const claude = claudeClientPaths({ env, home, platform });
+  const sources = [
+    { directory: path.join(codexPaths({ env, home }).directory, "sessions"), pattern: ROLLOUT, application: "codex" },
+    ...[...new Set([claude.threep, claude.normal])].map(file => ({
+      directory: path.join(path.dirname(file), "claude-code-sessions"), pattern: CLAUDE_SESSION, application: "claude_app",
+    })),
+  ];
+  const antigravity = path.join(home, ".gemini", "antigravity");
   let timer, lastResult = null, closed = false, running = false, watching = false, since = now();
   let settings = readSettings();
   const scanned = new Map();
@@ -85,7 +164,12 @@ export function createBarkNotifications({ env = process.env, home, platform = pr
       if (!value || typeof value.enabled !== "boolean" || !Number.isSafeInteger(value.minutes)
         || value.minutes < 0 || value.minutes > 10080 || typeof value.title !== "string" || typeof value.body !== "string") return { ...DEFAULTS };
       const ref = /^[a-f0-9]{32}$/.test(value.ref || "") ? value.ref : undefined;
-      return { enabled: value.enabled && Boolean(ref), minutes: value.minutes, title: value.title, body: value.body, ref };
+      // 1.4.17 persisted placeholders as text. Only migrate its exact default copy.
+      const legacy = value.language === undefined;
+      const zh = value.language === "zh" || legacy && ["Codex 任务完成", "一个 Codex 长任务已完成。"].some(word => word === value.title || word === value.body);
+      const title = legacy && ["Codex task completed", "Codex 任务完成"].includes(value.title) ? "" : value.title;
+      const body = legacy && ["A long Codex task has finished.", "一个 Codex 长任务已完成。"].includes(value.body) ? "" : value.body;
+      return { enabled: value.enabled && Boolean(ref), minutes: value.minutes, title, body, language: zh ? "zh" : "en", ref };
     } catch { return { ...DEFAULTS }; }
   }
 
@@ -106,42 +190,93 @@ export function createBarkNotifications({ env = process.env, home, platform = pr
     if (running) return;
     running = true;
     const snapshot = settings;
+    let foundSource = false;
     try {
-      const root = await files.realpath(sessions);
+      for (const source of sources) {
+        if (closed || snapshot !== settings) return;
+        const root = await files.realpath(source.directory).catch(() => null);
+        if (!root) continue;
+        foundSource = await scanSource(source, root, snapshot) || foundSource;
+      }
+      if (!closed && snapshot === settings) foundSource = await scanAntigravity(snapshot) || foundSource;
+    } finally {
+      if (snapshot === settings) watching = foundSource;
+      running = false;schedule();
+    }
+  }
+
+  function remember(file, value) {
+    scanned.set(file, value);
+    if (scanned.size > 4096) scanned.delete(scanned.keys().next().value);
+  }
+
+  async function deliver(event, snapshot) {
+    if (closed || snapshot !== settings || event.duration < snapshot.minutes * 60000) return;
+    try {
+      const destination = parseBarkUrl(await secretStore.get(snapshot.ref));
+      if (closed || snapshot !== settings || !claim(event)) return;
+      const result = await fetchImpl(destination.endpoint, {
+        method: "POST", headers: { "Content-Type": "application/json" }, redirect: "error", signal: AbortSignal.timeout(5000),
+        body: JSON.stringify({ device_key: destination.deviceKey, ...notificationMessage(snapshot, event) }),
+      });
+      const reply = await readBoundedResponseText(result, { maxBytes: 4096, label: "Bark response" });
+      if (snapshot === settings) lastResult = result.ok && record(reply)?.code === 200 ? "sent" : "failed";
+    } catch {
+      if (snapshot === settings) lastResult = "failed";
+    }
+  }
+
+  async function scanAntigravity(snapshot) {
+    let root, rows;
+    try {
+      root = await files.realpath(antigravity);
+      rows = await antigravityIdleConversations(root);
+    } catch { return false; }
+    for (const row of rows) {
+      if (closed || snapshot !== settings) break;
+      if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(row.conversation_id || "")
+        || !Number.isSafeInteger(row.last_user_input_step_index) || row.last_user_input_step_index < -1
+        || !(Date.parse(row.last_modified_time) >= since)) continue;
+      const key = "antigravity:" + row.conversation_id;
+      try {
+        const file = path.join(root, "brain", row.conversation_id, ".system_generated", "logs", "transcript.jsonl");
+        if (await files.realpath(file) !== file) continue;
+        const stat = await files.lstat(file);
+        if (!stat.isFile() || !stat.size) continue;
+        // Both files matter: the summary may be written before the final transcript line.
+        const stamp = [row.last_modified_time, row.step_count, stat.ino, stat.size, stat.mtimeMs].join(":");
+        if (scanned.get(key)?.stamp === stamp) continue;
+        const event = await antigravityCompletion(file, stat.size, row, since);
+        if (event) await deliver(event, snapshot);
+        if (snapshot === settings) remember(key, { stamp });
+      } catch { /* The client may be writing or rotating its transcript. */ }
+    }
+    return true;
+  }
+
+  async function scanSource(source, root, snapshot) {
+    try {
       const entries = (await files.readdir(root, { recursive: true, withFileTypes: true }))
-        .filter(entry => entry.isFile() && ROLLOUT.test(entry.name)).sort((a, b) => b.name.localeCompare(a.name)).slice(0, 4096);
+        .filter(entry => entry.isFile() && source.pattern.test(entry.name)).sort((a, b) => b.name.localeCompare(a.name)).slice(0, 4096);
       if (closed || snapshot !== settings) return;
-      watching = true;
       for (const entry of entries) {
         if (closed || snapshot !== settings) break;
         try {
           const file = path.join(entry.parentPath, entry.name);
           const stat = await files.stat(file);
-          if (stat.mtimeMs < since - 1000) continue;
+          if (source.application === "codex" && stat.mtimeMs < since - 1000) continue;
           const stamp = [stat.ino, stat.size, stat.mtimeMs].join(":");
-          if (scanned.get(file) === stamp) continue;
+          const previous = scanned.get(file);
+          if (previous?.stamp === stamp) continue;
           if (!(await files.realpath(file)).startsWith(root + path.sep)) continue;
-          for (const event of await completions(file, since)) {
-            if (closed || snapshot !== settings || event.duration < snapshot.minutes * 60000) continue;
-            const destination = parseBarkUrl(await secretStore.get(snapshot.ref));
-            if (closed || snapshot !== settings || !claim(event)) continue;
-            const result = await fetchImpl(destination.endpoint, {
-              method: "POST", headers: { "Content-Type": "application/json" }, redirect: "error", signal: AbortSignal.timeout(5000),
-              body: JSON.stringify({ device_key: destination.deviceKey, title: snapshot.title || "Codex task completed",
-                body: snapshot.body || "A long Codex task has finished.", icon: ICON, group: "CCDX" }),
-            });
-            // Bark can report an application error with HTTP success.
-            const reply = await readBoundedResponseText(result, { maxBytes: 4096, label: "Bark response" });
-            if (snapshot === settings) lastResult = result.ok && record(reply)?.code === 200 ? "sent" : "failed";
-          }
-          if (snapshot === settings) {
-            scanned.set(file, stamp);
-            if (scanned.size > 4096) scanned.delete(scanned.keys().next().value);
-          }
-        } catch (error) { if (error.code !== "ENOENT" && snapshot === settings) lastResult = "failed"; }
+          const claude = source.application === "claude_app" ? await claudeCompletion(file, since, previous?.count) : null;
+          const events = source.application === "codex" ? await completions(file, since) : claude?.event ? [claude.event] : [];
+          for (const event of events) await deliver(event, snapshot);
+          if (snapshot === settings) remember(file, { stamp, count: claude?.count });
+        } catch { /* The client may be writing or rotating its session file. */ }
       }
-    } catch { watching = false; }
-    finally { running = false;schedule(); }
+      return true;
+    } catch { return false; }
   }
 
   function schedule(interval = scanIntervalMs) {
@@ -151,23 +286,23 @@ export function createBarkNotifications({ env = process.env, home, platform = pr
 
   function snapshot() {
     const { enabled, minutes, title, body, ref } = settings;
-    return { enabled, minutes, title, body, configured: Boolean(ref), watching, delivery: lastResult };
+    return { enabled, minutes, title, body, sources: Object.keys(APPS), configured: Boolean(ref), watching, delivery: lastResult };
   }
 
   schedule(0);
   return {
     snapshot,
-    async save({ enabled, minutes, title, body, url = "" }) {
+    async save({ enabled, minutes, title, body, url = "", language = settings.language }) {
       if (typeof enabled !== "boolean" || !Number.isSafeInteger(minutes) || minutes < 0 || minutes > 10080
         || typeof title !== "string" || title.length > 160 || typeof body !== "string" || body.length > 500
-        || typeof url !== "string") throw invalid();
+        || typeof url !== "string" || !["en", "zh"].includes(language)) throw invalid();
       const prior = settings.ref;
       const replacement = url.trim() !== "";
       if (replacement) parseBarkUrl(url);
       if (enabled && !replacement && !prior) throw invalid();
       const ref = replacement ? randomBytes(16).toString("hex") : prior;
       if (replacement) await secretStore.set(ref, url.trim());
-      const next = { enabled, minutes, title: title.trim(), body: body.trim(), ref };
+      const next = { enabled, minutes, title: title.trim(), body: body.trim(), language, ref };
       try {
         fs.mkdirSync(folder, { recursive: true, mode: 0o700 });
         atomicWriteFileSync(file, JSON.stringify(next), { mode: 0o600 });

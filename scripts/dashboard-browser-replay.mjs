@@ -977,10 +977,24 @@ try {
         assert.equal(await page.locator("#preferences-auto").isChecked(), true);
         assert.equal(await page.locator("#privacy-settings").evaluate(node => node.previousElementSibling.id), "version-updates");
         assert.equal(await page.locator("#settings-preferences").evaluate(node => node.previousElementSibling.id), "request-limits");
+        const barkPanel = page.locator("#bark-notifications");
+        assert.equal(await barkPanel.evaluate(node => node.open), false);
+        assert.equal(await page.locator("#bark-settings").isVisible(), false);
+        const barkTitle = barkPanel.locator("summary");
+        await barkTitle.press("Enter");
+        assert.equal(await page.locator("#bark-heading img").count(), 0);
         assert.equal(await page.locator("#bark-enabled").isChecked(), false);
         assert.equal(await page.locator("#bark-minutes").inputValue(), "30");
         assert.equal(await page.locator("#bark-url").getAttribute("type"), "password");
-        await page.waitForFunction(() => document.querySelector("#bark-heading img").naturalWidth > 0);
+        const supportedBark = await page.locator("#bark-sources").innerText();
+        for (const app of [/Codex/, /Claude/, /Antigravity/]) assert.match(supportedBark, app);
+        const barkGeometry = await page.locator("#bark-settings").evaluate(form => {
+          const password = form.elements.url.getBoundingClientRect(), minutes = form.elements.minutes.getBoundingClientRect();
+          const toggle = form.elements.enabled.getBoundingClientRect();
+          const text = form.querySelector(".bark-toggle span").getBoundingClientRect();
+          return { fieldsAligned: Math.abs(password.left - minutes.left) <= 1, switchGap: text.left - toggle.right, fits: password.right <= innerWidth };
+        });
+        assert.equal(barkGeometry.fieldsAligned && barkGeometry.fits && barkGeometry.switchGap <= 20, true);
         for (const value of [45, 30]) {
           await page.locator("#bark-minutes").fill(String(value));
           const savedBark = page.waitForResponse(response => response.url().endsWith("/_ccdx/ui/settings") && response.request().method() === "POST");
@@ -990,6 +1004,7 @@ try {
           assert.equal(serviceControl.snapshot().bark.minutes, value);
           assert.equal(serviceControl.snapshot().bark.enabled, false);
         }
+        await barkTitle.press("Enter");
         await page.locator("#preferences-auto").uncheck();await settlePreferences();
         assert.equal(serviceControl.snapshot().preferences.values.auto_save_settings, false);
         await page.locator("#terminal-color-theme").selectOption("pink");

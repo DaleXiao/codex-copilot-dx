@@ -527,19 +527,22 @@
           <div class="section-actions"><button id="privacy-cancel" type="button" hidden data-i18n="cancel">Cancel</button><button id="privacy-retry" type="button" hidden data-i18n="view_retry">Retry</button><button id="privacy-remove" type="button" hidden data-i18n="privacy_remove">Delete model</button><p id="privacy-error" class="hint" role="alert"></p></div>
         </section>
         <dialog id="privacy-dialog" class="preferences-dialog" aria-labelledby="privacy-dialog-title"><h2 id="privacy-dialog-title" data-i18n="privacy_enable">Local masking</h2><p data-i18n="privacy_download">Downloads about 39 MB plus the local component. Checks may add delay or mistake ordinary text.</p><p data-i18n="privacy_fail_closed">If a check cannot finish, the request is not sent.</p><div class="section-actions"><button id="privacy-dialog-cancel" type="button" data-i18n="cancel">Cancel</button><button id="privacy-dialog-confirm" type="button" data-i18n="privacy_confirm">Download &amp; enable</button></div></dialog>
-        <section class="panel dashboard-section" aria-labelledby="bark-heading">
-          <h2 id="bark-heading"><img src="@@BARK_CODEX_PNG@@" width="24" height="24" alt=""><span data-i18n="bark_heading">Bark notifications</span></h2>
+        <details class="panel dashboard-section" id="bark-notifications">
+          <summary class="panel-heading"><h2 id="bark-heading" data-i18n="bark_heading">Bark notifications</h2></summary>
           <form id="bark-settings">
             <fieldset disabled>
-              <div class="setting-row"><label for="bark-enabled" data-i18n="bark_enable">Notify when a Codex task finishes</label><input id="bark-enabled" name="enabled" type="checkbox"></div>
-              <div class="appearance-row"><label for="bark-url" data-i18n="bark_url">Bark URL with key</label><input id="bark-url" name="url" type="password" maxlength="2048" autocomplete="off" spellcheck="false"></div>
-              <div class="appearance-row"><label for="bark-minutes" data-i18n="bark_minutes">Minimum duration (minutes)</label><input id="bark-minutes" name="minutes" type="number" min="0" max="10080" step="1" value="30" required></div>
-              <div class="appearance-row"><label for="bark-title" data-i18n="bark_title">Notification title</label><input id="bark-title" name="title" maxlength="160" data-i18n-placeholder="bark_title_default" placeholder="Codex task completed"></div>
-              <div class="appearance-row"><label for="bark-body" data-i18n="bark_body">Notification description</label><input id="bark-body" name="body" maxlength="500" data-i18n-placeholder="bark_body_default" placeholder="A long Codex task has finished."></div>
+              <label class="bark-toggle"><input id="bark-enabled" name="enabled" type="checkbox" role="switch"><span data-i18n="bark_enable">Notify when a task finishes</span></label>
+              <p id="bark-sources" class="hint" data-i18n="bark_sources">Supported local clients appear here when settings load.</p>
+              <div class="bark-fields">
+                <label for="bark-url" data-i18n="bark_url">Bark URL with key</label><input id="bark-url" name="url" type="password" maxlength="2048" autocomplete="off" spellcheck="false">
+                <label for="bark-minutes" data-i18n="bark_minutes">Minimum duration (minutes)</label><input id="bark-minutes" name="minutes" type="number" min="0" max="10080" step="1" value="30" required>
+                <label for="bark-title" data-i18n="bark_title">Notification title</label><input id="bark-title" name="title" maxlength="160" data-i18n-placeholder="bark_title_default" placeholder="Automatic">
+                <label for="bark-body" data-i18n="bark_body">Notification description</label><input id="bark-body" name="body" maxlength="500" data-i18n-placeholder="bark_body_default" placeholder="Automatic">
+              </div>
               <div class="section-actions"><button type="submit" data-i18n="api_save">Save</button><span id="bark-status" role="status" aria-live="polite"></span></div>
             </fieldset>
           </form>
-        </section>
+        </details>
 
         <details class="panel dashboard-section" id="request-limits"><summary data-i18n="advanced_limits">Advanced: request limits</summary><div class="section-actions"><label><span data-i18n="decoded_limit">Decoded request limit (MiB)</span><input id="decoded-limit" type="number" min="128" max="512" step="1"></label><button id="decoded-limit-save" type="button" data-i18n="api_save">Save</button><button id="decoded-limit-default" type="button" data-i18n="limit_default">Use default</button></div><p id="decoded-limit-note" class="hint" role="status"></p><div class="section-actions"><label><span data-i18n="inflight_body_limit">Shared request-body limit (MiB)</span> <input id="inflight-body-limit" type="number" min="32" max="128" step="1" required aria-describedby="inflight-body-limit-note" disabled></label><button id="inflight-body-limit-save" type="button" data-i18n="api_save" disabled>Save</button><button id="inflight-body-limit-default" type="button" data-i18n="limit_default" disabled>Use default</button></div><p id="inflight-body-limit-note" class="hint" role="status"></p></details>
 

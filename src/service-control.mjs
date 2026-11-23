@@ -74,7 +74,7 @@ export function createServiceControl({ env = process.env, home, platform = proce
       application: ["action", "id", "operation", "confirmed", "fresh", "expected_pid", "expected_started"],
       update: ["action", "confirmed"], decoded_limit: ["action", "mib"], inflight_body_limit: ["action", "mib"],
       error_capture: ["action", "operation", "source", "model"],
-      bark: ["action", "enabled", "minutes", "title", "body", "url"],
+      bark: ["action", "enabled", "minutes", "title", "body", "url", "language"],
       preferences: ["action", "values", "revision"], reset_preferences: ["action", "revision", "backup_id", "scope"], restore_preferences: ["action", "revision", "backup_id", "scope"],
       provider: ["action", "operation", "provider", "model", "auto_review_model", "auto_review_effort", "account_id"] }[input.action];
     if (!allowed || Object.keys(input).some(key => !allowed.includes(key))) throw new Error("Unknown setting action or field");

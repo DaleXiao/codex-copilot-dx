@@ -38,11 +38,7 @@ let bundle;
 function assets() {
   bundle ||= Promise.all([...ASSETS].map(async ([name, [file, type]]) => {
     let body = await readFile(new URL(file, import.meta.url));
-    if (name === "/") {
-      const icon = await readFile(new URL("./dashboard/bark-codex.png", import.meta.url));
-      body = Buffer.from(body.toString().replace("@@BARK_CODEX_PNG@@", "data:image/png;base64," + icon.toString("base64"))
-        .replace(/(src|href)="(\/[a-z-]+\.(?:js|css))"/g, `$1="$2?v=${ADAPTER_VERSION}"`));
-    }
+    if (name === "/") body = Buffer.from(body.toString().replace(/(src|href)="(\/[a-z-]+\.(?:js|css))"/g, `$1="$2?v=${ADAPTER_VERSION}"`));
     return [name, { body, type, etag: `"${createHash("sha256").update(body).digest("hex")}"` }];
   })).then(async entries => {
     const installed = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));

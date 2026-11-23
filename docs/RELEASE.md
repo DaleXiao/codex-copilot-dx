@@ -1,6 +1,6 @@
-# CCDX 1.4.17
+# CCDX 1.4.18
 
-- Identical Claude App startup checks can share a valid response with empty content or thinking only. Local diagnostics identify whether the response was retained or shared, without recording credentials or message contents.
-- System settings can send one Bark notification when a local Codex task finishes after a configurable minimum duration, 30 minutes by default. Use a Bark URL with a device key and optionally set the title and description.
+- Bark settings are collapsed by default. The toggle is beside its label, and fields stay near their labels on wide and narrow screens.
+- Bark recognizes verified local completions from Codex, Claude Desktop Code sessions and Antigravity. Notifications use the icon of the app that actually finished, with app-specific automatic titles and descriptions when those settings are blank.
 
-Unverified: native Claude startup against a live rate-limited source.
+Unverified: real phone delivery and native task replay in Claude Desktop and Antigravity.

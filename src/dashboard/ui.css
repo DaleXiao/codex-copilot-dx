@@ -680,9 +680,24 @@ input[role="switch"]:disabled { opacity: .5; cursor: wait; }
 
 /* Settings-page preferences keep their own draft, save and recovery controls. */
 .preferences-status { color:var(--muted); font-size:11px; }
-#bark-heading { display:flex; align-items:center; gap:8px; }
-#bark-settings fieldset { margin:0; padding:0; min-width:0; border:0; }
-#bark-settings .appearance-row input { width:min(100%,340px); }
+#bark-settings { max-width: 38rem; margin-top: 14px; }
+#bark-notifications:not([open]) #bark-settings { display: none; }
+#bark-settings fieldset { margin: 0; padding: 0; min-width: 0; border: 0; }
+.bark-toggle { display: inline-flex; align-items: center; gap: 10px; min-height: var(--control-height); cursor: pointer; }
+#bark-sources { margin: 4px 0 16px; }
+.bark-fields { display: grid; grid-template-columns: minmax(11rem, max-content) minmax(0, 1fr); align-items: center; gap: 10px 18px; }
+.bark-fields input { box-sizing: border-box; width: 100%; min-width: 0; height: var(--control-height); padding: 7px 9px; font: inherit; color: var(--text); background: var(--page); border: 1px solid var(--border); }
+.bark-fields input[type="number"] { max-width: 8rem; }
+.bark-fields input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+#bark-settings .section-actions { margin-top: 16px; }
+@media (max-width: 640px) {
+  .bark-fields { display: block; }
+  .bark-fields label { display: block; margin-bottom: 6px; }
+  .bark-fields input { display: block; margin-bottom: 12px; }
+}
+@media (pointer: coarse) {
+  .bark-toggle, .bark-fields input { min-height: 44px; }
+}
 .preferences-row { display:flex; align-items:center; justify-content:space-between; gap:20px; padding:12px 0; font-size:13px; }
 .preferences-row:last-of-type { padding-bottom:0; }
 .preferences-row .hint { margin-top:5px; }

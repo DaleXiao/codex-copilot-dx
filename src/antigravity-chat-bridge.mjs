@@ -171,7 +171,7 @@ const validCount = value => Number.isSafeInteger(value) && value >= 0;
 export function mergeChatUsage(previous, value) {
   if (!value || typeof value !== "object") return previous;
   let next = previous;
-  for (const key of ["prompt_tokens", "completion_tokens", "total_tokens"]) {
+  for (const key of ["prompt_tokens", "completion_tokens", "total_tokens", "reasoning_tokens"]) {
     if (validCount(value[key])) (next ||= {})[key] = value[key];
   }
   for (const [key, field] of [["prompt_tokens_details", "cached_tokens"], ["completion_tokens_details", "reasoning_tokens"]]) {
@@ -180,9 +180,13 @@ export function mergeChatUsage(previous, value) {
   return next;
 }
 
+export function chatReasoningTokens(usage) {
+  return usage?.completion_tokens_details?.reasoning_tokens ?? usage?.reasoning_tokens;
+}
+
 function geminiUsage(usage) {
   if (!usage) return {};
-  const result = {}, reasoning = usage.completion_tokens_details?.reasoning_tokens;
+  const result = {}, reasoning = chatReasoningTokens(usage);
   const separateThinking = reasoning !== undefined && usage.completion_tokens !== undefined && reasoning <= usage.completion_tokens;
   const candidates = separateThinking ? usage.completion_tokens - reasoning : usage.completion_tokens;
   for (const [key, value] of [["promptTokenCount", usage.prompt_tokens], ["candidatesTokenCount", candidates],

@@ -4,7 +4,7 @@ import {buildResponsesUsageRecord,recordUsage} from "./usage-store.mjs";
 import {createRequestAbort,abortErrorStatusCode,readJsonBody,readBoundedResponseText,writeOrDrain,httpError,sendJsonError,sendUpstreamError} from "./http-transport.mjs";
 import {safeUpstreamResponseHeaders,upstreamRejectionHeaders} from "./upstream-headers.mjs";
 import {isLoopbackAddress,isLoopbackHostHeader} from "./security.mjs";
-import {antigravityToChat,chatToAntigravity,chatStreamToAntigravity,mergeChatUsage,parseAntigravityJSON} from "./antigravity-chat-bridge.mjs";
+import {antigravityToChat,chatToAntigravity,chatStreamToAntigravity,mergeChatUsage,chatReasoningTokens,parseAntigravityJSON} from "./antigravity-chat-bridge.mjs";
 import {ANTIGRAVITY_MODEL_PREFIX,ANTIGRAVITY_NATIVE_PREFIX,antigravityCopilotModels,hasAntigravityAgentDefault,mergeAntigravityModels} from "./antigravity-models.mjs";
 import {createPrivacyTextFragments} from "./privacy-stream.mjs";
 import {createGoogleResponseObserver,googleUsageEvent} from "./antigravity-usage.mjs";
@@ -336,6 +336,7 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
       markResponseModel(target.model);markRequestObservation({usage_state:"pending",context_window_tokens:target.maxTokens,
         max_output_tokens_requested:request.generationConfig?.maxOutputTokens,
         max_output_tokens_sent:converted.chat.max_completion_tokens??converted.chat.max_tokens,
+        reasoning_effort_sent:converted.chat.reasoning_effort,
         routing_reason:bound?"conversation_model":target.model==="gemini-4-carbon"&&target.effort==="low"?"background_default":"background_available"});
       session=privacy?.prepareSession?await privacy.prepareSession(converted.chat,{protocol:"chat",client:"gemini",signal:abort.signal}):passthrough(converted.chat);
       const callOptions={signal:abort.signal,sourceBodyManaged:true,observeBodyWrite:true,retryOptions:{retries:0},
@@ -410,7 +411,7 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
       if(usageEvent){
         const u=usageEvent.usage,record=buildResponsesUsageRecord({surface:"antigravity",mode:usageMode,model:usageModel,
           response:{id:usageEvent.id,model:usageEvent.model||usageModel,usage:u?{input_tokens:u.prompt_tokens,output_tokens:u.completion_tokens,
-            total_tokens:u.total_tokens,input_tokens_details:u.prompt_tokens_details,output_tokens_details:u.completion_tokens_details}:undefined},
+            total_tokens:u.total_tokens,input_tokens_details:u.prompt_tokens_details,reasoning_output_tokens:chatReasoningTokens(u)}:undefined},
           event:{copilot_usage:usageEvent.copilot_usage}});
         if(record){
           markRequestObservation({input_tokens:record.usage?.input_tokens,cached_input_tokens:record.usage?.cached_input_tokens});

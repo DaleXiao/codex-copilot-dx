@@ -15,9 +15,10 @@ function fixture(saved) {
   const el = id => { if (!elements.has(id)) elements.set(id, node());return elements.get(id); };
   const ctx = { setTransform() {}, clearRect() { draws++; }, beginPath() {}, arc() {}, stroke() {}, fill() {}, closePath() {}, strokeRect() {}, fillRect() {}, moveTo() {}, lineTo() {}, quadraticCurveTo() {} };
   const canvas = el("tool-canvas");canvas.getContext = () => ctx;canvas.parentElement = node();canvas.getBoundingClientRect = () => ({ width: 250, height: 190 });
-  const document = { visibilityState: "visible", documentElement: node(), getElementById: el, createElement: node, addEventListener: (key, fn) => listeners.set(key, fn) };
+  const document = { visibilityState: "visible", documentElement: node(), currentScript: { src: "http://127.0.0.1/dashboard.js?v=fixture" },
+    head: { append(script) { script.listeners.get("load")(); } }, getElementById: el, createElement: node, addEventListener: (key, fn) => listeners.set(key, fn) };
   const motion = { matches: false, addEventListener: (key, fn) => listeners.set("motion", fn) };
-  const context = { document, localStorage: { getItem: () => saved, setItem: (_key, value) => { saved = value; } },
+  const context = { document, URL, localStorage: { getItem: () => saved, setItem: (_key, value) => { saved = value; } },
     performance: { now: () => now }, devicePixelRatio: 2, matchMedia: () => motion,
     getComputedStyle: () => ({ getPropertyValue: () => "#111111" }), addEventListener: (key, fn) => listeners.set(key, fn),
     requestAnimationFrame(fn) { frames.set(++sequence, fn);return sequence; }, cancelAnimationFrame: id => frames.delete(id),

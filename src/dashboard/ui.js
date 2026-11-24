@@ -62,7 +62,8 @@ const sidebarPreference = "ccdx.dashboard.sidebar";
 const sidebarToggle = element("sidebar-toggle");
 const sidebarLinks = element("sidebar-navigation").querySelectorAll("a");
 function setSidebarCollapsed(collapsed) {
-  document.documentElement.toggleAttribute("data-sidebar-collapsed", collapsed);
+  if (collapsed) document.documentElement.dataset.sidebarCollapsed = "true";
+  else delete document.documentElement.dataset.sidebarCollapsed;
   sidebarToggle.setAttribute("aria-expanded", String(!collapsed));
   const label = collapsed ? "sidebar_expand" : "sidebar_collapse";
   localize(sidebarToggle, label, {}, "aria-label");
@@ -80,7 +81,7 @@ sidebarToggle.addEventListener("click", () => {
   try { localStorage.setItem(sidebarPreference, collapsed ? "collapsed" : "expanded"); }
   catch { /* The tab still keeps its own choice. */ }
 });
-globalThis.addEventListener("storage", event => {
+globalThis.addEventListener?.("storage", event => {
   if (event.key === sidebarPreference) setSidebarCollapsed(event.newValue === "collapsed");
 });
 

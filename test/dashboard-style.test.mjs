@@ -36,7 +36,7 @@ test("all native disclosures use one chevron rule without duplicate markers", ()
 });
 
 test("sidebar views keep dedicated business capabilities with their clients", () => {
-  assert.match(html, /<nav aria-label="Navigation"/);
+  assert.match(html, /<nav id="sidebar-navigation" aria-label="Navigation"/);
   for (const route of ["overview", "codex", "claude", "models", "usage", "system"]) {
     assert.match(html, new RegExp('data-route="' + route + '"'));
     assert.match(html, new RegExp('data-view="' + route + '"'));

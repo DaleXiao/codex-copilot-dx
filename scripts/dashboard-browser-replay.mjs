@@ -1265,6 +1265,7 @@ try {
         const antigRow=page.locator("#provider-clients tr").filter({hasText:"Antigravity"});
         await antigRow.waitFor();assert.equal(await antigRow.locator(".state-icon").count(),2,"Antigravity uses the common setup/service status icons");
         assert.equal(await antigRow.locator("td").nth(3).locator(".state-running").count(),1,"Local service does not mean request observation");
+        if (output && language === "zh") await page.screenshot({ path: path.join(output, `${engine}-${palette}-${theme}-${width}-overview.png`), fullPage: true });
         const expandedWidth = (await page.locator("main").boundingBox()).width;
         await sidebarToggle.focus();
         await page.keyboard.press("Enter");
@@ -1283,7 +1284,6 @@ try {
         assert.equal(await sidebarToggle.getAttribute("aria-expanded"), "true");
         assert.equal(await requestLink.getAttribute("aria-current"), "page");
         assert.equal(errors.length, 0, errors.join("\n"));
-        if (output && language === "zh") await page.screenshot({ path: path.join(output, `${engine}-${palette}-${theme}-${width}-overview.png`), fullPage: true });
         results.push({ engine, language, theme, palette, width, passed: true });
         clearTimeout(watchdog);
         await page.close();

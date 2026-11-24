@@ -6,9 +6,8 @@
   const phrase = (key, values = {}) => globalThis.ccdxLanguage.format(key, values);
   const text = (id, key, values) => globalThis.ccdxLanguage.set(el(id), key, values);
   const state = { scene: "idle", style: "production" };
-  const machineAsset = new URL(document.currentScript.src);
-  machineAsset.pathname = "/tool-activity-machines.js";
-  let drawMachine, machineLoad;
+  const dashboardScript = document.currentScript.src;
+  let drawMachine, machineRequested = false;
   try { const saved = localStorage.getItem(storageKey);if (styles.has(saved)) state.style = saved; } catch {}
   const motion = globalThis.matchMedia?.("(prefers-reduced-motion: reduce)") || { matches: false, addEventListener() {} };
   let records = [], fresh = false, supported = false, visible = true, raf = 0, last = 0, start = performance.now(), expiry = null;
@@ -46,11 +45,17 @@
     draw();if (!motion.matches && animating()) raf = requestAnimationFrame(animate);
   }
   function loadMachine() {
-    if (!ctx || state.style === "off" || machineLoad) return;
-    machineLoad = import(machineAsset.href).then(() => {
+    if (!ctx || state.style === "off" || machineRequested) return;
+    machineRequested = true;
+    const asset = new URL(dashboardScript);
+    asset.pathname = "/tool-activity-machines.js";
+    const script = document.createElement("script");
+    script.src = asset.href;
+    script.addEventListener("load", () => {
       drawMachine = globalThis.ccdxToolMachines(ctx);
       refreshAnimation();
-    }).catch(() => { /* Tool records remain available if the drawing script cannot load. */ });
+    }, { once: true });
+    document.head.append(script);
   }
   function category(name) {
     const value = String(name || "").toLowerCase().split(/__|\./).at(-1);

@@ -5,6 +5,7 @@ import {createRequestAbort,abortErrorStatusCode,readJsonBody,readBoundedResponse
 import {safeUpstreamResponseHeaders,upstreamRejectionHeaders} from "./upstream-headers.mjs";
 import {isLoopbackAddress,isLoopbackHostHeader} from "./security.mjs";
 import {antigravityToChat,chatToAntigravity,chatStreamToAntigravity,mergeChatUsage,chatReasoningTokens,parseAntigravityJSON} from "./antigravity-chat-bridge.mjs";
+import {createAntigravityOpaqueReasoning} from "./antigravity-opaque-reasoning.mjs";
 import {ANTIGRAVITY_MODEL_PREFIX,ANTIGRAVITY_NATIVE_PREFIX,antigravityCopilotModels,hasAntigravityAgentDefault,mergeAntigravityModels} from "./antigravity-models.mjs";
 import {createPrivacyTextFragments} from "./privacy-stream.mjs";
 import {createGoogleResponseObserver,googleUsageEvent} from "./antigravity-usage.mjs";
@@ -59,6 +60,7 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
   requestSettings,generationSettings=()=>({ selection:selectedModels(), copilotTimeoutMs, preferred:defaultModel() })}={}) {
   if(![GOOGLE_ORIGIN,"https://cloudcode-pa.googleapis.com"].includes(googleOrigin))throw new Error("Unrecognized Google control origin");
   const acquireControl=createRequestAdmission({maxBytes:4*CONTROL_BODY_BYTES,maxQueued:8});
+  const opaqueReasoning=createAntigravityOpaqueReasoning();
   let active=0,observed=false,catalogModels=null,catalogDefaultSupported=null,catalogDefaultModel=null;const nativeWindows=new Map();
   const counts={total:0,google:0,copilot:0,search:0,images:0,failed:0};
   const handler=async(req,res)=>{
@@ -332,6 +334,13 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
       if(!target)throw httpError(bound?"The conversation model is unavailable for Antigravity":"No eligible Copilot model is available for Antigravity background tasks",503);
       if(body.requestType==="agent")commitBinding=prepareConversationBinding(body,"github",profile,startedAt);
       const stream=method==="streamGenerateContent";usageModel=target.model;usageMode=stream?"sse":"json";usageProvider="github";
+      const conversation=request.labels?.root_cascade_id||request.labels?.cascade_id;
+      const scope=body.requestType==="agent"&&typeof profile==="string"&&profile&&typeof conversation==="string"&&conversation.length<=160
+        ?[profile,target.model,conversation]:null;
+      const onOpaque=scope?(value,ids)=>{
+        if(!abort.signal.aborted)opaqueReasoning.remember(scope,value,ids);
+      }:undefined;
+      const chatCompletions=(input,options)=>client.chatCompletions(scope?opaqueReasoning.attach(scope,input):input,options);
       converted=antigravityToChat(request,{model:target.model,effort:target.effort,reasoningEfforts:target.effort?[target.effort]:[],stream});
       const reasoningEffort=converted.chat.reasoning_effort;
       markResponseModel(target.model);markRequestObservation({usage_state:"pending",context_window_tokens:target.maxTokens,
@@ -347,8 +356,8 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
         }};
       phase="upstream";
       const upstream=compacting&&compaction?await compaction.run({body:session.body,protocol:"chat",scope:JSON.stringify(["gemini","github",compactionProfile()]),source:"github",client:"gemini",
-        inputLimit:target.maxTokens,outputAllowance:session.body.max_completion_tokens||session.body.max_tokens||0,native:client.chatCompletions,options:callOptions,
-        summarize:compactionSummarizer(session.body,"chat",client.chatCompletions,{requireChatDone:true}),onActivity:()=>abort.setTimeout(streamIdleTimeoutMs,"compaction_idle_timeout")}):await client.chatCompletions(session.body,callOptions);
+        inputLimit:target.maxTokens,outputAllowance:session.body.max_completion_tokens||session.body.max_tokens||0,native:chatCompletions,options:callOptions,
+        summarize:compactionSummarizer(session.body,"chat",client.chatCompletions,{requireChatDone:true}),onActivity:()=>abort.setTimeout(streamIdleTimeoutMs,"compaction_idle_timeout")}):await chatCompletions(session.body,callOptions);
       releaseInput();
       markUpstreamHeaders(upstream.status);
       applicationEvidence?.accept(req,"antigravity","inference");
@@ -366,6 +375,9 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
         outcome=result.candidates[0].finishReason==="STOP"?"completed":"incomplete";markResponseTerminal(outcome,geminiTerminalDetails(result.candidates[0].finishReason));
         const response=JSON.stringify({response:session.restoreValue(result)});
         if(commitBinding)await confirmBinding();
+        const choice=data.choices[0];
+        if(onOpaque&&choice.finish_reason==="tool_calls"&&choice.message.tool_calls?.length)
+          onOpaque(choice.message.reasoning_opaque,choice.message.tool_calls.map(call=>call.id));
         res.writeHead(200,{"Content-Type":"application/json"});res.end(response);return;
       }
       if (!upstream.body) {
@@ -376,7 +388,7 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
       const text=session.count?createPrivacyTextFragments(session):{push:value=>value,finish:()=>""};
       res.writeHead(200,{"Content-Type":"text/event-stream","Cache-Control":"no-cache"});
       const emit=chunk=>writeOrDrain(res,"data: "+JSON.stringify(chunk)+"\n\n",{signal:abort.signal});
-      for await(const chunk of chatStreamToAntigravity(upstream,converted.originalNames,{onChunk:()=>abort.setTimeout(streamIdleTimeoutMs,"stream_idle_timeout"),onUsage:captureUsage,onError:(error,detail)=>{
+      for await(const chunk of chatStreamToAntigravity(upstream,converted.originalNames,{onChunk:()=>abort.setTimeout(streamIdleTimeoutMs,"stream_idle_timeout"),onUsage:captureUsage,onOpaque,onError:(error,detail)=>{
         markResponseErrorOrigin("upstream_event");
         const reason=safeUpstreamReason(detail?.code,200,{stream:true})||safeUpstreamReason(detail?.type,200,{stream:true});
         const headers=upstream.headers;

@@ -663,6 +663,14 @@ test("repeated usage rotation seals complete history and an interrupted rotation
     assert.equal((await usageArchiveFiles(file)).length, 3);
     await sealUsageBackup(file);
     assert.equal((await usageArchiveFiles(file)).length, 4);
+    if (process.platform !== "win32") {
+      const backup = await fs.stat(file + ".1", { bigint: true });
+      await fs.chmod(file + ".1", 0o400);
+      const changed = await fs.stat(file + ".1", { bigint: true });
+      assert.notEqual(changed.ctimeNs, backup.ctimeNs);
+      assert.equal(changed.mtimeNs, backup.mtimeNs);
+      assert.equal((await summarizeUsageLogs(file)).totals.total_tokens, 15);
+    }
     await sealUsageBackup(file);
     assert.equal((await usageArchiveFiles(file)).length, 4);
     assert.equal((await summarizeUsageLogs(file)).requests, 5);

@@ -115,6 +115,7 @@ export const MANAGED_COMMANDS = [
   command("app <app> status", "Show configuration, not process liveness", { ...read, "--details": "flag" }),
   ...["open", "focus", "restart", "check"].map(action => command(`app <app> ${action}`, ({ open: "Open the native app or focus its current process", focus: "Focus the current app without relaunching", restart: "Confirm and gracefully reopen the app", check: "Inspect the current app without inference or writes" })[action], { ...read, ...confirm })),
   ...["focus", "restart", "check"].map(action => command(`app antigravity ${action}`, "Control or inspect the current Antigravity app", { ...read, ...confirm })),
+  command("app antigravity stop-hook", "Read a native Stop event from stdin for Bark notifications", {}, () => ({ command: "antigravity-stop-hook" })),
   command("app <app> models", "Show or edit the client's selected model plan", {
     ...read,
     "--edit": "flag",

@@ -292,6 +292,18 @@ New Bark URLs require HTTPS. Existing HTTP addresses remain usable with a settin
 
 CCDX checks local Codex turns, Claude Desktop sessions in Code mode, and Antigravity sessions with a complete local transcript and a fully idle main conversation. Each source must provide matching start and completion evidence. Intermediate API responses, cancelled turns and background subagents are skipped. The notification carries the configured text and a client icon. Prompt and response content stay local, and the push URL stays in the OS credential store. Cloud-only sessions and ordinary Claude Chat and Cowork sessions lack these local completion records.
 
+The Antigravity App can ask CCDX to check for a completed turn immediately with its [official Stop hook](https://antigravity.google/docs/hooks#stop). Merge the following entry into `~/.gemini/config/hooks.json`. Use the absolute path to the `ccdx` launcher if the App does not have it on PATH. If CCDX uses a custom `XDG_CONFIG_HOME`, set the same value in the hook command.
+
+```json
+{
+  "ccdx-bark": {
+    "Stop": [{ "type": "command", "command": "ccdx app antigravity stop-hook", "timeout": 5 }]
+  }
+}
+```
+
+Only a fully idle model stop wakes the reader. The normal scan remains available when the hook is absent or local completion records arrive later. Both paths apply the same duration threshold and deduplication. The hook stores an empty local marker and does not record its input.
+
 Web and terminal colors are independent. Web appearance is browser-local. **Settings → Web appearance → Grid paper** gives the light theme a warm paper color and faint gray grid, with a matching dark variant. The terminal keeps its selected color and animation; NO_COLOR, dumb/non-TTY and narrow output remain supported. Reduced motion disables decorative movement. Closed tabs and hidden views stop scheduled work. Model/usage data loads on demand; the Web UI adds no inference calls.
 
 Activity, flow and current-run counters use one visible-page SSE connection at `/_ccdx/activity`. TUI activity subscribes to the same in-process notifications. Request starts, model/provider selection, first output, retries and completion coalesce within 50 ms; ordinary output chunks do not trigger pushes. A connection starts with current memory-only state, including the existing recent-request limits. Reconnection restores current state and totals; it does not replay animations or recover arbitrary old history. No replay buffer or durable event store is added.

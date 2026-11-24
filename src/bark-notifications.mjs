@@ -11,6 +11,7 @@ import { withFileLockSync } from "./lock.mjs";
 import { readBoundedFile, readBoundedFileSync } from "./bounded-file.mjs";
 import { readBoundedResponseText } from "./http-transport.mjs";
 import { userSettingsPath } from "./user-settings.mjs";
+import { ANTIGRAVITY_STOP_SIGNAL } from "./antigravity-stop-hook.mjs";
 
 const DEFAULTS = { enabled: false, minutes: 30, title: "", body: "", language: "en" };
 const ID = /^[a-zA-Z0-9-]{1,120}$/;
@@ -164,6 +165,7 @@ export function createBarkNotifications({ env = process.env, home = os.homedir()
   const antigravity = path.join(home, ".gemini", "antigravity");
   let timer, lastResult = null, closed = false, running = false, watching = false, since = now();
   let settings = readSettings(), antigravityCatalog, insecureRef;
+  let stopWatcher, antigravityScan;
   const scanned = new Map();
 
   function readSettings() {
@@ -247,7 +249,12 @@ export function createBarkNotifications({ env = process.env, home = os.homedir()
     }
   }
 
-  async function scanAntigravity(snapshot) {
+  function scanAntigravity(snapshot) {
+    antigravityScan ||= readAntigravity(snapshot).finally(() => { antigravityScan = undefined; });
+    return antigravityScan;
+  }
+
+  async function readAntigravity(snapshot) {
     let root, rows;
     try {
       root = await files.realpath(antigravity);
@@ -328,12 +335,28 @@ export function createBarkNotifications({ env = process.env, home = os.homedir()
     if (!closed && settings.enabled) timer = setTimeout(() => { void scan(); }, interval).unref();
   }
 
+  function watchAntigravityStop() {
+    stopWatcher?.close();
+    stopWatcher = undefined;
+    if (!settings.enabled) return;
+    try {
+      const watcher = fs.watch(folder, { persistent: false }, (_event, file) => {
+        if (!closed && settings.enabled && file === ANTIGRAVITY_STOP_SIGNAL) {
+          void scanAntigravity(settings).catch(() => {});
+        }
+      });
+      watcher.on("error", () => watcher.close());
+      stopWatcher = watcher;
+    } catch { /* The regular scan continues when file notifications are unavailable. */ }
+  }
+
   function snapshot() {
     const { enabled, minutes, title, body, ref } = settings;
     return { enabled, minutes, title, body, sources: Object.keys(APPS), configured: Boolean(ref), watching, delivery: lastResult,
       insecure: Boolean(ref && insecureRef?.ref === ref && insecureRef.http) };
   }
 
+  watchAntigravityStop();
   schedule(0);
   return {
     snapshot,
@@ -357,9 +380,11 @@ export function createBarkNotifications({ env = process.env, home = os.homedir()
         throw error;
       }
       if (replacement && prior) await secretStore.remove(prior).catch(() => {});
-      watching = false;lastResult = null;settings = next;since = now();scanned.clear();schedule(0);
+      watching = false;lastResult = null;settings = next;since = now();scanned.clear();
+      watchAntigravityStop();
+      schedule(0);
       return snapshot();
     },
-    close() { closed = true;clearTimeout(timer);secretStore.close?.(); },
+    close() { closed = true;clearTimeout(timer);stopWatcher?.close();secretStore.close?.(); },
   };
 }

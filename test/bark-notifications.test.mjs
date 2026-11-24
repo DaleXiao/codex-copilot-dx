@@ -5,6 +5,8 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
+import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { createBarkNotifications, parseBarkUrl } from "../src/bark-notifications.mjs";
 
 const key = "fixture-bark-device-key";
@@ -104,6 +106,63 @@ test("the same Bark settings use Claude or Antigravity text and icon only after 
     assert.equal(payload.body, "一个 " + name + " 任务已完成。");
   }
   assert.doesNotMatch(JSON.stringify(pushes), /private (user input|reply|preview)/);
+});
+
+test("the native Antigravity Stop command wakes Bark before its regular scan", async t => {
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), "ccdx-bark-stop-hook-"));
+  const env = { XDG_CONFIG_HOME: path.join(home, "settings") };
+  const marker = path.join(env.XDG_CONFIG_HOME, "codex-copilot-dx", "antigravity-stop.signal");
+  const root = path.join(home, ".gemini", "antigravity");
+  const id = "843280ce-4270-4b79-97ae-795a85ea81c4";
+  const logs = path.join(root, "brain", id, ".system_generated", "logs");
+  await fs.mkdir(logs, { recursive: true });
+  const database = new DatabaseSync(path.join(root, "conversation_summaries.db"));
+  database.exec(`CREATE TABLE conversation_summaries (
+    conversation_id TEXT PRIMARY KEY, status TEXT, not_fully_idle INTEGER, killed INTEGER, nesting_depth INTEGER,
+    parent_conversation_id TEXT, last_user_input_step_index INTEGER, last_user_input_time TEXT, last_modified_time TEXT, step_count INTEGER
+  )`);
+  const now = Date.now(), start = new Date(now - 31 * 60000).toISOString(), finish = new Date(now + 1000).toISOString();
+  const pushes = [];
+  const bark = createBarkNotifications({ env, home, now: () => now, scanIntervalMs: 60000,
+    secretStore: { async get() { return url; }, async set() {} },
+    async fetchImpl(_address, init) { pushes.push(JSON.parse(init.body));return Response.json({ code: 200 }); },
+  });
+  t.after(async () => { bark.close();database.close();await fs.rm(home, { recursive: true, force: true, maxRetries: 8 }); });
+  await bark.save({ enabled: true, minutes: 30, title: "", body: "", url });
+  for (let attempt = 0; !bark.snapshot().watching && attempt < 60; attempt++) await delay(20);
+  assert.equal(bark.snapshot().watching, true);
+
+  const run = text => new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [fileURLToPath(new URL("../bin/cli.mjs", import.meta.url)), "app", "antigravity", "stop-hook"],
+      { env: { ...process.env, ...env }, stdio: ["pipe", "pipe", "pipe"] });
+    let output = "";
+    child.stdout.on("data", chunk => { output += chunk; });
+    child.once("error", reject);
+    child.once("close", code => {
+      try { assert.equal(code, 0);assert.deepEqual(JSON.parse(output), { decision: "stop" });resolve(); }
+      catch (error) { reject(error); }
+    });
+    child.stdin.end(text);
+  });
+  const event = { executionNum: 1, terminationReason: "model_stop", fullyIdle: true, conversationId: id, lastUserInput: "private task" };
+  await run("{malformed");
+  await run(JSON.stringify({ ...event, fullyIdle: false }));
+  await run(JSON.stringify({ ...event, terminationReason: "error" }));
+  await assert.rejects(fs.stat(marker), { code: "ENOENT" });
+  await run(JSON.stringify(event));
+  assert.equal(await fs.readFile(marker, "utf8"), "");
+  assert.deepEqual(pushes, []);
+  await fs.writeFile(path.join(logs, "transcript.jsonl"), line({ type: "USER_INPUT", step_index: 0, created_at: start })
+    + line({ type: "PLANNER_RESPONSE", source: "MODEL", status: "DONE", step_index: 1, created_at: finish, content: "private answer" }));
+  database.prepare("INSERT INTO conversation_summaries VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+    .run(id, "CASCADE_RUN_STATUS_IDLE", 0, 0, 0, "", 0, start, finish, 2);
+  await run(JSON.stringify(event));
+  for (let attempt = 0; !pushes.length && attempt < 60; attempt++) await delay(30);
+  assert.equal(pushes[0]?.title, "Antigravity task completed");
+  await run(JSON.stringify(event));
+  await delay(100);
+  assert.equal(pushes.length, 1);
+  assert.doesNotMatch(JSON.stringify(pushes), /private/);
 });
 
 test("Bark is opt-in, applies the minimum whole-turn duration and shares durable deduplication", async t => {

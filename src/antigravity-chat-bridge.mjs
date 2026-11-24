@@ -4,6 +4,7 @@ import { MAX_UPSTREAM_CHAT_SUCCESS_BODY_BYTES } from "./http-transport.mjs";
 import { ToolArgumentDeltaGuard, upstreamChatStreamError } from "./stream-contract.mjs";
 import { observeSourceStreamFailure } from "./source-admission.mjs";
 import { sourceResponseAccepted } from "./source-response.mjs";
+import { MAX_OPAQUE_LENGTH } from "./antigravity-opaque-reasoning.mjs";
 
 const object = value => value !== null && typeof value === "object" && !Array.isArray(value);
 const names = /^[A-Za-z0-9_-]{1,64}$/;
@@ -220,9 +221,9 @@ export function chatToAntigravity(response, originalNames, usage = mergeChatUsag
     ...geminiUsage(usage) };
 }
 
-export async function* chatStreamToAntigravity(response, originalNames, { onChunk, onUsage, onError } = {}) {
+export async function* chatStreamToAntigravity(response, originalNames, { onChunk, onUsage, onError, onOpaque } = {}) {
   if (!response?.body) throw invalid("Upstream Chat stream has no body", 502);
-  const calls = new Map(), data = [], guard = new ToolArgumentDeltaGuard();let done = false, finish = null, usage = null, bytes = 0, visible = false;
+  const calls = new Map(), data = [], guard = new ToolArgumentDeltaGuard();let done = false, finish = null, usage = null, bytes = 0, visible = false, opaque;
   const frame = async function* () {
     if (!data.length) return;
     const raw = data.join("\n");data.length = 0;
@@ -240,6 +241,10 @@ export async function* chatStreamToAntigravity(response, originalNames, { onChun
     if (!choice) return;
     if (choice.finish_reason) { finish = choice.finish_reason;sourceResponseAccepted(response); }
     const delta = choice.delta || {};
+    if (onOpaque && typeof delta.reasoning_opaque === "string" && delta.reasoning_opaque) {
+      // Copilot sends a full replacement value in each such delta.
+      opaque = delta.reasoning_opaque.length <= MAX_OPAQUE_LENGTH ? delta.reasoning_opaque : undefined;
+    }
     for (const [key, thought] of [["reasoning_content", true], ["content", false], ["refusal", false]]) {
       if (delta[key] === undefined || delta[key] === null || delta[key] === "") continue;
       if (typeof delta[key] !== "string") throw invalid("Unsupported upstream Chat stream content", 502);
@@ -289,4 +294,5 @@ export async function* chatStreamToAntigravity(response, originalNames, { onChun
   }
   yield { response: { candidates: [{ index: 0, finishReason }],
     ...geminiUsage(usage) } };
+  if (opaque && finish === "tool_calls") onOpaque(opaque, [...calls.values()].map(call => call.id));
 }

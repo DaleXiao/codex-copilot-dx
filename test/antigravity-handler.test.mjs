@@ -112,6 +112,56 @@ test("Copilot Antigravity streaming keeps parallel calls distinct across separat
   assert.equal((await call(next)).status,200);assert.ok(performance.snapshot().tool_activity.items.every(row=>row.state==="returned"));
 });
 
+test("Copilot tool reasoning returns to its own account, model and complete tool turn", async () => {
+  for (const mode of ["json", "sse", "truncated"]) {
+    const calls = ["read_file", "search_files"].map((name, index) => ({
+      id: "fixture-call-" + index, type: "function", function: { name, arguments: "{}" },
+    }));
+    let profile = "copilot-account-one";
+    const sent = [];
+    const f = fixture({
+      guardSource: async () => profile,
+      client: { async chatCompletions(value) {
+        sent.push(value);
+        if (sent.length > 1) return sse();
+        if (mode === "json") return Response.json({ choices: [{
+          message: { tool_calls: calls, reasoning_opaque: "fixture-sealed" }, finish_reason: "tool_calls",
+        }] });
+        const frames = [
+          { delta: { reasoning_opaque: "fixture-earlier", tool_calls: [{ ...calls[0], index: 0 }] } },
+          { delta: { reasoning_opaque: "fixture-sealed", tool_calls: [{ ...calls[1], index: 1 }] }, finish_reason: "tool_calls" },
+        ];
+        return new Response(frames.map(choice => "data: " + JSON.stringify({ choices: [choice] }) + "\n\n").join("")
+          + (mode === "sse" ? "data: [DONE]\n\n" : ""));
+      } },
+    });
+    const initial = body();
+    initial.request.labels = { root_cascade_id: "fixture-conversation" };
+    initial.request.tools = [{ functionDeclarations: calls.map(call => ({ name: call.function.name })) }];
+    const reply = await invoke(f.handler, initial,
+      mode === "json" ? { url: "/antigravity/v1internal:generateContent" } : {}).done;
+    assert.doesNotMatch(reply.text, /reasoning_opaque|fixture-sealed|fixture-earlier/);
+    if (mode === "truncated") assert.match(reply.text, /ended before completion/);
+    else assert.equal(reply.status, 200);
+    const replay = async ({ model = initial.model, conversation = "fixture-conversation", tools = calls } = {}) => {
+      const request = structuredClone(initial);
+      request.model = model;
+      request.request.labels.root_cascade_id = conversation;
+      request.request.contents.push(
+        { role: "model", parts: tools.map(call => ({ functionCall: { id: call.id, name: call.function.name, args: {} } })) },
+        { role: "user", parts: tools.map(call => ({ functionResponse: { id: call.id, name: call.function.name, response: {} } })) });
+      assert.equal((await invoke(f.handler, request).done).status, 200);
+      return sent.at(-1).messages.find(message => message.role === "assistant").reasoning_opaque;
+    };
+    assert.equal(await replay(), mode === "truncated" ? undefined : "fixture-sealed");
+    assert.equal(await replay({ conversation: "different-conversation" }), undefined);
+    assert.equal(await replay({ model: "ccdx-copilot-gemini-4-argon-high" }), undefined);
+    assert.equal(await replay({ tools: calls.slice(0, 1) }), undefined);
+    profile = "copilot-account-two";
+    assert.equal(await replay(), undefined);
+  }
+});
+
 test("known Google compaction stays on Google and recovers within the same model",async()=>{
   const calls=[],records=[],compaction=createContextCompactionService({recordUsageFn:record=>records.push(record)});
   const f=fixture({compaction,resolveCompactionSource:()=>({source:"google",model:"native-bound-model"}),fetchGoogle:async(url,request)=>{

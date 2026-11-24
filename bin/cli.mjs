@@ -25,6 +25,12 @@ if (CLI.command === "version") {
   console.log(CLI_BANNER);
   process.exit(0);
 }
+if (CLI.command === "antigravity-stop-hook") {
+  const { signalAntigravityStop } = await import("../src/antigravity-stop-hook.mjs");
+  await signalAntigravityStop(process.stdin).catch(() => {});
+  await new Promise(resolve => process.stdout.write('{"decision":"stop"}\n', resolve));
+  process.exit(0);
+}
 if (CLI.command === "manage") {
   try {
     const { runManagementCommand } = await import("../src/cli-management.mjs");

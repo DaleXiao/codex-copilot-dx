@@ -9,7 +9,14 @@ export const USAGE_ARCHIVE_MAX_BYTES = 256 * 1024 * 1024;
 export const USAGE_ARCHIVE_DAYS = 365;
 const archivePattern = /^\d{13}-[a-f0-9]{32}\.jsonl\.gz$/;
 const directoryFor = file => path.resolve(file) + ".archive";
-const identity = stat => createHash("sha256").update([stat.dev, stat.ino, stat.size, stat.ctimeNs].join(":")).digest("hex").slice(0, 32);
+const identity = fields => createHash("sha256").update(fields.join(":")).digest("hex").slice(0, 32);
+// Renames and permission changes can update ctime without changing this generation.
+const backupKey = stat => identity([stat.dev, stat.ino, stat.size, stat.birthtimeNs, stat.mtimeNs]);
+
+function matchingBackup(archive, stat) {
+  const key = backupKey(stat), legacy = identity([stat.dev, stat.ino, stat.size, stat.ctimeNs]);
+  return archive.find(name => name.endsWith("-" + key + ".jsonl.gz") || name.endsWith("-" + legacy + ".jsonl.gz"));
+}
 
 async function segments(file) {
   const directory = directoryFor(file);
@@ -24,8 +31,7 @@ export async function usageArchiveFiles(file) {
 }
 
 export async function archivedUsageBackup(file, archive, stat) {
-  const key = identity(stat ?? await fs.promises.stat(file + ".1", { bigint: true }));
-  return archive.some(name => name.endsWith("-" + key + ".jsonl.gz"));
+  return Boolean(matchingBackup(archive, stat ?? await fs.promises.stat(file + ".1", { bigint: true })));
 }
 
 async function verifyCompressedUsage(file, size, expected) {
@@ -49,8 +55,8 @@ export async function sealUsageBackup(file) {
   const directory = directoryFor(file);
   await fs.promises.mkdir(directory, { recursive: true, mode: 0o700 });
   const archive = await usageArchiveFiles(file);
-  const matching = archive.find(name => name.endsWith("-" + identity(stat) + ".jsonl.gz"));
-  const sealed = matching || path.join(directory, `${Date.now()}-${identity(stat)}.jsonl.gz`);
+  const matching = matchingBackup(archive, stat);
+  const sealed = matching || path.join(directory, `${Date.now()}-${backupKey(stat)}.jsonl.gz`);
   const temporary = path.join(directory, `.seal-${randomUUID()}.tmp`);
   const hash = createHash("sha256");
   try {

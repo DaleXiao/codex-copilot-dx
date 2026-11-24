@@ -1274,10 +1274,11 @@ try {
         assert.equal(await requestLink.getAttribute("title"), language === "zh" ? "请求记录" : "Requests");
         assert.equal(await requestLink.locator("span").evaluate(node => getComputedStyle(node).clipPath), "inset(50%)");
         if (width > 640) assert.ok((await page.locator("main").boundingBox()).width > expandedWidth);
-        await requestLink.click();
+        await nav("requests");
         assert.equal(await requestLink.getAttribute("aria-current"), "page");
         await page.reload();
-        await page.waitForFunction(() => document.documentElement.hasAttribute("data-sidebar-collapsed"));
+        await page.waitForFunction(() => document.documentElement.hasAttribute("data-sidebar-collapsed") &&
+          document.querySelector('#sidebar-navigation a[data-route="requests"]').getAttribute("aria-current") === "page");
         assert.equal(await sidebarToggle.getAttribute("aria-expanded"), "false");
         assert.equal(await requestLink.getAttribute("aria-current"), "page");
         await sidebarToggle.click();

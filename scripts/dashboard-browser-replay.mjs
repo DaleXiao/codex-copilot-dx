@@ -226,6 +226,11 @@ try {
         watchdog.unref();
         page.setDefaultTimeout(15000);
         const errors = [];
+        const machineLoads = [];
+        page.on("request", request => {
+          const url = new URL(request.url());
+          if (url.pathname === "/tool-activity-machines.js") machineLoads.push(url);
+        });
         page.on("pageerror", error => { errors.push(error.message);console.error("Page error:", error.stack || error.message); });
         page.on("response", response => { if (/\.(?:js|css)$/.test(new URL(response.url()).pathname) && response.status() >= 400) errors.push(`Asset ${response.status()}: ${response.url()}`); });
         signin = { source: "account_tools", configured: true, saved: true, login: "synthetic_user", store: "legacy", online: null, checked_at: null, operation: null };
@@ -306,6 +311,11 @@ try {
         };
         const brandIcon = await page.locator(".sidebar-brand #status-icon").boundingBox();
         const brandText = await page.locator(".sidebar-brand .brand-name").boundingBox();
+        const sidebarToggle = page.locator("#sidebar-toggle");
+        const toggleBox = await sidebarToggle.boundingBox();
+        assert.ok(toggleBox && toggleBox.x > brandText.x + brandText.width &&
+          Math.abs(toggleBox.y + toggleBox.height / 2 - brandText.y - brandText.height / 2) <= 1, "Toggle sits to the right of the centered wordmark");
+        assert.equal(machineLoads.length, 0, "Overview does not request the tool animation renderer");
         assert.ok(brandIcon && brandText && Math.abs(brandIcon.y + brandIcon.height / 2 - brandText.y - brandText.height / 2) <= 1,
           "Sidebar brand icon and text must share a vertical center at every viewport");
         if (output && language === "zh" && palette === "mono") await page.locator(".sidebar-brand").screenshot({ path: path.join(output, `${engine}-${width}-${theme}-brand.png`) });
@@ -665,6 +675,9 @@ try {
         if (output && language === "zh" && width === 1280) await page.screenshot({ path: path.join(output, `${engine}-${palette}-${theme}-checks.png`), fullPage: true });
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, "Checks stay within the viewport");
         await nav("requests");
+        await page.waitForFunction(() => typeof globalThis.ccdxToolMachines === "function");
+        assert.equal(machineLoads.length, 1);
+        assert.equal(machineLoads[0].searchParams.get("v"), await page.locator('script[src^="/dashboard.js"]').evaluate(node => new URL(node.src).searchParams.get("v")));
         flowRequests = concurrentFlow().slice(0, 1);await refreshStatus();
         assert.equal(await page.locator("#flow-state .state-progress .state-icon circle").count(), 1, "Active requests use circled ellipsis");
         const singlePaths = await page.locator("#flow-wires path").evaluateAll(nodes => nodes.map(node => node.getAttribute("d")));
@@ -1252,6 +1265,23 @@ try {
         const antigRow=page.locator("#provider-clients tr").filter({hasText:"Antigravity"});
         await antigRow.waitFor();assert.equal(await antigRow.locator(".state-icon").count(),2,"Antigravity uses the common setup/service status icons");
         assert.equal(await antigRow.locator("td").nth(3).locator(".state-running").count(),1,"Local service does not mean request observation");
+        const expandedWidth = (await page.locator("main").boundingBox()).width;
+        await sidebarToggle.focus();
+        await page.keyboard.press("Enter");
+        assert.equal(await sidebarToggle.getAttribute("aria-expanded"), "false");
+        const requestLink = page.locator('#sidebar-navigation a[data-route="requests"]');
+        assert.equal(await requestLink.getAttribute("title"), language === "zh" ? "请求记录" : "Requests");
+        assert.equal(await requestLink.locator("span").evaluate(node => getComputedStyle(node).clipPath), "inset(50%)");
+        if (width > 640) assert.ok((await page.locator("main").boundingBox()).width > expandedWidth);
+        await requestLink.click();
+        assert.equal(await requestLink.getAttribute("aria-current"), "page");
+        await page.reload();
+        await page.waitForFunction(() => document.documentElement.hasAttribute("data-sidebar-collapsed"));
+        assert.equal(await sidebarToggle.getAttribute("aria-expanded"), "false");
+        assert.equal(await requestLink.getAttribute("aria-current"), "page");
+        await sidebarToggle.click();
+        assert.equal(await sidebarToggle.getAttribute("aria-expanded"), "true");
+        assert.equal(await requestLink.getAttribute("aria-current"), "page");
         assert.equal(errors.length, 0, errors.join("\n"));
         if (output && language === "zh") await page.screenshot({ path: path.join(output, `${engine}-${palette}-${theme}-${width}-overview.png`), fullPage: true });
         results.push({ engine, language, theme, palette, width, passed: true });

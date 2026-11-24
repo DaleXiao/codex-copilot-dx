@@ -963,6 +963,8 @@
     "usage_and_diagnostics": ["Usage", "用量统计"],
     "system_and_settings": ["Settings", "设置"],
     "main_navigation": ["Navigation", "页面导航"],
+    "sidebar_collapse": ["Collapse sidebar", "收起侧栏"],
+    "sidebar_expand": ["Expand sidebar", "展开侧栏"],
     "local_control": ["LOCAL CONTROL", "本机控制"],
     "terminal_appearance": ["Terminal appearance", "终端外观"],
     "configuration_observation": ["SETUP AND ACTIVITY", "接入状态"],

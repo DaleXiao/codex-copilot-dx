@@ -6,7 +6,9 @@
   const phrase = (key, values = {}) => globalThis.ccdxLanguage.format(key, values);
   const text = (id, key, values) => globalThis.ccdxLanguage.set(el(id), key, values);
   const state = { scene: "idle", style: "production" };
-  const drawMachine = ctx && globalThis.ccdxToolMachines(ctx);
+  const machineAsset = new URL(document.currentScript.src);
+  machineAsset.pathname = "/tool-activity-machines.js";
+  let drawMachine, machineLoad;
   try { const saved = localStorage.getItem(storageKey);if (styles.has(saved)) state.style = saved; } catch {}
   const motion = globalThis.matchMedia?.("(prefers-reduced-motion: reduce)") || { matches: false, addEventListener() {} };
   let records = [], fresh = false, supported = false, visible = true, raf = 0, last = 0, start = performance.now(), expiry = null;
@@ -39,9 +41,16 @@
   }
   function refreshAnimation() {
     cancelAnimationFrame(raf);raf = 0;
-    root.dataset.paused = String(!shown() || motion.matches || !animating() || state.style === "off");
-    if (!shown() || state.style === "off") return;
+    root.dataset.paused = String(!drawMachine || !shown() || motion.matches || !animating() || state.style === "off");
+    if (!shown() || state.style === "off" || !drawMachine) return;
     draw();if (!motion.matches && animating()) raf = requestAnimationFrame(animate);
+  }
+  function loadMachine() {
+    if (!ctx || state.style === "off" || machineLoad) return;
+    machineLoad = import(machineAsset.href).then(() => {
+      drawMachine = globalThis.ccdxToolMachines(ctx);
+      refreshAnimation();
+    }).catch(() => { /* Tool records remain available if the drawing script cannot load. */ });
   }
   function category(name) {
     const value = String(name || "").toLowerCase().split(/__|\./).at(-1);
@@ -56,6 +65,7 @@
   const sourceName = id => id === "github" ? "GitHub Copilot" : id === "m365" ? "Microsoft 365" : id === "google" ? "Google" : globalThis.ccdxConnectionNames?.[id] || phrase("flow_source_unknown");
   function render(force = false) {
     if (root.closest("[hidden]")) { signature = "";refreshAnimation();return; }
+    loadMachine();
     const time = performance.now();
     if (requestDeadline && time >= requestDeadline) { requests = [];requestDeadline = 0;fresh = false; }
     for (const row of records) if (row.until <= time && pending(row.state)) { row.state = "unknown";row.until = time + 300000; }

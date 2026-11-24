@@ -58,6 +58,32 @@ element("refresh").addEventListener("click", () => {
 });
 document.querySelector(".sidebar-brand").addEventListener("click", animateLogo);
 
+const sidebarPreference = "ccdx.dashboard.sidebar";
+const sidebarToggle = element("sidebar-toggle");
+const sidebarLinks = element("sidebar-navigation").querySelectorAll("a");
+function setSidebarCollapsed(collapsed) {
+  document.documentElement.toggleAttribute("data-sidebar-collapsed", collapsed);
+  sidebarToggle.setAttribute("aria-expanded", String(!collapsed));
+  const label = collapsed ? "sidebar_expand" : "sidebar_collapse";
+  localize(sidebarToggle, label, {}, "aria-label");
+  localize(sidebarToggle, label, {}, "title");
+  for (const link of sidebarLinks) {
+    const name = link.querySelector("span");
+    localize(link, collapsed ? name.dataset.i18n || name.textContent : "", {}, "title");
+  }
+}
+try { setSidebarCollapsed(localStorage.getItem(sidebarPreference) === "collapsed"); }
+catch { setSidebarCollapsed(false); }
+sidebarToggle.addEventListener("click", () => {
+  const collapsed = sidebarToggle.getAttribute("aria-expanded") === "true";
+  setSidebarCollapsed(collapsed);
+  try { localStorage.setItem(sidebarPreference, collapsed ? "collapsed" : "expanded"); }
+  catch { /* The tab still keeps its own choice. */ }
+});
+globalThis.addEventListener("storage", event => {
+  if (event.key === sidebarPreference) setSidebarCollapsed(event.newValue === "collapsed");
+});
+
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 const animationView = globalThis.ccdxViewBoundary.create("animation-settings", () => globalThis.ccdxDashboardAnimation.create({ element, phrase, localize, text, reducedMotion,
   getRefresh: () => dashboardRefresh, document }), ["apply", "load", "save", "sync", "stop", "select"]);

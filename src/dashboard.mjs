@@ -43,8 +43,8 @@ function assets() {
   })).then(async entries => {
     const installed = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
     if (installed.version !== ADAPTER_VERSION) throw new Error("Dashboard files changed; restart CCDX before loading the new dashboard");
-    // Shared globals and their consumers execute together, without partial script loading.
-    const scripts = entries.filter(([name, asset]) => asset.type.startsWith("text/javascript") && !["/language.js", "/theme.js"].includes(name));
+    // The Requests view loads its drawing code separately. Shared view code remains bundled.
+    const scripts = entries.filter(([name, asset]) => asset.type.startsWith("text/javascript") && !["/language.js", "/theme.js", "/tool-activity-machines.js"].includes(name));
     const body = Buffer.concat(scripts.flatMap(([name, asset]) => [Buffer.from("// " + name + "\n"), asset.body, Buffer.from("\n;\n")]));
     return new Map([...entries, ["/dashboard.js", { body, type: "text/javascript; charset=utf-8", etag: `"${createHash("sha256").update(body).digest("hex")}"` }]]);
   }).catch(error => { bundle = null;throw error; });

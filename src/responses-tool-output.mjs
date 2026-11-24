@@ -40,3 +40,38 @@ export function isMissingCallIdError(status, text) {
     || /^Missing required parameter:\s*[`'"]input\[\d+\]\.call_id[`'"]\.?\s*$/i.test(message)
     || /^Invalid Value:\s*[`'"]input\.call_id[`'"]\. Function call output requires call_id\.?\s*$/i.test(message);
 }
+export function regroupKimiImageOutputs(body) {
+  const input = body.input;
+  if (!Array.isArray(input)) return body;
+  let adjusted;
+  for (let index = 0; index < input.length; index++) {
+    if (input[index]?.type !== "function_call" || input[index].name !== "view_image") continue;
+    const start = index;
+    const pending = new Set();
+    while (input[index]?.type === "function_call" && input[index].name === "view_image"
+      && typeof input[index].call_id === "string" && !pending.has(input[index].call_id)) {
+      pending.add(input[index++].call_id);
+    }
+    if (pending.size < 2) { index = Math.max(start, index - 1);continue; }
+    const first = index;
+    const outputs = [], notices = [];
+    for (let at = first; at < input.length && pending.size; at++) {
+      const item = input[at];
+      if (item?.type === "function_call_output" && pending.has(item.call_id)) {
+        pending.delete(item.call_id);
+        outputs.push(item);
+      } else if (outputs.length && item?.type === "message" && item.role === "developer"
+        && (typeof item.content === "string" ? item.content.includes("<image_resize_notice>")
+          : Array.isArray(item.content) && item.content.some(part => part?.type === "input_text" && typeof part.text === "string"
+            && part.text.includes("<image_resize_notice>")))) {
+        notices.push(item);
+      } else break;
+    }
+    if (!pending.size && notices.length) {
+      adjusted ||= input.slice();
+      adjusted.splice(first, outputs.length + notices.length, ...outputs, ...notices);
+    }
+    index = first - 1;
+  }
+  return adjusted ? { ...body, input: adjusted } : body;
+}

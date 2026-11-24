@@ -20,7 +20,7 @@ import { markRequestObservation } from "../stream-performance.mjs";
 import { createAbortAwareSingleflight } from "../bounded-result-cache.mjs";
 import { createApiTokenCounter } from "./api-token-count.mjs";
 import { apiModelDisplay } from "../api-model-display.mjs";
-import { adaptCallLessContext, CALL_LESS_TOOL_RETRIED, normalizeCallLessToolOutputs } from "../responses-tool-output.mjs";
+import { adaptCallLessContext, CALL_LESS_TOOL_RETRIED, normalizeCallLessToolOutputs, regroupKimiImageOutputs } from "../responses-tool-output.mjs";
 import { adaptMessagesToolSchemas, hasRootToolSchema, MESSAGES_TOOL_GUARD } from "../messages-tool-schema.mjs";
 import { loadRuntimeConfig } from "../runtime-config.mjs";
 import { currentRequestContext } from "../request-context.mjs";
@@ -51,6 +51,8 @@ export function createApiProvider({ config, secrets, env = process.env, platform
   const admissionAccount = `api:${config.id}:${config.secret_ref || fingerprint}`;
   const admissionRevision = createHash("sha256").update(JSON.stringify(profiles)).digest("hex");
   const modelsUrl = config.base_url.replace(/\/+$/, "") + "/models", geminiModelsUrl = config.endpoints.gemini && new URL(config.endpoints.gemini).href;
+  const responsesUrl = config.endpoints.responses && new URL(config.endpoints.responses);
+  const kimiResponses = responsesUrl?.origin === "https://api.kimi.com" && responsesUrl.pathname === "/coding/v1/responses";
   const targets = [...Object.values(config.endpoints), modelsUrl];
   if (config.endpoints.messages) targets.push(config.endpoints.messages.replace(/\/+$/, "") + "/count_tokens");
   if (config.endpoints.responses) targets.push(config.endpoints.responses.replace(/\/+$/, "") + "/compact");
@@ -229,6 +231,7 @@ export function createApiProvider({ config, secrets, env = process.env, platform
     getCachedModelEndpoints: id => catalog.find(model => model.id === id)?.supported_endpoints || null,
     async responses(body, options = {}) {
       selected(body.model, "responses");
+      if (kimiResponses) body = regroupKimiImageOutputs(body);
       const prepared = await prepareResponsesPayload(body, { ...options.payloadOptions, assertActive: options.assertActive,
         currentInputStart: options.currentInputStart || 0, signal: options.signal, profiles: options.payloadPrepared ? [] : options.payloadOptions?.profiles,
         skipInitialOptimization: options.payloadPrepared || options.payloadOptions?.skipInitialOptimization });

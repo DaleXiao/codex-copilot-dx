@@ -9,6 +9,41 @@ import { Readable } from 'node:stream';
 import { createUpstreamErrorCapture } from '../src/upstream-error-capture.mjs';
 import { runWithRequestContext } from '../src/request-context.mjs';
 
+test('only Kimi coding Responses groups complete parallel image results around its resize notice', async () => {
+  const call = id => ({ type: 'function_call', name: 'view_image', call_id: id, arguments: '{}' });
+  const output = id => ({ type: 'function_call_output', call_id: id, output: 'fixture-' + id });
+  const notice = { type: 'message', role: 'developer', content: [{ type: 'input_text', text: '<image_resize_notice>fixture</image_resize_notice>' }] };
+  const followup = { type: 'message', role: 'user', content: 'next' };
+  const input = [call('a'), call('b'), output('a'), notice, output('b'), followup];
+  for (const [base, expected] of [
+    ['https://api.kimi.com/coding/v1', [call('a'), call('b'), output('a'), output('b'), notice, followup]],
+    ['https://example.test/v1', input],
+  ]) {
+    let wire;
+    const provider = createApiProvider({
+      config: { id: 'api_kimi', name: 'Fixture', base_url: base, endpoints: { responses: base + '/responses' },
+        secret_ref: 'a'.repeat(32), auth_header: 'bearer', models: [{ id: 'fixture', protocols: ['responses'] }] },
+      env: {}, secrets: { get: async () => 'synthetic-key' }, networkFactory: async () => ({
+        close() {}, async fetch(_url, init) {
+          wire = JSON.parse(init.body).input;
+          return wire[3]?.role === 'developer' && base.includes('api.kimi.com')
+            ? Response.json({ error: { message: 'tool_call_ids did not have response messages' } }, { status: 400 })
+            : Response.json({ id: 'fixture', output: [] });
+        },
+      }),
+    });
+    try {
+      const request = { model: 'fixture', input: structuredClone(input) };
+      assert.equal((await provider.client.responses(request)).status, 200);
+      assert.deepEqual(wire, expected);
+      assert.deepEqual(request.input, input);
+      const split = [call('a'), call('b'), output('a'), notice, followup, output('b')];
+      await provider.client.responses({ model: 'fixture', input: split });
+      assert.deepEqual(wire, split);
+    } finally { provider.close(); }
+  }
+});
+
 test('Messages input-limit failures retain native recovery semantics without exposing vendor prose', async () => {
   let message;const provider=createApiProvider({env:{},secrets:{get:async()=> 'synthetic-key'},config:{id:'api_context',name:'Context',base_url:'https://example.test/v1',endpoints:{messages:'https://example.test/v1/messages'},auth_header:'bearer',secret_ref:'a'.repeat(32),models:[{id:'m',protocols:['messages']}]},
     networkFactory:async()=>({close(){},fetch:async()=>Response.json({error:{type:'invalid_request_error',message}},{status:400})})});

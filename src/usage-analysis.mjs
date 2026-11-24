@@ -1,6 +1,6 @@
 import path from "node:path";
 import fs from "node:fs/promises";
-import { summarizeUsage, summarizeUsageLogs, usageLogPath, usageSummaryVersion, subscribeUsageAppends, usageProvider, mergeUsageSummary } from "./usage-store.mjs";
+import { accumulateUsageRecord, summarizeUsageLogs, usageLogPath, usageSummaryVersion, subscribeUsageAppends, usageProvider } from "./usage-store.mjs";
 import { createUsageAnalytics } from "./usage-analytics.mjs";
 import { createAbortAwareSingleflight } from "./bounded-result-cache.mjs";
 import { createUsageQuery } from "./usage-query.mjs";
@@ -80,11 +80,12 @@ export async function analyzeUsageLogs(filePath = usageLogPath(), { timeZone = "
       cached.analytics.advanceTime(now);
       for (const line of cached.pending) {
         const record = JSON.parse(line);
-        if (provider && provider !== usageProvider(record)) continue;
-        const label = provider ? record.model || "unknown" : `${usageProvider(record)} / ${record.model || "unknown"}`;
+        const source = usageProvider(record);
+        if (provider && provider !== source) continue;
+        const label = provider ? record.model || "unknown" : `${source} / ${record.model || "unknown"}`;
         if (cached.models.size < 100) cached.models.add(label);else if (!cached.models.has(label)) cached.modelsTruncated = true;
         if (!selection.matches(record)) continue;
-        const one = summarizeUsage([record]);mergeUsageSummary(cached.summary, one);cached.analytics.record(record, one);
+        accumulateUsageRecord(cached.summary, record, source, cached.analytics.record);
       }
       cached.pending = [];cached.pendingBytes = 0;
       const snapshot = cached.analytics.snapshot();
@@ -96,7 +97,7 @@ export async function analyzeUsageLogs(filePath = usageLogPath(), { timeZone = "
     cache.delete(query);prune();
     const analytics = createUsageAnalytics({ timeZone, now, qualifyProviders: !provider, from: selection.filters.from, to: selection.filters.to }), models = new Set();
     let warned = false, modelsTruncated = false;
-    const summary = await summarizeUsageLogs(filePath, { provider, onRecord: analytics.record, recordFilter: record => {
+    const summary = await summarizeUsageLogs(filePath, { provider, onRecordTotals: analytics.record, recordFilter: record => {
       const label = provider ? record.model || "unknown" : `${usageProvider(record)} / ${record.model || "unknown"}`;
       if (models.size < 100) models.add(label);else if (!models.has(label)) modelsTruncated = true;
       return selection.matches(record);

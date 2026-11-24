@@ -363,36 +363,52 @@ export function summarizeUsage(records, { provider = "" } = {}) {
   for (const record of records) {
     const source = usageProvider(record);
     if (provider && provider !== source) continue;
-    summary.providers[source] = (summary.providers[source] || 0) + 1;
-    summary.requests += 1;
-    let observed = record.usage;
-    if (observed?.cached_input_tokens != null && observed?.cache_read_input_tokens != null) {
-      observed = { ...observed };delete observed.cache_read_input_tokens;
-      if (cacheReadTokens(record.usage) === undefined) delete observed.cached_input_tokens;
-    }
-    addUsageTotals(summary.totals, observed);
-    if (record.copilot_usage) {
-      summary.totals.copilot_total_tokens = (summary.totals.copilot_total_tokens || 0) + (record.copilot_usage.total_tokens || 0);
-      summary.totals.total_nano_aiu = (summary.totals.total_nano_aiu || 0) + (record.copilot_usage.total_nano_aiu || 0);
-    }
-    const model = record.model || "unknown";
-    if (!Object.hasOwn(summary.byModel, model)) Object.defineProperty(summary.byModel, model, { value: { requests: 0 }, enumerable: true, configurable: true, writable: true });
-    const modelTotals = summary.byModel[model];
-    modelTotals.requests += 1;
-    addUsageTotals(modelTotals, observed);
-    const qualified = `${source} / ${model}`;
-    if (!Object.hasOwn(summary.bySourceModel, qualified)) summary.bySourceModel[qualified] = { requests: 0 };
-    const sourceTotals = summary.bySourceModel[qualified];
-    sourceTotals.requests++;
-    addUsageTotals(sourceTotals, observed);
-    for (const target of [summary.totals, modelTotals, sourceTotals]) {
-      addCacheEvidence(target, record.usage || {});
-    }
+    accumulateUsageRecord(summary, record, source);
   }
   return summary;
 }
 
-async function summarizeUsageLogFiles(filePath, { warn = console.error, onRecord, recordFilter, provider = "" } = {}) {
+function addRecordTotals(totals, record, observed, evidence) {
+  addUsageTotals(totals, observed);
+  if (record.copilot_usage) {
+    const tokens = record.copilot_usage.total_tokens || 0;
+    const nanoAiu = record.copilot_usage.total_nano_aiu || 0;
+    if (Number.isFinite(tokens)) totals.copilot_total_tokens = (totals.copilot_total_tokens || 0) + tokens;
+    if (Number.isFinite(nanoAiu)) totals.total_nano_aiu = (totals.total_nano_aiu || 0) + nanoAiu;
+  }
+  addCacheEvidence(totals, record.usage || {}, evidence);
+}
+
+export function accumulateUsageRecord(summary, record, source, onRecordTotals) {
+  summary.providers[source] = (summary.providers[source] || 0) + 1;
+  summary.requests += 1;
+  const usage = record.usage || {}, evidence = usageCacheEvidence(usage);
+  let observed = record.usage;
+  if (observed?.cached_input_tokens != null && observed?.cache_read_input_tokens != null) {
+    observed = { ...observed };delete observed.cache_read_input_tokens;
+    if (evidence.cached === undefined) delete observed.cached_input_tokens;
+  }
+  addRecordTotals(summary.totals, record, observed, evidence);
+  const model = record.model || "unknown";
+  if (!Object.hasOwn(summary.byModel, model)) Object.defineProperty(summary.byModel, model, { value: { requests: 0 }, enumerable: true, configurable: true, writable: true });
+  const modelTotals = summary.byModel[model];
+  modelTotals.requests += 1;
+  addUsageTotals(modelTotals, observed);
+  const qualified = `${source} / ${model}`;
+  if (!Object.hasOwn(summary.bySourceModel, qualified)) summary.bySourceModel[qualified] = { requests: 0 };
+  const sourceTotals = summary.bySourceModel[qualified];
+  sourceTotals.requests++;
+  addUsageTotals(sourceTotals, observed);
+  addCacheEvidence(modelTotals, usage, evidence);
+  addCacheEvidence(sourceTotals, usage, evidence);
+  if (onRecordTotals) {
+    const totals = {};
+    addRecordTotals(totals, record, observed, evidence);
+    onRecordTotals(record, { totals });
+  }
+}
+
+async function summarizeUsageLogFiles(filePath, { warn = console.error, onRecord, onRecordTotals, recordFilter, provider = "" } = {}) {
   const summary = summarizeUsage([], { provider });
   const archive = await usageArchiveFiles(filePath);
   let archivedBackup = false;
@@ -404,11 +420,15 @@ async function summarizeUsageLogFiles(filePath, { warn = console.error, onRecord
     const compressed = archive.includes(candidate);
     try {
       for await (const record of iterateUsageRecords(candidate, { warn, compressed })) {
-        if (provider && provider !== usageProvider(record)) continue;
+        const source = usageProvider(record);
+        if (provider && provider !== source) continue;
         if (recordFilter && !recordFilter(record)) continue;
-        const one = summarizeUsage([record]);
-        onRecord?.(record, one);
-        mergeUsageSummary(summary, one);
+        if (onRecord) {
+          const one = summarizeUsage([record]);
+          onRecord(record, one);
+          onRecordTotals?.(record, { totals: one.totals });
+          mergeUsageSummary(summary, one);
+        } else accumulateUsageRecord(summary, record, source, onRecordTotals);
       }
     } catch (error) {
       if (!compressed) throw error;
@@ -455,9 +475,9 @@ export async function usageSummaryVersion(filePath, { settled = true } = {}) {
   } catch { return null; } // Uncacheable metadata never replaces the normal read/error path.
 }
 
-export async function summarizeUsageLogs(filePath = usageLogPath(), { warn = console.error, onRecord, recordFilter, provider = "", signal } = {}) {
+export async function summarizeUsageLogs(filePath = usageLogPath(), { warn = console.error, onRecord, onRecordTotals, recordFilter, provider = "", signal } = {}) {
   if (provider && !isProviderId(provider)) throw new Error("Usage provider must be a valid provider ID");
-  if (onRecord || recordFilter || warn !== console.error) return summarizeUsageLogFiles(filePath, { warn, onRecord, recordFilter, provider });
+  if (onRecord || onRecordTotals || recordFilter || warn !== console.error) return summarizeUsageLogFiles(filePath, { warn, onRecord, onRecordTotals, recordFilter, provider });
   const fileVersion = await usageSummaryVersion(filePath);
   const version = fileVersion === null ? null : `${fileVersion}\0${provider}`;
   if (version === null) {
@@ -508,8 +528,8 @@ export function usageCacheHitRate(usage = {}) {
   return cached / input;
 }
 
-function addCacheEvidence(target, usage) {
-  const { cached, unknown, invalid } = usageCacheEvidence(usage);
+function addCacheEvidence(target, usage, evidence = usageCacheEvidence(usage)) {
+  const { cached, unknown, invalid } = evidence;
   if (unknown) target.cache_hit_unknown_requests = (target.cache_hit_unknown_requests || 0) + 1;
   else {
     target.cache_hit_known_requests = (target.cache_hit_known_requests || 0) + 1;

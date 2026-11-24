@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { gzipSync } from "node:zlib";
 import { createUsageQuery } from "../src/usage-query.mjs";
 import { runWithRequestContext, currentRequestContext } from "../src/request-context.mjs";
 
@@ -53,4 +54,29 @@ test("filtered summaries, daily totals and older history agree without losing ot
   const web = await analyzeUsageLogs(file, { now, from: "2026-11-13", to: "2026-11-13", provider: "google", timeZone: "Asia/Shanghai" });
   assert.deepEqual(web.summary, cli);assert.equal(web.summary.requests, 2);
   assert.deepEqual((await analyzeUsageLogs(file, { now, model: "absent" })).summary.requests, 0);
+});
+
+test("archive date pruning retains model choices and invalidates on a late replacement", async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-usage-shard-index-")), file = path.join(dir, "usage.jsonl");
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const folder = file + ".archive", shard = path.join(folder, "1760000000000-" + "0".repeat(32) + ".jsonl.gz");
+  fs.mkdirSync(folder);
+  const old = record("github", "older", "2026-10-01T22:00:00Z");
+  const boundary = record("github", "near-midnight", "2026-11-12T16:00:00Z");
+  const write = rows => fs.writeFileSync(shard, gzipSync(rows.map(row => JSON.stringify(row) + "\n").join("")));
+  write([old]);
+  fs.writeFileSync(file, JSON.stringify(boundary) + "\n");
+  assert.equal((await analyzeUsageLogs(file, { now })).summary.requests, 2);
+  const options = { now, days: "1", timeZone: "Asia/Shanghai", warn() {} };
+  const filtered = await analyzeUsageLogs(file, options);
+  assert.equal(filtered.summary.requests, 1);
+  assert.deepEqual(filtered.analytics.models, ["github / near-midnight", "github / older"]);
+  write([old, record("github", "late", "2026-11-12T16:01:00Z")]);
+  const updated = await analyzeUsageLogs(file, options);
+  assert.equal(updated.summary.requests, 2);
+  assert.deepEqual(updated.analytics.models, ["github / late", "github / near-midnight", "github / older"]);
+  fs.writeFileSync(shard, gzipSync(JSON.stringify(old) + "\n{invalid}\n"));
+  const warnings = [];
+  assert.equal((await analyzeUsageLogs(file, { ...options, warn: message => warnings.push(message) })).summary.requests, 1);
+  assert.ok(warnings.some(warning => warning.includes("invalid record")));
 });

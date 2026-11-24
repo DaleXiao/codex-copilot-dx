@@ -126,7 +126,7 @@ test("Copilot retries a completed bare call with the original tool result and an
   assert.deepEqual(calls[0], body);
   assert.deepEqual(calls[1].input, [load, { ...call, namespace: null }, result]);
   assert.equal(Object.hasOwn(body.input[1], "namespace"), false);
-  for (const input of [[call, result, load], [load, call], [load, { ...call, namespace: "docs" }, result]]) {
+  for (const input of [[call, result, load], [load, result, call], [load, call], [load, { ...call, namespace: "docs" }, result]]) {
     let count = 0;
     const unchanged = await openCopilotResponse({ body: { ...body, input } }, async () => {
       count++;

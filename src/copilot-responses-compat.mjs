@@ -29,7 +29,10 @@ function rejectedBareToolName(status, text) {
 function preserveUnresolvedToolCall(context, status, text) {
   const name = rejectedBareToolName(status, text), input = context.body.input;
   if (!name || context.surface === "responses_compact" || !Array.isArray(input)) return null;
-  const results = new Set(input.filter(item => item?.type === "function_call_output").map(item => item.call_id));
+  const results = new Map();
+  for (const [index, item] of input.entries()) {
+    if (item?.type === "function_call_output") results.set(item.call_id, index);
+  }
   let declared = false, namespaced = false, adjusted;
   function observe(tools) {
     if (!Array.isArray(tools)) return;
@@ -46,7 +49,7 @@ function preserveUnresolvedToolCall(context, status, text) {
   for (const [index, item] of input.entries()) {
     if (item?.type === "additional_tools" || item?.type === "tool_search_output") observe(item.tools);
     if (item?.type !== "function_call" || item.name !== name || item.namespace !== undefined
-      || typeof item.call_id !== "string" || !results.has(item.call_id) || declared || !namespaced) continue;
+      || typeof item.call_id !== "string" || !(results.get(item.call_id) > index) || declared || !namespaced) continue;
     adjusted ||= input.slice();
     adjusted[index] = { ...item, namespace: null };
   }

@@ -97,10 +97,19 @@ export async function analyzeUsageLogs(filePath = usageLogPath(), { timeZone = "
     cache.delete(query);prune();
     const analytics = createUsageAnalytics({ timeZone, now, qualifyProviders: !provider, from: selection.filters.from, to: selection.filters.to }), models = new Set();
     let warned = false, modelsTruncated = false;
-    const summary = await summarizeUsageLogs(filePath, { provider, onRecordTotals: analytics.record, recordFilter: record => {
+    const observeModel = record => {
       const label = provider ? record.model || "unknown" : `${usageProvider(record)} / ${record.model || "unknown"}`;
       if (models.size < 100) models.add(label);else if (!models.has(label)) modelsTruncated = true;
-      return selection.matches(record);
+    };
+    // Keep a day of margin on either side of the civil-date window so all
+    // supported time zones retain boundary records. Unindexed archives scan normally.
+    const { from, to } = selection.filters, day = 86400000;
+    const lower = from ? Date.parse(from) - day : -Infinity;
+    const upper = to ? Date.parse(to) + 2 * day : Infinity;
+    const archiveSelection = { observeModel, excludes: ({ first, last }) =>
+      Boolean(from || to) && (last < lower || first >= upper) };
+    const summary = await summarizeUsageLogs(filePath, { provider, onRecordTotals: analytics.record, archiveSelection, recordFilter: record => {
+      observeModel(record);return selection.matches(record);
     },
       warn(message) { warned = true;warn(message); } });
     const snapshot = analytics.snapshot();

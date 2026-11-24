@@ -181,7 +181,16 @@ export function mergeChatUsage(previous, value) {
 }
 
 export function chatReasoningTokens(usage) {
-  return usage?.completion_tokens_details?.reasoning_tokens ?? usage?.reasoning_tokens;
+  const reasoning = usage?.completion_tokens_details?.reasoning_tokens ?? usage?.reasoning_tokens;
+  return validCount(reasoning) && (!validCount(usage.completion_tokens) || reasoning <= usage.completion_tokens) ? reasoning : undefined;
+}
+
+function emptyChatReply(usage) {
+  const facts = [];
+  if (validCount(usage?.completion_tokens)) facts.push("output tokens: " + usage.completion_tokens);
+  const reasoning = chatReasoningTokens(usage);
+  if (reasoning !== undefined) facts.push("reasoning tokens: " + reasoning);
+  return invalid("Copilot reply contained no text or tool calls" + (facts.length ? " (" + facts.join(", ") + ")" : "") + ".", 502);
 }
 
 function geminiUsage(usage) {
@@ -205,7 +214,8 @@ export function chatToAntigravity(response, originalNames, usage = mergeChatUsag
   if (typeof message.content === "string" && message.content) parts.push({ text: message.content });
   if (Array.isArray(message.tool_calls)) for (const call of message.tool_calls) parts.push(chatFunctionPart(call, originalNames));
   const finish = { stop: "STOP", tool_calls: "STOP", length: "MAX_TOKENS", content_filter: "SAFETY" }[choice.finish_reason];
-  if (!finish || finish === "STOP" && !parts.some(part => !part.thought)) throw invalid("Upstream Chat response did not complete", 502);
+  if (!finish) throw invalid("Upstream Chat response did not complete", 502);
+  if (finish === "STOP" && !parts.some(part => !part.thought)) throw emptyChatReply(usage);
   return { candidates: [{ content: { role: "model", parts }, finishReason: finish, index: 0 }],
     ...geminiUsage(usage) };
 }
@@ -266,9 +276,13 @@ export async function* chatStreamToAntigravity(response, originalNames, { onChun
     if (line.startsWith("data:")) data.push(line.slice(5).replace(/^ /, ""));
   }
   if (!done && data.length) yield* frame();
-  if (!done || !finish) throw invalid("Upstream Chat stream ended before completion", 502);
+  if (!done || !finish) {
+    if (!visible && !calls.size && validCount(usage?.completion_tokens) && usage.completion_tokens > 0) throw emptyChatReply(usage);
+    throw invalid("Upstream Chat stream ended before completion", 502);
+  }
   const finishReason = { stop: "STOP", tool_calls: "STOP", length: "MAX_TOKENS", content_filter: "SAFETY" }[finish];
-  if (!finishReason || finish === "tool_calls" && !calls.size || finish !== "tool_calls" && calls.size || finish === "stop" && !visible)
+  if (finish === "stop" && !visible && !calls.size) throw emptyChatReply(usage);
+  if (!finishReason || finish === "tool_calls" && !calls.size || finish !== "tool_calls" && calls.size)
     throw invalid("Invalid upstream Chat stream completion", 502);
   for (const [, call] of [...calls].sort(([a], [b]) => a - b)) {
     yield { response: { candidates: [{ index: 0, content: { role: "model", parts: [chatFunctionPart(call, originalNames)] } }] } };

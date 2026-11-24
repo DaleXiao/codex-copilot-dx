@@ -5,7 +5,7 @@
     const fieldset = form.querySelector("fieldset"), status = el("bark-status"), fields = form.elements;
     let dirty = false, saving = false, notice;
     const words = (node, key, prop) => globalThis.ccdxLanguage.set(node, key, {}, prop);
-    function sync(data) {
+    function sync(data, justSaved = false) {
       if (!data || dirty || saving) return;
       for (const key of ["minutes", "title", "body"]) fields[key].value = data[key];
       fields.enabled.checked = data.enabled;
@@ -14,7 +14,10 @@
       if (apps) globalThis.ccdxLanguage.set(el("bark-sources"), "bark_active_sources", { apps });
       if (data.configured) words(fields.url, "bark_url_saved", "placeholder");
       else { fields.url.removeAttribute("data-i18n-placeholder");fields.url.placeholder = "https://bark.example/…"; }
-      const message = data.delivery === "sent" ? "bark_sent" : data.delivery === "failed" ? "bark_failed"
+      const transportWarning = el("bark-transport-warning");
+      if (transportWarning) transportWarning.hidden = !data.insecure;
+      const message = justSaved ? "bark_saved" : data.delivery === "sent" ? "bark_sent"
+        : data.delivery === "ledger_failed" ? "bark_ledger_failed" : data.delivery === "failed" ? "bark_failed"
         : data.enabled && !data.watching ? "bark_waiting" : notice;
       if (message) words(status, message);
       else { status.removeAttribute("data-i18n");status.textContent = ""; }
@@ -30,10 +33,13 @@
         data = await api({ action: "bark", enabled: fields.enabled.checked, minutes: fields.minutes.valueAsNumber,
           title: fields.title.value, body: fields.body.value, url: fields.url.value,
           language: document.documentElement.lang.startsWith("zh") ? "zh" : "en" });
-        dirty = false;notice = "api_saved";
-      } catch (error) { words(status, error.message === "ccdx_bark_invalid" ? "bark_invalid" : "bark_save_failed"); }
+        dirty = false;notice = "bark_saved";
+      } catch (error) {
+        words(status, error.message === "ccdx_bark_https_required" ? "bark_https_required"
+          : error.message === "ccdx_bark_invalid" ? "bark_invalid" : "bark_save_failed");
+      }
       finally { saving = false;fieldset.disabled = false; }
-      if (data) sync(data.bark);
+      if (data) sync(data.bark, true);
     });
     return { sync };
   }

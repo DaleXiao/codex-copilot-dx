@@ -297,7 +297,7 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
         if (desktopAliases && !configuredModel) throw Object.assign(new Error("The selected model is unavailable"), { code: "ccdx_api_model_unavailable", statusCode: 400 });
         if (desktopAliases && configuredModel !== model) { clientModel = model;model = configuredModel;body = { ...body, model }; }
         const requestedEffort = body.output_config?.effort;
-        if (!countTokens) body = messagesWithEffortDefault(body, selectedEffortDefault, selectedCapability);
+        if (!countTokens && !healthProbe) body = messagesWithEffortDefault(body, selectedEffortDefault, selectedCapability);
         stats.last_model = model;
         context.model = configuredModel || model;
         if (!countTokens) {

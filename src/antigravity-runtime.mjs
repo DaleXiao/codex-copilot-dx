@@ -33,13 +33,23 @@ export function createAntigravityRuntime({client,models=()=>[],refreshModels,pri
   const web=searchFn?null:createCopilotWeb({client,readToken});
   let app={status:"unknown"},route=null,lastOperation=null;
   const bindings=createAntigravityBindings(options,guard);
+  const settingsFile=userSettingsPath(options);
+  let settingsVersion, settingsSnapshot;
   const settings=()=>{
+    let version;
+    try {
+      const stat=fs.statSync(settingsFile,{bigint:true});
+      if(stat.isFile())version=[stat.dev,stat.ino,stat.size,stat.mtimeNs,stat.ctimeNs].join(":");
+    } catch { /* The strict reader still decides whether the current file is usable. */ }
+    if(version!==undefined&&settingsVersion===version)return settingsSnapshot;
     const saved=readUserSettings({...options,strict:true});
     if(saved[key]!==undefined&&typeof saved[key]!=="boolean")throw httpError("Invalid Gemini integration setting",409);
     if(saved[modelKey]!==undefined&&(!Array.isArray(saved[modelKey])||saved[modelKey].length>100||new Set(saved[modelKey]).size!==saved[modelKey].length||saved[modelKey].some(id=>!validAlias(id))))throw httpError("Invalid Antigravity model selection",409);
     if(saved[defaultKey]!==undefined&&!validAlias(saved[defaultKey]))throw httpError("Invalid Antigravity default model",409);
-    return {configured:Object.hasOwn(saved,key),enabled:saved[key]===true,selected_models:saved[modelKey]??null,default_model:saved[defaultKey]??null,
+    const snapshot={configured:Object.hasOwn(saved,key),enabled:saved[key]===true,selected_models:saved[modelKey]??null,default_model:saved[defaultKey]??null,
       copilot_timeout_seconds:validTimeout(saved[timeoutKey])?saved[timeoutKey]:null,native_source:typeof saved[nativeSourceKey]==="string"?saved[nativeSourceKey]:null};
+    settingsVersion=version;settingsSnapshot=snapshot;
+    return snapshot;
   };
   const defaultCopilotTimeoutMs=parseTimerMs(env.CCDX_UPSTREAM_TIMEOUT_MS,180000);
   const effectiveCopilotTimeoutMs=saved=>copilotTimeoutMs??(saved.copilot_timeout_seconds===null?defaultCopilotTimeoutMs:saved.copilot_timeout_seconds*1000);

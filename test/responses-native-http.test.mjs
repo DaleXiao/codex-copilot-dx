@@ -136,7 +136,7 @@ test("HTTP 200 response.failed retries an exact encrypted continuation before do
   }
 });
 
-for (const event of ["response.output_text.delta", "response.reasoning_summary_text.delta"]) {
+for (const event of ["response.output_text.delta", "response.reasoning_summary_text.delta", "response.function_call_arguments.delta"]) {
 test(`HTTP 200 response.failed never retries after delivering ${event}`, async () => {
   const failures = createResponseFailureDiagnostics();
   let calls = 0;

@@ -132,7 +132,9 @@ test("stream forwards text before the upstream finishes", async () => {
 });
 
 test("thinking-only success is not reported as a completed answer", async () => {
-  const source = 'data: {"choices":[{"delta":{"reasoning_content":"thinking"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n';
-  await assert.rejects(async () => { for await (const _ of chatStreamToAntigravity(new Response(source), new Map())) {} }, /completion/);
-  assert.throws(() => chatToAntigravity({ choices: [{ finish_reason: "stop", message: { reasoning_content: "thinking" } }] }, new Map()), /did not complete/);
+  const source = 'data: {"choices":[{"delta":{"reasoning_content":"thinking"}}],"usage":{"completion_tokens":9,"reasoning_tokens":8}}\n\ndata: [DONE]\n\n';
+  const diagnostic = /no text or tool calls \(output tokens: 9, reasoning tokens: 8\)/;
+  await assert.rejects(async () => { for await (const _ of chatStreamToAntigravity(new Response(source), new Map())) {} }, diagnostic);
+  assert.throws(() => chatToAntigravity({ choices: [{ finish_reason: "stop", message: { reasoning_content: "thinking" } }],
+    usage: { completion_tokens: 9, reasoning_tokens: 8 } }, new Map()), diagnostic);
 });

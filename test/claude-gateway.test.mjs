@@ -96,8 +96,8 @@ test("the 2026-10-21 Messages contract rejects sampling parameters in generation
       body: JSON.stringify({ ...body, ...(suffix ? {} : { max_tokens: 4 }), ...args }),
     });
     const before = calls.length;
-    for (const parameter of ["temperature", "top_p", "top_k"]) {
-      const response = await request({ [parameter]: 1 }, "2026-10-21");
+    for (const [parameter, value] of [["temperature", 1], ["temperature", null], ["top_p", 1], ["top_k", 1]]) {
+      const response = await request({ [parameter]: value }, "2026-10-21");
       assert.equal(response.status, 400);
       const { error } = await response.json();
       assert.equal(error.type, "invalid_request_error");
@@ -114,6 +114,26 @@ test("the 2026-10-21 Messages contract rejects sampling parameters in generation
     await previous.text();
     assert.equal(calls.at(-1).temperature, 0.5);
   }
+});
+
+test("Claude App self checks keep the same prepared body across saved effort defaults", async t => {
+  const requests = [];
+  const provider = { id: "m365", profileId: () => "fixture", models: () => [{ id: "provider-model" }],
+    client: { async messages(body) { requests.push(body);return Response.json(message); } } };
+  const server = await startClaudeGateway({ port: 0, apiKey: key, provider, privacyClient: "claude_app", record() {},
+    resolveRequest: body => ({ provider, model: "provider-model", effortDefault: body.model,
+      capability: { values: { reasoning_efforts: ["low", "high"] } } }) });
+  t.after(() => server.close());
+  for (const [model, content] of [["low", "."], ["high", "."], ["high", "regular conversation"]]) {
+    const r = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, { method: "POST",
+      headers: { "content-type": "application/json", "x-api-key": key },
+      body: JSON.stringify({ model, max_tokens: 1, messages: [{ role: "user", content }] }) });
+    assert.equal(r.status, 200);
+    await r.text();
+  }
+  assert.deepEqual(requests[0], requests[1]);
+  assert.equal(requests[0].output_config, undefined);
+  assert.equal(requests[2].output_config.effort, "high");
 });
 
 test("Claude completes before upstream EOF and reuses the connection after bounded drain", { timeout: 5000 }, async t => {

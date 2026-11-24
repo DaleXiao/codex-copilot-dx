@@ -408,7 +408,15 @@ export function accumulateUsageRecord(summary, record, source, onRecordTotals) {
   }
 }
 
-async function summarizeUsageLogFiles(filePath, { warn = console.error, onRecord, onRecordTotals, recordFilter, provider = "" } = {}) {
+const archiveReadIndex = new Map();
+async function archiveReadStamp(file) {
+  try {
+    const stat = await fs.promises.stat(file, { bigint: true });
+    if (stat.isFile()) return [stat.dev, stat.ino, stat.size, stat.mtimeNs, stat.ctimeNs].join(":");
+  } catch { /* The full reader retains its normal error handling. */ }
+}
+
+async function summarizeUsageLogFiles(filePath, { warn = console.error, onRecord, onRecordTotals, recordFilter, archiveSelection, provider = "" } = {}) {
   const summary = summarizeUsage([], { provider });
   const archive = await usageArchiveFiles(filePath);
   let archivedBackup = false;
@@ -418,9 +426,31 @@ async function summarizeUsageLogFiles(filePath, { warn = console.error, onRecord
   }
   for (const candidate of [...archive, ...(archivedBackup ? [] : [rotatedFilePath(filePath)]), filePath]) {
     const compressed = archive.includes(candidate);
+    const stamp = compressed && archiveSelection && await archiveReadStamp(candidate);
+    const indexed = stamp && archiveReadIndex.get(candidate);
+    if (indexed && indexed.stamp === stamp && archiveSelection.excludes(indexed)) {
+      for (const row of indexed.models.values()) {
+        if (!provider || provider === usageProvider(row)) archiveSelection.observeModel(row);
+      }
+      continue;
+    }
+    let index = stamp && indexed?.stamp !== stamp ? { stamp, first: Infinity, last: -Infinity, models: new Map() } : null;
     try {
-      for await (const record of iterateUsageRecords(candidate, { warn, compressed })) {
+      for await (const record of iterateUsageRecords(candidate, { compressed, warn(message) { index = null;warn(message); } })) {
         const source = usageProvider(record);
+        if (index) {
+          const time = typeof record.ts === "string" ? Date.parse(record.ts) : NaN;
+          if (Number.isFinite(time)) { index.first = Math.min(index.first, time);index.last = Math.max(index.last, time); }
+          const model = record.model || "unknown";
+          if (typeof model !== "string" || model.length > 200) index = null;
+          else {
+            const label = source + " / " + model;
+            if (!index.models.has(label)) {
+              if (index.models.size >= 256) index = null;
+              else index.models.set(label, { model, provider: source });
+            }
+          }
+        }
         if (provider && provider !== source) continue;
         if (recordFilter && !recordFilter(record)) continue;
         if (onRecord) {
@@ -429,6 +459,10 @@ async function summarizeUsageLogFiles(filePath, { warn = console.error, onRecord
           onRecordTotals?.(record, { totals: one.totals });
           mergeUsageSummary(summary, one);
         } else accumulateUsageRecord(summary, record, source, onRecordTotals);
+      }
+      if (index && await archiveReadStamp(candidate) === stamp) {
+        if (!archiveReadIndex.has(candidate) && archiveReadIndex.size >= 32) archiveReadIndex.delete(archiveReadIndex.keys().next().value);
+        archiveReadIndex.set(candidate, index);
       }
     } catch (error) {
       if (!compressed) throw error;
@@ -475,9 +509,10 @@ export async function usageSummaryVersion(filePath, { settled = true } = {}) {
   } catch { return null; } // Uncacheable metadata never replaces the normal read/error path.
 }
 
-export async function summarizeUsageLogs(filePath = usageLogPath(), { warn = console.error, onRecord, onRecordTotals, recordFilter, provider = "", signal } = {}) {
+export async function summarizeUsageLogs(filePath = usageLogPath(), { warn = console.error, onRecord, onRecordTotals, recordFilter, archiveSelection, provider = "", signal } = {}) {
   if (provider && !isProviderId(provider)) throw new Error("Usage provider must be a valid provider ID");
-  if (onRecord || onRecordTotals || recordFilter || warn !== console.error) return summarizeUsageLogFiles(filePath, { warn, onRecord, onRecordTotals, recordFilter, provider });
+  if (onRecord || onRecordTotals || recordFilter || archiveSelection || warn !== console.error)
+    return summarizeUsageLogFiles(filePath, { warn, onRecord, onRecordTotals, recordFilter, archiveSelection, provider });
   const fileVersion = await usageSummaryVersion(filePath);
   const version = fileVersion === null ? null : `${fileVersion}\0${provider}`;
   if (version === null) {

@@ -417,6 +417,15 @@ test("authenticated Claude App health probes share a real result without caching
   assert.equal(stored.context.health_probe_shape, "thinking_only");
   assert.equal(reused.context.health_probe_group, stored.context.health_probe_group);
   assert.doesNotMatch(JSON.stringify(timeline), /synthetic-probe-(output|signature)/);
+  for (const suffix of ["", "/count_tokens"]) {
+    const invalid = await fetch(base + "/anthropic/v1/messages" + suffix, {
+      method: "POST", headers: { "content-type": "application/json", "x-api-key": key, "anthropic-version": "2026-10-21" },
+      body: JSON.stringify({ model: "demo", max_tokens: 4, messages: [], temperature: null }),
+    });
+    assert.equal(invalid.status, 400);
+    assert.equal((await invalid.json()).error.param, "temperature");
+  }
+  assert.equal(calls, 1, "new-version invalid requests do not reach the custom source");
   await (await run("A normal short conversation")).json();
   await (await run("A normal short conversation")).json();
   assert.equal(calls, 3);

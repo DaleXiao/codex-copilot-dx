@@ -17,6 +17,12 @@ test("Bark key URLs accept copied examples and keep the key out of the outgoing 
   assert.deepEqual(parseBarkUrl(url), expected);
   assert.deepEqual(parseBarkUrl(url + "/title/body?group=example&ttl=600"), expected);
   assert.deepEqual(parseBarkUrl("http://bark.local:8080/bark/" + key), { endpoint: "http://bark.local:8080/bark/push", deviceKey: key });
+  const prefix = "reverse-proxy-installation", standard = "a".repeat(22);
+  assert.deepEqual(parseBarkUrl(`https://bark.example/${prefix}/${standard}/title/body`),
+    { endpoint: `https://bark.example/${prefix}/push`, deviceKey: standard });
+  assert.deepEqual(parseBarkUrl(`https://bark.example/${prefix}/push?device_key=${key}`),
+    { endpoint: `https://bark.example/${prefix}/push`, deviceKey: key });
+  assert.throws(() => parseBarkUrl(`https://bark.example/${prefix}/${key}`), /ccdx_bark_invalid/);
   for (const invalid of ["https://bark.example", "file:///tmp/" + key, "https://user@bark.example/" + key, "https://bark.example/push"]) {
     assert.throws(() => parseBarkUrl(invalid), { message: "ccdx_bark_invalid" });
   }
@@ -84,7 +90,7 @@ test("the same Bark settings use Claude or Antigravity text and icon only after 
   await fs.writeFile(longTranscript, line({ type: "USER_INPUT", step_index: 0, created_at: start })
     + line({ type: "GENERIC", status: "DONE", step_index: 1, content: "x".repeat(1024 * 1024 + 64) })
     + line({ type: "PLANNER_RESPONSE", source: "MODEL", status: "DONE", step_index: 2, created_at: finish, content: "private reply" }));
-  row(active, { count: 3 });
+  // Only the transcript changed after the earlier database update.
   clock += 1000;
   await claudeTurn(5);
   for (let attempt = 0; pushes.length < 2 && attempt < 60; attempt++) await delay(30);
@@ -102,7 +108,7 @@ test("the same Bark settings use Claude or Antigravity text and icon only after 
 
 test("Bark is opt-in, applies the minimum whole-turn duration and shares durable deduplication", async t => {
   const home = await fs.mkdtemp(path.join(os.tmpdir(), "ccdx-bark-"));
-  const directory = path.join(home, "codex", "sessions", "2026", "11", "23");
+  const directory = path.join(home, "codex", "sessions", "2022", "11", "23");
   await fs.mkdir(directory, { recursive: true });
   const env = { CODEX_HOME: path.join(home, "codex"), XDG_CONFIG_HOME: path.join(home, "settings") };
   const collected = [], keys = new Map();
@@ -118,6 +124,7 @@ test("Bark is opt-in, applies the minimum whole-turn duration and shares durable
   assert.equal(a.snapshot().minutes, 30);
   assert.equal(a.snapshot().watching, false);
   await assert.rejects(a.save({ enabled: true, minutes: 30, title, body }), /ccdx_bark_invalid/);
+  await assert.rejects(a.save({ enabled: true, minutes: 30, title, body, url: url.replace("https:", "http:") }), /ccdx_bark_https_required/);
   await a.save({ enabled: true, minutes: 30, title, body, url });
   for (let attempt = 0; !a.snapshot().watching && attempt < 20; attempt++) await delay(20);
   assert.equal(a.snapshot().watching, true);
@@ -125,6 +132,8 @@ test("Bark is opt-in, applies the minimum whole-turn duration and shares durable
   assert.doesNotMatch(JSON.stringify(a.snapshot()), /bark\.example|fixture-bark-device-key|ref/);
   assert.doesNotMatch(await fs.readFile(path.join(env.XDG_CONFIG_HOME, "codex-copilot-dx", "bark.json"), "utf8"), /bark\.example|fixture-bark-device-key/);
   b = createBarkNotifications(options);
+  const ledger = path.join(env.XDG_CONFIG_HOME, "codex-copilot-dx", "bark-delivered.json");
+  await fs.writeFile(ledger, "{corrupt");
   const file = path.join(directory, "rollout-main.jsonl");
   const meta = line({ type: "session_meta", payload: { id: "session-1", source: "vscode" } });
   const event = (id, duration_ms, extra = {}, at = clock) => line({ type: "event_msg", timestamp: new Date(at).toISOString(),
@@ -142,11 +151,55 @@ test("Bark is opt-in, applies the minimum whole-turn duration and shares durable
   assert.deepEqual(collected[0], { address: "https://bark.example/push", redirect: "error",
     payload: { device_key: key, title, body, icon: "https://cdn.jsdelivr.net/npm/@lobehub/icons-static-png/light/codex-color.png", group: "CCDX" } });
   assert.ok([a.snapshot().delivery, b.snapshot().delivery].includes("sent"));
+  const [delivered] = JSON.parse(await fs.readFile(ledger, "utf8"));
+  await fs.writeFile(ledger, JSON.stringify([null, delivered]));
+  await fs.appendFile(file, event("long-task", 1800000) + event("another-task", 1800000));
+  for (let attempt = 0; collected.length < 2 && attempt < 30; attempt++) await delay(50);
+  assert.equal(collected.length, 2);
+  const recovered = JSON.parse(await fs.readFile(ledger, "utf8"));
+  assert.equal(recovered.length, 2);
+  assert.ok(recovered.some(entry => entry.id === delivered.id));
   b.close();
+  await fs.unlink(ledger);
+  await fs.mkdir(ledger);
+  await fs.appendFile(file, event("unwritable-ledger", 1800000));
+  for (let attempt = 0; a.snapshot().delivery !== "ledger_failed" && attempt < 30; attempt++) await delay(50);
+  assert.equal(a.snapshot().delivery, "ledger_failed");
+  assert.equal(collected.length, 2);
   await a.save({ enabled: false, minutes: 5, title, body });
   await fs.appendFile(file, event("disabled", 3500000));
   await delay(300);
-  assert.equal(collected.length, 1);
+  assert.equal(collected.length, 2);
   assert.equal(a.snapshot().minutes, 5);
   assert.equal(a.snapshot().watching, false);
+});
+
+test("existing HTTP destinations still work and the newest Claude session survives the scan limit", async t => {
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), "ccdx-bark-old-address-"));
+  const env = { XDG_CONFIG_HOME: path.join(home, "settings") };
+  const folder = path.join(env.XDG_CONFIG_HOME, "codex-copilot-dx");
+  const claude = path.join(home, "Library", "Application Support", "Claude-3p", "claude-code-sessions");
+  await fs.mkdir(claude, { recursive: true });await fs.mkdir(folder, { recursive: true });
+  const ref = "a".repeat(32);
+  await fs.writeFile(path.join(folder, "bark.json"), JSON.stringify({ enabled: true, minutes: 0, title, body, ref }));
+  const expires = new Date(Date.now() - 172800000);
+  for (let offset = 0; offset < 4096; offset += 64) {
+    await Promise.all(Array.from({ length: 64 }, async (_, at) => {
+      const id = (at + offset + 1).toString(16).padStart(12, "0");
+      const file = path.join(claude, "local_ffffffff-ffff-ffff-ffff-" + id + ".json");
+      await fs.writeFile(file, "{}");await fs.utimes(file, expires, expires);
+    }));
+  }
+  const started = Date.now(), pushes = [];
+  const bark = createBarkNotifications({ env, home, platform: "darwin", now: () => started, scanIntervalMs: 100,
+    secretStore: { async get() { return url.replace("https:", "http:"); } },
+    async fetchImpl(destination) { pushes.push(destination);return Response.json({ code: 200 }); },
+  });
+  t.after(async () => { bark.close();await fs.rm(home, { recursive: true, force: true, maxRetries: 8 }); });
+  const sessionId = "local_00000000-0000-0000-0000-000000000001";
+  await fs.writeFile(path.join(claude, sessionId + ".json"), JSON.stringify({ sessionId, createdAt: started,
+    completedTurns: 1, latestUserFrameAt: started, lastTurnEdgeAt: started + 1000 }));
+  for (let attempt = 0; !pushes.length && attempt < 60; attempt++) await delay(80);
+  assert.equal(bark.snapshot().insecure, true);
+  assert.deepEqual(pushes, ["http://bark.example/push"]);
 });

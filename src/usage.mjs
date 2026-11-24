@@ -18,6 +18,7 @@ export {
   readUsageRecords,
   summarizeUsage,
   summarizeUsageLogs,
+  accumulateUsageRecord,
   mergeUsageSummary,
   subscribeUsageAppends,
   cacheReadTokens,

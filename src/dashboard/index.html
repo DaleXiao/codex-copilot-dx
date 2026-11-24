@@ -539,6 +539,7 @@
                 <label for="bark-title" data-i18n="bark_title">Notification title</label><input id="bark-title" name="title" maxlength="160" data-i18n-placeholder="bark_title_default" placeholder="Automatic">
                 <label for="bark-body" data-i18n="bark_body">Notification description</label><input id="bark-body" name="body" maxlength="500" data-i18n-placeholder="bark_body_default" placeholder="Automatic">
               </div>
+              <p id="bark-transport-warning" class="hint" data-i18n="bark_insecure" hidden>This saved Bark URL uses HTTP. Replace it with HTTPS to protect the device key.</p>
               <div class="section-actions"><button type="submit" data-i18n="api_save">Save</button><span id="bark-status" role="status" aria-live="polite"></span></div>
             </fieldset>
           </form>

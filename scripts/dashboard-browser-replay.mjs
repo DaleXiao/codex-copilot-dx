@@ -1001,6 +1001,7 @@ try {
           await page.locator("#bark-settings button[type=submit]").click();
           const saved = await savedBark;
           assert.equal(saved.ok(), true);
+          await page.waitForFunction(() => /Saved|已保存/i.test(document.getElementById("bark-status").textContent));
           assert.equal(serviceControl.snapshot().bark.minutes, value);
           assert.equal(serviceControl.snapshot().bark.enabled, false);
         }

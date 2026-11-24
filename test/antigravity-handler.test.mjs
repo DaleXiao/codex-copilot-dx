@@ -39,6 +39,7 @@ test("Neon aliases send and report the chosen effort and preserve both Copilot r
     ["medium", 0, { reasoning_tokens: 48, completion_tokens_details: { reasoning_tokens: 0 } }, false],
     ["high", 48, { reasoning_tokens: 48 }, true],
     ["xhigh", 9, { reasoning_tokens: 48, completion_tokens_details: { reasoning_tokens: 9 } }, true],
+    ["high", undefined, { reasoning_tokens: 99 }, false],
   ]) {
     let wire;
     const f = fixture({ models: () => neonCatalog, client: { async chatCompletions(value, options) {
@@ -63,9 +64,10 @@ test("Neon aliases send and report the chosen effort and preserve both Copilot r
     assert.equal(metrics.snapshot().recent_requests.at(-1).context.reasoning_effort_sent, effort);
     const projected = stream ? JSON.parse(result.text.split("\n").filter(line => line.includes('"usageMetadata"')).at(-1).slice(6)) : JSON.parse(result.text);
     assert.deepEqual(projected.response.usageMetadata,
-      { promptTokenCount: 107, candidatesTokenCount: 88 - expected, totalTokenCount: 195, thoughtsTokenCount: expected });
+      { promptTokenCount: 107, candidatesTokenCount: 88 - (expected ?? 0), totalTokenCount: 195, ...(expected === undefined ? {} : { thoughtsTokenCount: expected }) });
     assert.equal(f.records.length, 1);
-    assert.deepEqual(f.records[0].usage, { input_tokens: 107, output_tokens: 88, reasoning_output_tokens: expected, total_tokens: 195 });
+    assert.deepEqual(f.records[0].usage, { input_tokens: 107, output_tokens: 88, total_tokens: 195,
+      ...(expected === undefined ? {} : { reasoning_output_tokens: expected }) });
   }
   const blocked = fixture({ models: () => neonCatalog, privacy: { async prepareSession() {
     throw Object.assign(new Error("Fixture masking failure"), { origin: "privacy", statusCode: 503 });

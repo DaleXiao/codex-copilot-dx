@@ -33,8 +33,18 @@ export function parseBarkUrl(value) {
   if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.hash) throw invalid();
   // Accept the copied test URL as well as the short URL ending at the key.
   const parts = url.pathname.split("/").slice(1);
-  const keyIndex = parts.findIndex(part => /^[A-Za-z0-9_-]{16,128}$/.test(part));
-  if (keyIndex < 0 || parts.length > keyIndex + 4) throw invalid();
+  const isKey = part => /^[A-Za-z0-9_-]{16,128}$/.test(part);
+  const explicit = url.searchParams.get("device_key");
+  if (parts.at(-1) === "push" && explicit !== null) {
+    if (!isKey(explicit) || url.searchParams.getAll("device_key").length !== 1) throw invalid();
+    url.search = "";
+    return { endpoint: url.href, deviceKey: explicit };
+  }
+  const indices = parts.flatMap((part, index) => index >= parts.length - 4 && isKey(part) ? [index] : []);
+  const standard = indices.filter(index => /^[A-Za-z0-9]{22}$/.test(parts[index]));
+  const candidates = standard.length ? standard : indices;
+  if (candidates.length !== 1) throw invalid();
+  const [keyIndex] = candidates;
   url.pathname = "/" + [...parts.slice(0, keyIndex), "push"].join("/");
   url.search = "";
   return { endpoint: url.href, deviceKey: parts[keyIndex] };
@@ -128,9 +138,7 @@ async function antigravityCompletion(file, size, row, since) {
   } finally { await handle.close(); }
 }
 
-async function antigravityIdleConversations(root) {
-  const file = path.join(root, "conversation_summaries.db");
-  if (!(await files.lstat(file)).isFile()) return [];
+async function antigravityIdleConversations(file) {
   const { DatabaseSync } = await import("node:sqlite");
   const db = new DatabaseSync(file, { readOnly: true });
   try {
@@ -155,7 +163,7 @@ export function createBarkNotifications({ env = process.env, home = os.homedir()
   ];
   const antigravity = path.join(home, ".gemini", "antigravity");
   let timer, lastResult = null, closed = false, running = false, watching = false, since = now();
-  let settings = readSettings();
+  let settings = readSettings(), antigravityCatalog, insecureRef;
   const scanned = new Map();
 
   function readSettings() {
@@ -169,17 +177,22 @@ export function createBarkNotifications({ env = process.env, home = os.homedir()
       const zh = value.language === "zh" || legacy && ["Codex 任务完成", "一个 Codex 长任务已完成。"].some(word => word === value.title || word === value.body);
       const title = legacy && ["Codex task completed", "Codex 任务完成"].includes(value.title) ? "" : value.title;
       const body = legacy && ["A long Codex task has finished.", "一个 Codex 长任务已完成。"].includes(value.body) ? "" : value.body;
-      return { enabled: value.enabled && Boolean(ref), minutes: value.minutes, title, body, language: zh ? "zh" : "en", ref };
+      return { enabled: value.enabled && Boolean(ref), minutes: value.minutes, title, body, language: zh ? "zh" : "en", ref,
+        transport: value.transport === "https" ? "https" : undefined };
     } catch { return { ...DEFAULTS }; }
   }
 
   function claim(event) {
     return withFileLockSync(ledger + ".lock", () => {
-      let sent = [];
-      try { sent = JSON.parse(readBoundedFileSync(ledger, { encoding: "utf8", maxBytes: 64 * 1024 })); }
-      catch (error) { if (error.code !== "ENOENT") throw error; }
-      if (sent.some(entry => entry.id === event.id)) return false;
-      sent = sent.filter(entry => entry.time >= now() - 86400000).slice(-255);
+      let raw;
+      try { raw = record(readBoundedFileSync(ledger, { encoding: "utf8", maxBytes: 64 * 1024 })); }
+      catch (error) {
+        if (error.code !== "ENOENT" && !(error.code === "ccdx_local_file_limit" && fs.lstatSync(ledger).isFile())) throw error;
+      }
+      const valid = Array.isArray(raw) ? raw.filter(entry => entry && typeof entry.id === "string"
+        && /^[a-f0-9]{64}$/.test(entry.id) && Number.isSafeInteger(entry.time)) : [];
+      if (valid.some(entry => entry.id === event.id)) return false;
+      const sent = valid.filter(entry => entry.time >= now() - 86400000).slice(-255);
       sent.push({ id: event.id, time: event.time });
       atomicWriteFileSync(ledger, JSON.stringify(sent), { mode: 0o600 });
       return true;
@@ -192,6 +205,12 @@ export function createBarkNotifications({ env = process.env, home = os.homedir()
     const snapshot = settings;
     let foundSource = false;
     try {
+      if (snapshot.ref && !snapshot.transport && insecureRef?.ref !== snapshot.ref) {
+        try {
+          const destination = parseBarkUrl(await secretStore.get(snapshot.ref));
+          if (snapshot === settings) insecureRef = { ref: snapshot.ref, http: destination.endpoint.startsWith("http:") };
+        } catch { /* Delivery reports credential and address errors. */ }
+      }
       for (const source of sources) {
         if (closed || snapshot !== settings) return;
         const root = await files.realpath(source.directory).catch(() => null);
@@ -214,7 +233,9 @@ export function createBarkNotifications({ env = process.env, home = os.homedir()
     if (closed || snapshot !== settings || event.duration < snapshot.minutes * 60000) return;
     try {
       const destination = parseBarkUrl(await secretStore.get(snapshot.ref));
-      if (closed || snapshot !== settings || !claim(event)) return;
+      if (closed || snapshot !== settings) return;
+      try { if (!claim(event)) return; }
+      catch { lastResult = "ledger_failed";return; }
       const result = await fetchImpl(destination.endpoint, {
         method: "POST", headers: { "Content-Type": "application/json" }, redirect: "error", signal: AbortSignal.timeout(5000),
         body: JSON.stringify({ device_key: destination.deviceKey, ...notificationMessage(snapshot, event) }),
@@ -230,8 +251,18 @@ export function createBarkNotifications({ env = process.env, home = os.homedir()
     let root, rows;
     try {
       root = await files.realpath(antigravity);
-      rows = await antigravityIdleConversations(root);
-    } catch { return false; }
+      const file = path.join(root, "conversation_summaries.db");
+      const db = await files.lstat(file, { bigint: true });
+      if (!db.isFile()) { antigravityCatalog = undefined;return false; }
+      const wal = await files.lstat(file + "-wal", { bigint: true }).catch(error => {
+        if (error.code !== "ENOENT") throw error;
+        return null;
+      });
+      const stamp = [file, db.dev, db.ino, db.size, db.mtimeNs, db.ctimeNs,
+        wal?.dev, wal?.ino, wal?.size, wal?.mtimeNs, wal?.ctimeNs].join(":");
+      if (antigravityCatalog?.stamp !== stamp) antigravityCatalog = { stamp, rows: await antigravityIdleConversations(file) };
+      rows = antigravityCatalog.rows;
+    } catch { antigravityCatalog = undefined;return false; }
     for (const row of rows) {
       if (closed || snapshot !== settings) break;
       if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(row.conversation_id || "")
@@ -257,13 +288,26 @@ export function createBarkNotifications({ env = process.env, home = os.homedir()
   async function scanSource(source, root, snapshot) {
     try {
       const entries = (await files.readdir(root, { recursive: true, withFileTypes: true }))
-        .filter(entry => entry.isFile() && source.pattern.test(entry.name)).sort((a, b) => b.name.localeCompare(a.name)).slice(0, 4096);
+        .filter(entry => entry.isFile() && source.pattern.test(entry.name));
       if (closed || snapshot !== settings) return;
-      for (const entry of entries) {
+      const selected = [];
+      if (entries.length > 4096) {
+        for (const entry of entries) {
+          if (closed || snapshot !== settings) return;
+          const file = path.join(entry.parentPath, entry.name);
+          const stat = await files.stat(file).catch(() => null);
+          if (stat?.isFile()) selected.push({ file, stat });
+        }
+        selected.sort((a, b) => b.stat.mtimeMs - a.stat.mtimeMs);
+        selected.length = Math.min(selected.length, 4096);
+      } else {
+        for (const entry of entries) selected.push({ file: path.join(entry.parentPath, entry.name) });
+      }
+      for (const entry of selected) {
         if (closed || snapshot !== settings) break;
         try {
-          const file = path.join(entry.parentPath, entry.name);
-          const stat = await files.stat(file);
+          const { file } = entry;
+          const stat = entry.stat ?? await files.stat(file);
           if (source.application === "codex" && stat.mtimeMs < since - 1000) continue;
           const stamp = [stat.ino, stat.size, stat.mtimeMs].join(":");
           const previous = scanned.get(file);
@@ -286,7 +330,8 @@ export function createBarkNotifications({ env = process.env, home = os.homedir()
 
   function snapshot() {
     const { enabled, minutes, title, body, ref } = settings;
-    return { enabled, minutes, title, body, sources: Object.keys(APPS), configured: Boolean(ref), watching, delivery: lastResult };
+    return { enabled, minutes, title, body, sources: Object.keys(APPS), configured: Boolean(ref), watching, delivery: lastResult,
+      insecure: Boolean(ref && insecureRef?.ref === ref && insecureRef.http) };
   }
 
   schedule(0);
@@ -298,11 +343,12 @@ export function createBarkNotifications({ env = process.env, home = os.homedir()
         || typeof url !== "string" || !["en", "zh"].includes(language)) throw invalid();
       const prior = settings.ref;
       const replacement = url.trim() !== "";
-      if (replacement) parseBarkUrl(url);
+      if (replacement && !parseBarkUrl(url).endpoint.startsWith("https:")) throw new Error("ccdx_bark_https_required");
       if (enabled && !replacement && !prior) throw invalid();
       const ref = replacement ? randomBytes(16).toString("hex") : prior;
       if (replacement) await secretStore.set(ref, url.trim());
-      const next = { enabled, minutes, title: title.trim(), body: body.trim(), language, ref };
+      const next = { enabled, minutes, title: title.trim(), body: body.trim(), language, ref,
+        transport: replacement ? "https" : settings.transport };
       try {
         fs.mkdirSync(folder, { recursive: true, mode: 0o700 });
         atomicWriteFileSync(file, JSON.stringify(next), { mode: 0o600 });

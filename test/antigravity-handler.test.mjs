@@ -41,7 +41,8 @@ test("Neon aliases send and report the chosen effort and preserve both Copilot r
     ["xhigh", 9, { reasoning_tokens: 48, completion_tokens_details: { reasoning_tokens: 9 } }, true],
   ]) {
     let wire;
-    const f = fixture({ models: () => neonCatalog, client: { async chatCompletions(value) {
+    const f = fixture({ models: () => neonCatalog, client: { async chatCompletions(value, options) {
+      options.onUpstreamStart();
       wire = value;
       const counts = { prompt_tokens: 107, completion_tokens: 88, total_tokens: 195 };
       if (!stream) return Response.json({ choices: [{ message: { content: "ok" }, finish_reason: "stop" }],
@@ -66,6 +67,16 @@ test("Neon aliases send and report the chosen effort and preserve both Copilot r
     assert.equal(f.records.length, 1);
     assert.deepEqual(f.records[0].usage, { input_tokens: 107, output_tokens: 88, reasoning_output_tokens: expected, total_tokens: 195 });
   }
+  const blocked = fixture({ models: () => neonCatalog, privacy: { async prepareSession() {
+    throw Object.assign(new Error("Fixture masking failure"), { origin: "privacy", statusCode: 503 });
+  } } });
+  const tracker = metrics.begin("antigravity", { application: "gemini_app" });
+  const rejected = await runWithRequestContext({ streamPerformance: tracker }, () =>
+    invoke(blocked.handler, body("ccdx-copilot-gemini-4-neon-high")).done);
+  tracker.finish({ statusCode: rejected.status });
+  assert.equal(rejected.status, 503);
+  assert.equal(blocked.copilot.length, 0);
+  assert.equal(metrics.snapshot().recent_requests.at(-1).context.reasoning_effort_sent, undefined);
 });
 
 test("native Google and Copilot tool results update the same isolated activity contract",async()=>{

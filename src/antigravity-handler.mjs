@@ -333,15 +333,18 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
       if(body.requestType==="agent")commitBinding=prepareConversationBinding(body,"github",profile,startedAt);
       const stream=method==="streamGenerateContent";usageModel=target.model;usageMode=stream?"sse":"json";usageProvider="github";
       converted=antigravityToChat(request,{model:target.model,effort:target.effort,reasoningEfforts:target.effort?[target.effort]:[],stream});
+      const reasoningEffort=converted.chat.reasoning_effort;
       markResponseModel(target.model);markRequestObservation({usage_state:"pending",context_window_tokens:target.maxTokens,
         max_output_tokens_requested:request.generationConfig?.maxOutputTokens,
         max_output_tokens_sent:converted.chat.max_completion_tokens??converted.chat.max_tokens,
-        reasoning_effort_sent:converted.chat.reasoning_effort,
         routing_reason:bound?"conversation_model":target.model==="gemini-4-carbon"&&target.effort==="low"?"background_default":"background_available"});
       session=privacy?.prepareSession?await privacy.prepareSession(converted.chat,{protocol:"chat",client:"gemini",signal:abort.signal}):passthrough(converted.chat);
       const callOptions={signal:abort.signal,sourceBodyManaged:true,observeBodyWrite:true,retryOptions:{retries:0},
         ...(compacting?{}:{onBodySent:releaseInput}),
-        onUpstreamStart:()=>abort.setTimeout(requestCopilotTimeoutMs??upstreamTimeoutMs,"upstream_timeout")};
+        onUpstreamStart:()=>{
+          abort.setTimeout(requestCopilotTimeoutMs??upstreamTimeoutMs,"upstream_timeout");
+          markRequestObservation({reasoning_effort_sent:reasoningEffort});
+        }};
       phase="upstream";
       const upstream=compacting&&compaction?await compaction.run({body:session.body,protocol:"chat",scope:JSON.stringify(["gemini","github",compactionProfile()]),source:"github",client:"gemini",
         inputLimit:target.maxTokens,outputAllowance:session.body.max_completion_tokens||session.body.max_tokens||0,native:client.chatCompletions,options:callOptions,

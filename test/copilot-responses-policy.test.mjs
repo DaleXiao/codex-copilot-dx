@@ -109,6 +109,34 @@ test("a no-op matching retry policy does not block a later applicable policy", a
   assert.equal(JSON.stringify(calls[1]).includes("encrypted_content"), false);
 });
 
+test("Copilot retries a completed bare call with the original tool result and an explicit unresolved namespace", async () => {
+  const tool = { type: "function", name: "lookup" };
+  const load = { type: "tool_search_output", tools: [{ type: "namespace", name: "docs", tools: [tool] }] };
+  const call = { type: "function_call", name: "lookup", call_id: "lookup-1", arguments: "{}" };
+  const result = { type: "function_call_output", call_id: "lookup-1", output: "not available" };
+  const body = { model: "fixture", input: [load, call, result] };
+  const error = "Missing namespace for function_call 'lookup'. It does not exist in the default namespace.";
+  const calls = [];
+  const opened = await openCopilotResponse({ body }, async input => {
+    calls.push(structuredClone(input));
+    return Object.hasOwn(input.input[1], "namespace") ? Response.json({ id: "fixture" }) : Response.json({ error: { message: error } }, { status: 400 });
+  });
+  assert.equal(opened.resp.status, 200);
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls[0], body);
+  assert.deepEqual(calls[1].input, [load, { ...call, namespace: null }, result]);
+  assert.equal(Object.hasOwn(body.input[1], "namespace"), false);
+  for (const input of [[call, result, load], [load, call], [load, { ...call, namespace: "docs" }, result]]) {
+    let count = 0;
+    const unchanged = await openCopilotResponse({ body: { ...body, input } }, async () => {
+      count++;
+      return Response.json({ error: { message: error } }, { status: 400 });
+    });
+    assert.equal(unchanged.resp.status, 400);
+    assert.equal(count, 1);
+  }
+});
+
 test("legacy responses-request deep imports retain the Copilot compatibility exports", async () => {
   const legacy = await import("../src/responses-request.mjs");
   for (const name of [

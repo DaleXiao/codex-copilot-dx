@@ -20,6 +20,39 @@ import { status } from "./status.mjs";
 import { markUpstreamHeaders } from "./stream-performance.mjs";
 import { adaptCallLessContext, isMissingCallIdError } from "./responses-tool-output.mjs";
 
+function rejectedBareToolName(status, text) {
+  if (status !== 400) return null;
+  const match = /Missing namespace for function_call '([^'\r\n]{1,256})'\.\s*It does not exist in the default namespace\./i.exec(text);
+  return match?.[1] || null;
+}
+
+function preserveUnresolvedToolCall(context, status, text) {
+  const name = rejectedBareToolName(status, text), input = context.body.input;
+  if (!name || context.surface === "responses_compact" || !Array.isArray(input)) return null;
+  const results = new Set(input.filter(item => item?.type === "function_call_output").map(item => item.call_id));
+  let declared = false, namespaced = false, adjusted;
+  function observe(tools) {
+    if (!Array.isArray(tools)) return;
+    for (const tool of tools) {
+      if (tool?.type === "namespace" && Array.isArray(tool.tools)
+        && tool.tools.some(member => member?.name === name)) namespaced = true;
+      if ((tool?.type === "custom" || tool?.type === "function") && tool.name === name) {
+        if (typeof tool.namespace === "string" && tool.namespace) namespaced = true;
+        else declared = true;
+      }
+    }
+  }
+  observe(context.body.tools);
+  for (const [index, item] of input.entries()) {
+    if (item?.type === "additional_tools" || item?.type === "tool_search_output") observe(item.tools);
+    if (item?.type !== "function_call" || item.name !== name || item.namespace !== undefined
+      || typeof item.call_id !== "string" || !results.has(item.call_id) || declared || !namespaced) continue;
+    adjusted ||= input.slice();
+    adjusted[index] = { ...item, namespace: null };
+  }
+  return adjusted ? { ...context, body: { ...context.body, input: adjusted } } : null;
+}
+
 // Ordered Copilot-only fallbacks. Each policy is single-use and must be gated
 // by an exact upstream failure plus a request transformation that changes the
 // payload. Generic Responses preparation does not decide whether to retry.
@@ -35,6 +68,12 @@ const RETRY_POLICIES = Object.freeze([
     matches: isImageNamespaceCollisionError,
     apply: sanitizeImageNamespaceCollisionRequest,
     warning: "image_gen namespace rejected by upstream; retrying without the conflicting image tool",
+  }),
+  Object.freeze({
+    id: "unresolved-function-namespace",
+    matches: rejectedBareToolName,
+    apply: preserveUnresolvedToolCall,
+    warning: "Copilot rejected a replayed unqualified tool call; retrying with its unresolved namespace explicit",
   }),
   Object.freeze({
     id: "encrypted-replay-rejected",
@@ -56,7 +95,7 @@ export function selectCopilotResponseRetry(
 ) {
   for (const policy of RETRY_POLICIES) {
     if (usedPolicies.has(policy.id) || !policy.matches(statusCode, errorText)) continue;
-    const candidate = policy.apply(reqContext);
+    const candidate = policy.apply(reqContext, statusCode, errorText);
     if (!candidate) continue;
     usedPolicies.add(policy.id);
     return {

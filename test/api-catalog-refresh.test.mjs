@@ -1,8 +1,32 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createApiCatalogRefresh } from "../src/api-catalog-refresh.mjs";
+import { createApiProvider } from "../src/providers/api.mjs";
+import { admittedSource, createSourceAdmission } from "../src/source-admission.mjs";
 
 const deferred = () => { let resolve;const promise = new Promise(done => { resolve = done; });return { promise, resolve }; };
+
+test("a failed catalog probe does not cool the same source's subsequent production request", async () => {
+  const methods = [], scheduler = createSourceAdmission();
+  const source = admittedSource(createApiProvider({
+    config: { id: "api_probe", name: "Fixture", base_url: "https://fixture.test/v1",
+      endpoints: { responses: "https://fixture.test/v1/responses" }, models: [{ id: "m", protocols: ["responses"] }], secret_ref: "a".repeat(32) },
+    env: {}, secrets: { get: async () => "synthetic-key" },
+    networkFactory: async () => ({ close() {}, async fetch(_url, init) {
+      methods.push(init.method);
+      return init.method === "GET" ? Response.json({ error: { code: "insufficient_quota" } }, { status: 429, headers: { "Retry-After": "120" } })
+        : Response.json({ id: "fixture", output: [] });
+    } }),
+  }), scheduler);
+  try {
+    await assert.rejects(source.discover(), { code: "ccdx_api_catalog_http_429" });
+    const reply = await source.client.responses({ model: "m", input: "fixture" });
+    assert.equal(reply.status, 200);
+    await reply.json();
+    assert.deepEqual(methods, ["GET", "POST"]);
+    assert.ok(scheduler.snapshot().every(row => !row.retry_after_ms && !row.model_limits?.length));
+  } finally { source.close();scheduler.close(); }
+});
 test("catalog reads join, cancel obsolete generations and publish only current results", async () => {
   let selected = { enabled: true, version: "one", models: [] }, releases = 0;
   const pending = [], commits = [], states = [];

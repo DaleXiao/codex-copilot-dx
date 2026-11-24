@@ -260,6 +260,17 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
         if (!body || typeof body.model !== "string" || !Array.isArray(body.messages)) {
           send(res, 400, apiError("ccdx_messages_invalid", "Expected a model and messages array"));return;
         }
+        const apiVersion = req.headers["anthropic-version"];
+        if (typeof apiVersion === "string" && apiVersion.trim() === "2026-10-21") {
+          const parameter = ["temperature", "top_p", "top_k"].find(name => Object.hasOwn(body, name));
+          if (parameter) {
+            failureStatus = 400;
+            send(res, failureStatus, { type: "error", error: { type: "invalid_request_error",
+              code: "ccdx_messages_sampling_removed", param: parameter,
+              message: `${parameter} is unsupported in Anthropic API version 2026-10-21. Remove this parameter before retrying.` } });
+            return;
+          }
+        }
         const healthProbe = Boolean(resolveRequest && privacyClient === "claude_app" && !countTokens
           && !compacting && isClaudeHealthProbe(body, req.headers));
         if (healthProbe) {

@@ -87,6 +87,35 @@ async function gateway(t, messages, extra = {}) {
   return { server, records, calls, request };
 }
 
+test("the 2026-10-21 Messages contract rejects sampling parameters in generation and counts", async t => {
+  const { server, calls } = await gateway(t, (_body, options) => Response.json(options.countTokens ? { input_tokens: 4 } : message));
+  const body = { model: "claude-opus-5.5", messages: [{ role: "user", content: "fixture" }] };
+  for (const suffix of ["", "/count_tokens"]) {
+    const request = (args, version) => fetch(`http://127.0.0.1:${server.port}/v1/messages${suffix}`, {
+      method: "POST", headers: { "content-type": "application/json", "x-api-key": key, "anthropic-version": version },
+      body: JSON.stringify({ ...body, ...(suffix ? {} : { max_tokens: 4 }), ...args }),
+    });
+    const before = calls.length;
+    for (const parameter of ["temperature", "top_p", "top_k"]) {
+      const response = await request({ [parameter]: 1 }, "2026-10-21");
+      assert.equal(response.status, 400);
+      const { error } = await response.json();
+      assert.equal(error.type, "invalid_request_error");
+      assert.equal(error.code, "ccdx_messages_sampling_removed");
+      assert.equal(error.param, parameter);
+      assert.match(error.message, /2026-10-21/);
+    }
+    assert.equal(calls.length, before, "invalid requests do not reach the provider");
+    const clean = await request({}, "2026-10-21");
+    assert.equal(clean.status, 200);
+    await clean.text();
+    const previous = await request({ temperature: 0.5 }, "2023-06-01");
+    assert.equal(previous.status, 200);
+    await previous.text();
+    assert.equal(calls.at(-1).temperature, 0.5);
+  }
+});
+
 test("Claude completes before upstream EOF and reuses the connection after bounded drain", { timeout: 5000 }, async t => {
   const pool = new http.Agent({ keepAlive: true, maxSockets: 1 });
   let connections = 0, requests = 0, finishFirst, firstEnded = false;

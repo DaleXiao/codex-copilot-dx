@@ -170,6 +170,8 @@ Model details show exclusion reasons only when applicable: app/source disabled, 
 
 ## Claude capability adaptation
 
+When a Messages client selects Anthropic API version `2026-10-21`, CCDX reports an invalid request if generation or token counting includes `temperature`, `top_p`, or `top_k`. Remove the indicated parameter. Requests using the older version keep their existing behavior.
+
 On macOS, CCDX reads bounded declarations and their consumers from the installed Claude App. It checks model-list fields, behavior hints, native effort options and maximum-effort handling. Installation changes trigger a coalesced background recheck; the existing refresh cadence also covers missed file events. No application code is executed during inspection and no per-request application scan runs.
 
 Verified newer contracts keep stable source-qualified model IDs. Both the native profile and `/v1/models` publish the same behavior hint and maximum effort. Legacy conversation IDs remain accepted. Model order, 1M preferences, manual settings and the existing automatic-sync choice retain their ownership protection. Shared capability maps merge unchanged managed entries and preserve manual entries. A changed native configuration requires a normal Claude restart; CCDX does not interrupt running conversations.

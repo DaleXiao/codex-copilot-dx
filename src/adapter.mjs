@@ -635,6 +635,7 @@ export async function startAdapter(port = 2026, host = "127.0.0.1", options = {}
   server.ccdxSnapshot = handler.snapshot;
   server.ccdxSubscribeActivity = handler.subscribeActivity;
   server.ccdxCloseActivity = handler.closeActivity;
+  server.ccdxDrainBackground = () => options.dashboardOptions?.serviceControl?.closeNotifications?.();
   server.ccdxBusy = handler.busy;
   server.ccdxExportState = handler.exportState;
   server.ccdxImportState = handler.importState;

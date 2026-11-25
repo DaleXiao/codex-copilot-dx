@@ -1,6 +1,9 @@
 export async function closeHttpServer(server, { timeoutMs = 5000 } = {}) {
   server?.ccdxCloseActivity?.();
-  if (!server?.listening) return { forced: false };
+  if (!server?.listening) {
+    await server?.ccdxDrainBackground?.();
+    return { forced: false };
+  }
 
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -26,5 +29,5 @@ export async function closeHttpServer(server, { timeoutMs = 5000 } = {}) {
       if (e?.code === "ERR_SERVER_NOT_RUNNING") finish(null);
       else finish(e);
     }
-  });
+  }).finally(() => server.ccdxDrainBackground?.());
 }

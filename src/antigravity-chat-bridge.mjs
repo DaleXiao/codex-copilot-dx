@@ -4,6 +4,7 @@ import { MAX_UPSTREAM_CHAT_SUCCESS_BODY_BYTES } from "./http-transport.mjs";
 import { ToolArgumentDeltaGuard, upstreamChatStreamError } from "./stream-contract.mjs";
 import { observeSourceStreamFailure } from "./source-admission.mjs";
 import { sourceResponseAccepted } from "./source-response.mjs";
+import { chatOutputParts } from "./chat-output-parts.mjs";
 import { MAX_OPAQUE_LENGTH } from "./antigravity-opaque-reasoning.mjs";
 
 const object = value => value !== null && typeof value === "object" && !Array.isArray(value);
@@ -212,7 +213,7 @@ export function chatToAntigravity(response, originalNames, usage = mergeChatUsag
   if (!object(message)) throw invalid("Invalid upstream Chat response", 502);
   const parts = [];
   if (typeof message.reasoning_content === "string" && message.reasoning_content) parts.push({ text: message.reasoning_content, thought: true });
-  if (typeof message.content === "string" && message.content) parts.push({ text: message.content });
+  for (const { text, thought } of chatOutputParts(message.content)) parts.push({ text, ...(thought ? { thought: true } : {}) });
   if (Array.isArray(message.tool_calls)) for (const call of message.tool_calls) parts.push(chatFunctionPart(call, originalNames));
   const finish = { stop: "STOP", tool_calls: "STOP", length: "MAX_TOKENS", content_filter: "SAFETY" }[choice.finish_reason];
   if (!finish) throw invalid("Upstream Chat response did not complete", 502);
@@ -245,11 +246,17 @@ export async function* chatStreamToAntigravity(response, originalNames, { onChun
       // Copilot sends a full replacement value in each such delta.
       opaque = delta.reasoning_opaque.length <= MAX_OPAQUE_LENGTH ? delta.reasoning_opaque : undefined;
     }
-    for (const [key, thought] of [["reasoning_content", true], ["content", false], ["refusal", false]]) {
+    const parts = [];
+    for (const [key, thought] of [["reasoning_content", true], ["refusal", false]]) {
       if (delta[key] === undefined || delta[key] === null || delta[key] === "") continue;
       if (typeof delta[key] !== "string") throw invalid("Unsupported upstream Chat stream content", 502);
+      parts.push({ text: delta[key], thought });
+    }
+    const reasoning = parts.filter(part => part.thought);
+    const refusal = parts.filter(part => !part.thought);
+    for (const { text, thought } of [...reasoning, ...chatOutputParts(delta.content), ...refusal]) {
       if (!thought) visible = true;
-      yield { response: { candidates: [{ index: 0, content: { role: "model", parts: [{ text: delta[key], ...(thought ? { thought: true } : {}) }] } }] } };
+      yield { response: { candidates: [{ index: 0, content: { role: "model", parts: [{ text, ...(thought ? { thought: true } : {}) }] } }] } };
     }
     if (delta.function_call) throw invalid("Unsupported upstream Chat function call", 502);
     if (delta.tool_calls !== undefined && !Array.isArray(delta.tool_calls)) throw invalid("Invalid upstream Chat tool calls", 502);

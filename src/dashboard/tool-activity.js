@@ -1,14 +1,15 @@
 (() => {
   const root = document.getElementById("tool-activity");if (!root) return;
   const el = id => document.getElementById(id), canvas = el("tool-canvas"), ctx = canvas.getContext?.("2d");
-  const styles = new Set(["production", "clock", "assembly", "sorter", "gantry", "rotary", "arm", "off"]), storageKey = "ccdx.dashboard.toolMotionStyle";
+  const styles = new Set(["production", "clock", "assembly", "sorter", "gantry", "rotary", "arm", "warehouse", "off"]), storageKey = "ccdx.dashboard.toolMotionStyle";
   const pending = state => ["preparing", "waiting"].includes(state);
   const phrase = (key, values = {}) => globalThis.ccdxLanguage.format(key, values);
   const text = (id, key, values) => globalThis.ccdxLanguage.set(el(id), key, values);
   const state = { scene: "idle", style: "production" };
   const dashboardScript = document.currentScript.src;
   const renderers = new Map();
-  const rendererName = () => state.style === "arm" ? "arm" : "machines";
+  const rendererName = () => ["arm", "warehouse"].includes(state.style) ? state.style : "machines";
+  const rendererFactories = { arm: "ccdxToolArm", warehouse: "ccdxToolWarehouse", machines: "ccdxToolMachines" };
   try { const saved = localStorage.getItem(storageKey);if (styles.has(saved)) state.style = saved; } catch {}
   const motion = globalThis.matchMedia?.("(prefers-reduced-motion: reduce)") || { matches: false, addEventListener() {} };
   let records = [], fresh = false, supported = false, visible = true, raf = 0, last = 0, start = performance.now(), expiry = null;
@@ -63,7 +64,7 @@
     const script = document.createElement("script");
     script.src = asset.href;
     script.addEventListener("load", () => {
-      const create = name === "arm" ? globalThis.ccdxToolArm : globalThis.ccdxToolMachines;
+      const create = globalThis[rendererFactories[name]];
       if (typeof create !== "function") return;
       renderers.set(name, create(ctx));
       if (rendererName() === name) refreshAnimation();

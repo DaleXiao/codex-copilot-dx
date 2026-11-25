@@ -165,6 +165,40 @@ test("the native Antigravity Stop command wakes Bark before its regular scan", a
   assert.doesNotMatch(JSON.stringify(pushes), /private/);
 });
 
+test("closing Bark aborts an in-flight notification without repeating its durable claim", async t => {
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), "ccdx-bark-drain-"));
+  const directory = path.join(home, "codex", "sessions");
+  await fs.mkdir(directory, { recursive: true });
+  const env = { CODEX_HOME: path.join(home, "codex"), XDG_CONFIG_HOME: path.join(home, "settings") };
+  const started = Promise.withResolvers();
+  let sends = 0, aborted = false, saved;
+  const service = createBarkNotifications({ env, home, scanIntervalMs: 20,
+    secretStore: { get: async () => saved, set: async (_ref, url) => { saved = url; } },
+    async fetchImpl(_address, { signal }) {
+      sends++;
+      return new Promise((_, reject) => {
+        signal.addEventListener("abort", () => { aborted = true;reject(signal.reason); }, { once: true });
+        started.resolve();
+      });
+    },
+  });
+  t.after(async () => { await service.close();await fs.rm(home, { recursive: true, force: true }); });
+  await service.save({ enabled: true, minutes: 1, title, body, url });
+  const file = path.join(directory, "rollout-drain.jsonl");
+  await fs.writeFile(file, line({ type:"session_meta",payload:{ id:"drain-test",source:"vscode" } }) +
+    line({ type:"event_msg",timestamp:new Date().toISOString(),payload:{
+      type:"task_complete",turn_id:"turn",root_turn_id:"turn",duration_ms:60000,last_agent_message:"fixture",
+    } }));
+  await Promise.race([started.promise, delay(3000).then(() => { throw new Error("Bark delivery did not start"); })]);
+  await service.close();
+  assert.equal(aborted,true);
+  assert.equal(sends,1);
+  const ledger = path.join(env.XDG_CONFIG_HOME, "codex-copilot-dx", "bark-delivered.json");
+  assert.equal(JSON.parse(await fs.readFile(ledger, "utf8")).length,1);
+  await service.close();
+  assert.equal(sends,1);
+});
+
 test("Bark is opt-in, applies the minimum whole-turn duration and shares durable deduplication", async t => {
   const home = await fs.mkdtemp(path.join(os.tmpdir(), "ccdx-bark-"));
   const directory = path.join(home, "codex", "sessions", "2022", "11", "23");

@@ -12,7 +12,7 @@ export async function checkToolActivity({ page, codex, metrics, performanceCheck
       }
     });
   });
-  const styles = ["production", "clock", "assembly", "sorter", "gantry", "rotary", "arm"];
+  const styles = ["production", "clock", "assembly", "sorter", "gantry", "rotary", "arm", "warehouse"];
   assert.equal(await page.evaluate(() => typeof globalThis.ccdxToolArm), "undefined");
   assert.equal(await page.locator("#tool-style").inputValue(), "production");
   assert.deepEqual(await page.locator("#tool-style option").evaluateAll(options => options.map(option => option.value)), [...styles, "off"]);
@@ -28,6 +28,9 @@ export async function checkToolActivity({ page, codex, metrics, performanceCheck
   const subscriptionRequests = await page.evaluate(() => performance.getEntriesByType("resource").filter(row => row.name.includes("/_ccdx/activity")).length);
   for (const style of styles) {
     await page.selectOption("#tool-style", style);
+    if (style === "warehouse") {
+      await page.waitForFunction(() => typeof globalThis.ccdxToolWarehouse === "function");
+    }
     if (style === "arm") {
       await page.waitForFunction(() => {
         const canvas = document.getElementById("tool-canvas");

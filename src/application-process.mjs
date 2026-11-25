@@ -4,6 +4,7 @@ import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { installedWindowsPredictionAppAsync } from "./native-prediction-windows.mjs";
+import { inspectWindowsAntigravity } from "./windows-antigravity-app.mjs";
 
 const execute = promisify(execFile);
 const definitions = {
@@ -31,7 +32,8 @@ export function processFamily(processes, root) {
 }
 
 export async function inspectApplicationProcesses({ platform = process.platform, home = os.homedir(), env = process.env,
-  exec = execute, discoverWindows = installedWindowsPredictionAppAsync, applicationsRoot = "/Applications" } = {}) {
+  exec = execute, discoverWindows = installedWindowsPredictionAppAsync, discoverWindowsAntigravity = inspectWindowsAntigravity,
+  applicationsRoot = "/Applications" } = {}) {
   if (!["darwin", "win32"].includes(platform)) return { apps: Object.fromEntries(Object.keys(definitions).map(id => [id, { status: "unsupported" }])), processes: [] };
   const apps = {}, processes = [];
   if (platform === "darwin") {
@@ -54,16 +56,19 @@ export async function inspectApplicationProcesses({ platform = process.platform,
       apps[id] = running.length > 1 ? { status: "multiple" } : running[0] || installed[0] || { status: "not_installed" };
     }
   } else {
-    const result = await exec("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", windowsInventory], { ...runOptions, env: metadataEnvironment(env) });
+    const [result, codex, antigravity] = await Promise.all([
+      exec("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", windowsInventory], { ...runOptions, env: metadataEnvironment(env) }),
+      discoverWindows({ env }).catch(() => null),
+      discoverWindowsAntigravity({ env, exec }).catch(() => ({ status: "unknown" })),
+    ]);
     const inventory = JSON.parse(result.stdout);
     for (const row of inventory.processes || []) if (Number.isSafeInteger(row.pid) && row.pid > 0 && Number.isFinite(Date.parse(row.started))) processes.push(row);
-    let codex;try { codex = await discoverWindows({ env }); } catch {}
     apps.codex = codex ? { app: codex.app, target: codex.app, executable: codex.app } : { status: "not_installed" };
     const claude = inventory.claude;
     apps.claude_app = claude && path.win32.isAbsolute(claude.app) && path.win32.basename(claude.app).toLowerCase() === "claude.exe"
       && (claude.target === claude.app || /^shell:AppsFolder\\[A-Za-z0-9._-]+![A-Za-z0-9._-]+$/.test(claude.target))
       ? { app: claude.app, target: claude.target, executable: claude.app } : { status: "not_installed" };
-    apps.antigravity = { status: "unsupported" };
+    apps.antigravity = antigravity;
   }
   for (const info of Object.values(apps)) if (info.executable) {
     const same = command => platform === "win32" ? command?.toLowerCase() === info.executable.toLowerCase() : command === info.executable;

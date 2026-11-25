@@ -612,8 +612,7 @@
   window.addEventListener("ccdx:source-view", () => { if (data) list(); });
   window.addEventListener("ccdx:providers", () => { if (desiredSource && providerEntries.some(p => p.id === desiredSource)) { const id = desiredSource;desiredSource = null;chooseProvider(id); }if (data) list(); });
   new MutationObserver(() => { if (data) list(); }).observe(document.documentElement, { attributes: true, attributeFilter: ["lang"] });
-  globalThis.ccdxConnections = { load,
+  globalThis.ccdxConnections = { load, ready: load(),
     updateMemory(snapshot) { const c = snapshot?.clients?.find(c => c.id === "codex");if (data && c?.memory_model) { client("codex").memory_model = c.memory_model;memoryRender(); } }, editClient: id => { if (data && client(id)) { editClient(client(id)); } } };
   for (const button of document.querySelectorAll("[data-client-access]")) button.addEventListener("click", () => globalThis.ccdxConnections.editClient(button.dataset.clientAccess));
-  void load();
 })();

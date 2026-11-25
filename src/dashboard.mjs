@@ -2,55 +2,36 @@ import { readFile } from "node:fs/promises";
 import { isLoopbackAddress, isLoopbackHostHeader } from "./security.mjs";
 import { createHash } from "node:crypto";
 import { ADAPTER_VERSION } from "./running-adapter.mjs";
+import { DASHBOARD_ASSETS, DASHBOARD_BUNDLE_ASSETS } from "./dashboard-assets.mjs";
 
-const ASSETS = new Map([
-  ["/", ["./dashboard/index.html", "text/html; charset=utf-8"]],
-  ["/ui.css", ["./dashboard/ui.css", "text/css; charset=utf-8"]],
-  ["/language.js", ["./dashboard/language.js", "text/javascript; charset=utf-8"]],
-  ["/theme.js", ["./dashboard/theme.js", "text/javascript; charset=utf-8"]],
-  ["/refresh.js", ["./dashboard/refresh.js", "text/javascript; charset=utf-8"]],
-  ["/live.js", ["./dashboard/live.js", "text/javascript; charset=utf-8"]],
-  ["/icons.js", ["./dashboard/icons.js", "text/javascript; charset=utf-8"]],
-  ["/disclosure.js", ["./dashboard/disclosure.js", "text/javascript; charset=utf-8"]],
-  ["/time.js", ["./dashboard/time.js", "text/javascript; charset=utf-8"]],
-  ["/view-boundary.js", ["./dashboard/view-boundary.js", "text/javascript; charset=utf-8"]],
-  ["/status.js", ["./dashboard/status.js", "text/javascript; charset=utf-8"]],
-  ["/activity.js", ["./dashboard/activity.js", "text/javascript; charset=utf-8"]],
-  ["/flow.js", ["./dashboard/flow.js", "text/javascript; charset=utf-8"]],
-  ["/tool-activity-machines.js", ["./dashboard/tool-activity-machines.js", "text/javascript; charset=utf-8"]],
-  ["/tool-activity-arm.js", ["./dashboard/tool-activity-arm.js", "text/javascript; charset=utf-8"]],
-  ["/tool-activity.js", ["./dashboard/tool-activity.js", "text/javascript; charset=utf-8"]],
-  ["/usage.js", ["./dashboard/usage.js", "text/javascript; charset=utf-8"]],
-  ["/context.js", ["./dashboard/context.js", "text/javascript; charset=utf-8"]],
-  ["/updates.js", ["./dashboard/updates.js", "text/javascript; charset=utf-8"]],
-  ["/animation.js", ["./dashboard/animation.js", "text/javascript; charset=utf-8"]],
-  ["/ui.js", ["./dashboard/ui.js", "text/javascript; charset=utf-8"]],
-  ["/preferences.js", ["./dashboard/preferences.js", "text/javascript; charset=utf-8"]],
-  ["/bark.js", ["./dashboard/bark.js", "text/javascript; charset=utf-8"]],
-  ["/features.js", ["./dashboard/features.js", "text/javascript; charset=utf-8"]],
-  ["/applications.js", ["./dashboard/applications.js", "text/javascript; charset=utf-8"]],
-  ["/console.js", ["./dashboard/console.js", "text/javascript; charset=utf-8"]],
-  ["/tools.js", ["./dashboard/tools.js", "text/javascript; charset=utf-8"]],
-  ["/connections.js", ["./dashboard/connections.js", "text/javascript; charset=utf-8"]],
-  ["/privacy.js", ["./dashboard/privacy.js", "text/javascript; charset=utf-8"]],
-  ["/gemini.js", ["./dashboard/gemini.js", "text/javascript; charset=utf-8"]],
-]);
-let bundle;
-function assets() {
-  bundle ||= Promise.all([...ASSETS].map(async ([name, [file, type]]) => {
-    let body = await readFile(new URL(file, import.meta.url));
-    if (name === "/") body = Buffer.from(body.toString().replace(/(src|href)="(\/[a-z-]+\.(?:js|css))"/g, `$1="$2?v=${ADAPTER_VERSION}"`));
-    return [name, { body, type, etag: `"${createHash("sha256").update(body).digest("hex")}"` }];
-  })).then(async entries => {
-    const installed = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
-    if (installed.version !== ADAPTER_VERSION) throw new Error("Dashboard files changed; restart CCDX before loading the new dashboard");
-    // The Requests view loads its drawing code separately. Shared view code remains bundled.
-    const scripts = entries.filter(([name, asset]) => asset.type.startsWith("text/javascript") &&
-      !["/language.js", "/theme.js", "/tool-activity-machines.js", "/tool-activity-arm.js"].includes(name));
-    const body = Buffer.concat(scripts.flatMap(([name, asset]) => [Buffer.from("// " + name + "\n"), asset.body, Buffer.from("\n;\n")]));
-    return new Map([...entries, ["/dashboard.js", { body, type: "text/javascript; charset=utf-8", etag: `"${createHash("sha256").update(body).digest("hex")}"` }]]);
-  }).catch(error => { bundle = null;throw error; });
-  return bundle;
+const loaded = new Map();
+let versionCheck;
+function checkVersion() {
+  versionCheck ||= readFile(new URL("../package.json", import.meta.url), "utf8").then(text => {
+    if (JSON.parse(text).version !== ADAPTER_VERSION) throw new Error("Dashboard files changed; restart CCDX before loading the new dashboard");
+  }).finally(() => { versionCheck = null; });
+  return versionCheck;
+}
+
+function asset(name) {
+  if (!loaded.has(name)) loaded.set(name, (async () => {
+    await checkVersion();
+    let body, type;
+    if (name === "/dashboard.js") {
+      const files = await Promise.all(DASHBOARD_BUNDLE_ASSETS.map(asset));
+      body = Buffer.concat(files.flatMap(({ body }, i) => [Buffer.from("// " + DASHBOARD_BUNDLE_ASSETS[i] + "\n"), body, Buffer.from("\n;\n")]));
+      type = "text/javascript; charset=utf-8";
+    } else {
+      const [file, contentType] = DASHBOARD_ASSETS.get(name);
+      body = await readFile(new URL(file, import.meta.url));
+      type = contentType;
+      if (name === "/") body = Buffer.from(body.toString().replace(/(src|href)="(\/[a-z-]+\.(?:js|css))"/g, `$1="$2?v=${ADAPTER_VERSION}"`));
+    }
+    // A cold asset may be requested after the on-disk package was replaced.
+    await checkVersion();
+    return { body, type, etag: `"${createHash("sha256").update(body).digest("hex")}"` };
+  })().catch(error => { loaded.delete(name); throw error; }));
+  return loaded.get(name);
 }
 
 export async function serveDashboard(req, res, pathname) {
@@ -66,7 +47,7 @@ export async function serveDashboard(req, res, pathname) {
   if (version && version !== ADAPTER_VERSION) {
     res.writeHead(409, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" });res.end("Dashboard version changed. Reload this page.");return;
   }
-  const { body, type: contentType, etag } = (await assets()).get(pathname);
+  const { body, type: contentType, etag } = await asset(pathname);
   const unchanged = pathname !== "/" && String(req.headers?.["if-none-match"] || "").split(/\s*,\s*/).includes(etag);
   res.writeHead(unchanged ? 304 : 200, {
     "Content-Type": contentType,

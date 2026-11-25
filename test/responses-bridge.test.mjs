@@ -233,6 +233,21 @@ test("mixed reasoning and answer chunks retain the first answer fragment and fin
   assert.equal(completed.output[0].content[0].text, "19 items");assert.equal(completed.usage.total_tokens, 8);assert.deepEqual(chunks, source);
 });
 
+test("chunked Chat thinking and text become distinct valid Responses events", async () => {
+  const content = [{ type: "thinking", thinking: [{ type: "text", text: "fixture thought" }] },
+    { type: "text", text: "fixture answer" }];
+  const wire = "data: " + JSON.stringify({ choices: [{ delta: { content }, finish_reason: "stop" }] }) + "\n\ndata: [DONE]\n\n";
+  const events = [];
+  assert.equal(await forwardToChat({ model: "fixture", messages: [], stream: true },
+    async (type, data) => events.push({ type, data }), () => {}, error => { throw error; },
+    { chatCompletionsFn: async () => new Response(wire, { headers: { "content-type": "text/event-stream" } }) }), true);
+  assert.equal(events.find(item => item.type === "response.reasoning_summary_text.delta").data.delta, "fixture thought");
+  assert.equal(events.find(item => item.type === "response.output_text.delta").data.delta, "fixture answer");
+  const completed = events.find(item => item.type === "response.completed").data.response;
+  assert.equal(completed.output[0].summary[0].text, "fixture thought");
+  assert.equal(completed.output[1].content[0].text, "fixture answer");
+});
+
 test("forwardToChat: preserves streaming upstream errors", async () => {
   let failure;
   await forwardToChat(

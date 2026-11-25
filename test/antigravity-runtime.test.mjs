@@ -13,7 +13,7 @@ import {runManagementCommand} from "../src/cli-management.mjs";
 const catalog={data:[{id:"gemini-4-carbon",supported_endpoints:["/chat/completions"],capabilities:{supports:{reasoning_effort:["low","medium","high"]},limits:{max_context_window_tokens:1000000,max_output_tokens:64000}}}]};
 function fixture(t,state="running"){
   const home=fs.mkdtempSync(path.join(os.tmpdir(),"ccdx-gemini-")),env={},file=userSettingsPath({home,env});fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,JSON.stringify({future:"keep",terminal_color_theme:"pink"}));
-  const calls=[],options={home,env,client:{},models:()=>catalog,inspect:async()=>({status:state,app:"/Applications/Gemini.app",version:"1.135.1.1291",pids:state==="running"?[38378]:[]}),exec:async(...args)=>{calls.push(args)},guardSource:()=>{}};
+  const calls=[],options={home,env,client:{},models:()=>catalog,platform:"darwin",inspect:async()=>({status:state,app:"/Applications/Gemini.app",version:"1.135.1.1291",pids:state==="running"?[38378]:[]}),exec:async(...args)=>{calls.push(args)},guardSource:()=>{}};
   const runtime=createAntigravityRuntime(options);t.after(()=>{runtime.close();fs.rmSync(home,{recursive:true,force:true})});return {runtime,options,calls,file,home};
 }
 test("enable is explicit, edits only CCDX settings, and never restarts a running App",async t=>{

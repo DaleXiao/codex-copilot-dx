@@ -217,6 +217,8 @@ try {
             for (const palette of (options.get("--palettes") || "green,klein,pink,mono").split(",")) {
         const caseName = JSON.stringify({ engine, language, theme, palette, width });
         console.log(`Browser case: ${caseName}`);
+        const startedAt = performance.now();
+        let phase = "first-paint";
         const page = await browser.newPage({ viewport: { width, height: 900 }, reducedMotion: "no-preference" });
         // Node's clock remains live when page.clock virtualizes browser timers.
         const watchdog = setTimeout(() => {
@@ -227,12 +229,15 @@ try {
         page.setDefaultTimeout(15000);
         const errors = [];
         const machineLoads = [];
+        const connectionLoads = [];
         page.on("request", request => {
           const url = new URL(request.url());
           if (url.pathname === "/tool-activity-machines.js") machineLoads.push(url);
+          if (url.pathname === "/connections.js") connectionLoads.push(url);
         });
         page.on("pageerror", error => { errors.push(error.message);console.error("Page error:", error.stack || error.message); });
         page.on("response", response => { if (/\.(?:js|css)$/.test(new URL(response.url()).pathname) && response.status() >= 400) errors.push(`Asset ${response.status()}: ${response.url()}`); });
+        try {
         signin = { source: "account_tools", configured: true, saved: true, login: "synthetic_user", store: "legacy", online: null, checked_at: null, operation: null };
         await page.addInitScript(({ language, theme, palette }) => { localStorage.setItem("ccdx.dashboard.palette", palette); localStorage.setItem("ccdx.dashboard.language", language); localStorage.setItem("ccdx.dashboard.theme", theme); }, { language, theme, palette });
         await page.addInitScript(() => {
@@ -316,6 +321,7 @@ try {
         assert.ok(toggleBox && toggleBox.x > brandText.x + brandText.width &&
           Math.abs(toggleBox.y + toggleBox.height / 2 - brandText.y - brandText.height / 2) <= 1, "Toggle sits to the right of the centered wordmark");
         assert.equal(machineLoads.length, 0, "Overview does not request the tool animation renderer");
+        assert.equal(connectionLoads.length, 0, "Overview does not request the connection editor");
         assert.ok(brandIcon && brandText && Math.abs(brandIcon.y + brandIcon.height / 2 - brandText.y - brandText.height / 2) <= 1,
           "Sidebar brand icon and text must share a vertical center at every viewport");
         if (output && language === "zh" && palette === "mono") await page.locator(".sidebar-brand").screenshot({ path: path.join(output, `${engine}-${width}-${theme}-brand.png`) });
@@ -361,6 +367,7 @@ try {
         await assertAutoRefreshCentered();
         await page.locator("#auto-refresh").click();await assertAutoRefreshCentered();
         for (const route of ["codex", "claude", "usage", "requests", "checks", "overview"]) {
+          phase = "navigation:" + route;
           await nav(route);
           const header = await page.locator(".topbar").boundingBox();
           assert.equal(header.height, layout.height, `Header height is stable in ${route}`);
@@ -675,6 +682,7 @@ try {
         if (output && language === "zh" && width === 1280) await page.screenshot({ path: path.join(output, `${engine}-${palette}-${theme}-checks.png`), fullPage: true });
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, "Checks stay within the viewport");
         await nav("requests");
+        phase = "requests";
         await page.waitForFunction(() => typeof globalThis.ccdxToolMachines === "function");
         assert.equal(machineLoads.length, 1);
         assert.equal(machineLoads[0].searchParams.get("v"), await page.locator('script[src^="/dashboard.js"]').evaluate(node => new URL(node.src).searchParams.get("v")));
@@ -1172,6 +1180,7 @@ try {
         if (width >= 1024) assert.equal(appHeader.aligned, true, "Title and launch controls share the desktop header row");
         if(!await page.locator("#gemini-enabled").isChecked())await page.locator("#gemini-enabled").check();
         await page.waitForFunction(()=>document.querySelectorAll('#gemini-models tr').length===2&&document.querySelectorAll('#gemini-models input').length===2&&!document.getElementById("gemini-enabled").disabled);
+        phase = "antigravity";
         const modelBoxes=page.locator("#gemini-models td:first-child input");
         assert.equal(await page.locator("#gemini-models td:nth-child(4) input").count(),0,"Reasoning is capability text, as on Codex and Claude");
         for(const text of await page.locator("#gemini-models td:nth-child(4)").allTextContents())assert.equal(text,"low / medium / high");
@@ -1280,6 +1289,7 @@ try {
         await antigRow.waitFor();assert.equal(await antigRow.locator(".state-icon").count(),2,"Antigravity uses the common setup/service status icons");
         assert.equal(await antigRow.locator("td").nth(3).locator(".state-running").count(),1,"Local service does not mean request observation");
         if (output && language === "zh") await page.screenshot({ path: path.join(output, `${engine}-${palette}-${theme}-${width}-overview.png`), fullPage: true });
+        phase = "sidebar";
         const expandedWidth = (await page.locator("main").boundingBox()).width;
         await sidebarToggle.focus();
         await page.keyboard.press("Enter");
@@ -1313,9 +1323,17 @@ try {
         await sidebarTooltip.waitFor({ state: "hidden" });
         assert.equal(await requestLink.getAttribute("aria-current"), "page");
         assert.equal(errors.length, 0, errors.join("\n"));
-        results.push({ engine, language, theme, palette, width, passed: true });
-        clearTimeout(watchdog);
-        await page.close();
+        assert.equal(connectionLoads.length >= 1, true, "App views load the separate versioned connection editor");
+        const receipt = { engine, language, theme, palette, width, passed: true, elapsed_ms: Math.round(performance.now() - startedAt) };
+        results.push(receipt);
+        console.log(JSON.stringify({ browser_case: receipt }));
+        } catch (error) {
+          console.error(JSON.stringify({ browser_case: { engine, language, theme, palette, width, phase, passed: false, elapsed_ms: Math.round(performance.now() - startedAt) } }));
+          throw error;
+        } finally {
+          clearTimeout(watchdog);
+          await page.close();
+        }
       }
     } finally { await browser.close(); }
   }

@@ -26,7 +26,9 @@ Antigravity tool schemas are converted to Chat Completions schemas. Object schem
 The dashboard separates source enablement, source-to-app authorization and per-app model choices. Source enablement is immediate; authorization and model drafts use explicit Save / Discard actions. GitHub, Microsoft 365 and custom APIs share the same authorization form. Antigravity's source authorization and its Copilot access switch represent the same saved integration state.
 
 
-`gemini-app.mjs` verifies the installed App and prepares a process-local
+`gemini-app.mjs` shares desktop launch planning with `application-control.mjs`.
+`windows-antigravity-app.mjs` discovers native Windows installations and verifies the executable, application archive and language server before a launch.
+The resulting plan prepares a process-local
 `CLOUD_CODE_URL` launch without editing its bundle or closing a running App.
 `antigravity-runtime.mjs` owns explicit enablement, source-history protection and
 the native management snapshot. The adapter loads it only for its management
@@ -1277,3 +1279,7 @@ The implementation takes the native/gateway-state ownership separation from [Mag
 `tool-activity.mjs` stores bounded, memory-only metadata behind each stream-performance observer. Existing parsed Responses items, Messages blocks and Gemini function calls supply tool names and scoped identifiers; no argument or output body is copied. The existing session/profile HMAC and application label isolate result matching. Results match call IDs, with a unique-name-only fallback for Gemini. Request completion changes generated calls to waiting, never to successful execution. Observable returned results, source failures and cancellation terminate the corresponding observations. Live response activity renews preparing observations with at most one notification per second per request. Missing evidence becomes unknown after 90 seconds, with a bounded late-result window. Snapshot reads perform lazy retention cleanup; there is no server polling loop.
 
 The WebUI consumes this metadata through the existing activity subscription. `dashboard/tool-activity.js` draws only the selected style, caches layout/theme measurements, caps drawing at 30 fps and DPR 1.5, pauses hidden/off-screen/reduced-motion views, and stops terminal cues within 0.9 seconds. Assembly line is the default; Beam ring and Grid are alternatives. Removed styles fall back to the default and Off retains state text. With no pending calls, conversation-purpose active requests supply processing/reply cues; internal diagnostics and terminal requests are excluded. Non-live request snapshots expire after six seconds. Local deadline timers stop stale activity even when the stream has no new events. Native controls, theme variables and the language dictionary preserve the existing UI contract. Existing `requests --active` and `requests tools` grammar also drive TUI discovery.
+
+## Dashboard assets
+
+`dashboard-assets.mjs` owns the loopback asset allowlist and the ordered bootstrap bundle. The theme runs before paint; language and the bootstrap run in deferred order. Connection editors mount on their own views. Requests load only the selected drawing asset. Cold reads verify the installed package version around each file load.

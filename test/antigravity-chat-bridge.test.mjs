@@ -2,6 +2,17 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { antigravityToChat, chatStreamToAntigravity, chatToAntigravity, parseAntigravityJSON } from "../src/antigravity-chat-bridge.mjs";
 
+test("chunked Chat content projects thinking and visible text in order", async () => {
+  const content = [{ type: "thinking", thinking: [{ type: "text", text: "fixture thought" }] },
+    { type: "text", text: "fixture answer" }];
+  const expected = [{ text: "fixture thought", thought: true }, { text: "fixture answer" }];
+  assert.deepEqual(chatToAntigravity({ choices: [{ message: { content }, finish_reason: "stop" }] }, new Map()).candidates[0].content.parts, expected);
+  const wire = "data: " + JSON.stringify({ choices: [{ delta: { content }, finish_reason: "stop" }] }) + "\n\ndata: [DONE]\n\n";
+  const parts = [];
+  for await (const event of chatStreamToAntigravity(new Response(wire), new Map())) parts.push(...(event.response?.candidates?.[0]?.content?.parts || []));
+  assert.deepEqual(parts, expected);
+});
+
 test("native zero-argument object schemas retain the explicit properties required by Copilot", () => {
   const parameters = { type: "OBJECT", properties: { options: { type: "OBJECT" }, name: { type: "STRING" } } };
   const request = { contents: [{ role: "user", parts: [{ text: "fixture" }] }], tools: [{ functionDeclarations: [

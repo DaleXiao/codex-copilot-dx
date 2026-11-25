@@ -102,3 +102,19 @@ test("legacy and header Antigravity opens share one verified home-folder launch"
   assert.deepEqual(calls[1],["/usr/bin/open",["-a",app,"--env","CLOUD_CODE_URL=http://127.0.0.1:2026/antigravity"]]);
   assert.equal(legacy.snapshot().app.status,"starting");assert.equal(controller.snapshot().antigravity.status,"starting");assert.equal(controller.busy(),false);
 });
+
+test("Windows Antigravity shares verified launch between CLI and dashboard control", async t => {
+  const home=await fs.mkdtemp(path.join(os.tmpdir(),"ccdx-verified-windows-app-"));t.after(()=>fs.rm(home,{recursive:true,force:true}));
+  const env={},file=userSettingsPath({home,env});await fs.mkdir(path.dirname(file),{recursive:true});await fs.writeFile(file,JSON.stringify({gemini_antigravity_enabled:true}));
+  const app=String.raw`C:\Users\fixture\AppData\Local\Programs\Antigravity\Antigravity.exe`,calls=[];
+  const controller=createApplicationControl({home,env,platform:"win32",
+    inspect:async()=>({apps:{antigravity:{status:"stopped",app,target:app}},processes:[]}),
+    configuration:()=>({state:"configured",revision:"fixture"}),
+    inspectGemini:async input=>{calls.push({verified:input.app});return {status:"stopped",app,pids:[]};},
+    launchWindowsGemini:async plan=>calls.push(plan)});
+  const legacy=createAntigravityRuntime({home,env,platform:"win32",applicationControl:controller,client:{},models:()=>[]});t.after(()=>legacy.close());
+  const [opened,next]=await Promise.all([legacy.action({action:"open"},"http://127.0.0.1:2026"),controller.action({id:"antigravity",operation:"open"})]);
+  assert.equal(opened.last_operation.status,"opened");
+  assert.equal(next.status,"opening");
+  assert.deepEqual(calls,[{verified:app},{status:"prepared",command:app,args:[],environment:{CLOUD_CODE_URL:"http://127.0.0.1:2026/antigravity"}}]);
+});

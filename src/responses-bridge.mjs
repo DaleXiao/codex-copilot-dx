@@ -4,6 +4,7 @@ import { chatCompletions } from "./copilot.mjs";
 import { webStreamLines } from "./stream.mjs";
 import { cancelSourceResponse, sourceResponseAccepted, sourceResponseFailed } from "./source-response.mjs";
 import { normalizeCallLessToolOutputs } from "./responses-tool-output.mjs";
+import { chatOutputParts } from "./chat-output-parts.mjs";
 import {
   abortErrorStatusCode,
   isAbortLikeError,
@@ -322,7 +323,10 @@ export function chatToResponses(chatResp, model, { toolChoice, toolAdapter } = {
     const name = call?.function?.name || "";
     return terminal.status === "completed" ? !allowed.has(name) : name && ![...allowed].some(candidate => candidate.startsWith(name));
   }) || terminal.status === "completed" && toolChoice.allowed_tools.mode === "required" && !msg?.tool_calls?.length)) throw disallowedUpstreamTool();
-  if (msg?.content) output.push({ type: "message", id: `msg_${uid()}`, role: "assistant", status: terminal.status, content: [{ type: "output_text", text: msg.content }] });
+  for (const { text, thought } of chatOutputParts(msg?.content)) {
+    output.push(thought ? { type: "reasoning", id: `rs_${uid()}`, summary: [{ type: "summary_text", text }] }
+      : { type: "message", id: `msg_${uid()}`, role: "assistant", status: terminal.status, content: [{ type: "output_text", text }] });
+  }
   if (msg?.tool_calls) for (const tc of msg.tool_calls) output.push(toolAdapter
     ? toolAdapter.outputItem({ id: tc.id, callId: tc.id, name: tc.function?.name, arguments: tc.function?.arguments }, terminal.status)
     : { type: "function_call", id: tc.id, call_id: tc.id, name: tc.function.name, arguments: tc.function.arguments, status: terminal.status });
@@ -400,6 +404,7 @@ export async function forwardToChat(chatReq, emitEvent, onDone, onError, options
   let finishReason = null;
   let fullText = "";
   let messageItem = null;
+  let reasoningItem = null;
   let nextOutputIndex = 0;
   let usage = { input_tokens: 0, output_tokens: 0, total_tokens: 0 };
   const toolCalls = new Map();
@@ -462,11 +467,32 @@ export async function forwardToChat(chatReq, emitEvent, onDone, onError, options
     return { tool, created: true };
   };
 
+  async function appendReasoning(text) {
+    if (!reasoningItem) {
+      reasoningItem = { id: `rs_${uid()}`, outputIndex: nextOutputIndex++, text: "" };
+      const { id, outputIndex } = reasoningItem;
+      await emitEvent("response.output_item.added", { output_index: outputIndex, item: { type:"reasoning", id, summary:[] } });
+      await emitEvent("response.reasoning_summary_part.added", { item_id:id, output_index:outputIndex, summary_index:0, part:{ type:"summary_text", text:"" } });
+    }
+    reasoningItem.text += text;
+    await emitEvent("response.reasoning_summary_text.delta", { item_id:reasoningItem.id, output_index:reasoningItem.outputIndex, summary_index:0, delta:text });
+  }
+
   const emitTerminal = async () => {
     const terminal = chatTerminal(finishReason);
     if (allowed && terminal.status === "completed" && ([...toolCalls.values()].some(tool => !allowed.has(tool.name)) || allowedRequired && !toolCalls.size)) throw disallowedUpstreamTool();
-    if (!messageItem && toolCalls.size === 0) await ensureMessageItem();
+    if (!messageItem && !reasoningItem && toolCalls.size === 0) await ensureMessageItem();
     const output = [];
+    if (reasoningItem) {
+      const { id, text, outputIndex } = reasoningItem;
+      const part = { type:"summary_text", text };
+      const item = { type:"reasoning", id, summary:[part] };
+      const details = { item_id:id, output_index:outputIndex, summary_index:0 };
+      await emitEvent("response.reasoning_summary_text.done", { ...details, text });
+      await emitEvent("response.reasoning_summary_part.done", { ...details, part });
+      await emitEvent("response.output_item.done", { output_index:outputIndex, item });
+      output[outputIndex] = item;
+    }
     if (messageItem) {
       const item = {
         type: "message",
@@ -556,11 +582,15 @@ export async function forwardToChat(chatReq, emitEvent, onDone, onError, options
       if (choice?.finish_reason) finishReason = choice.finish_reason;
       const delta = choice?.delta;
       if (!delta) continue;
-      if (isChatOutputDelta(delta)) markPerformanceOutput();
-      if (delta.content) {
-        const message = await ensureMessageItem();
-        fullText += delta.content;
-        await emitEvent("response.output_text.delta", { output_index: message.outputIndex, content_index: 0, delta: delta.content });
+      const parts = chatOutputParts(delta.content);
+      if (parts.length || isChatOutputDelta(delta)) markPerformanceOutput();
+      for (const { text, thought } of parts) {
+        if (thought) await appendReasoning(text);
+        else {
+          const message = await ensureMessageItem();
+          fullText += text;
+          await emitEvent("response.output_text.delta", { output_index: message.outputIndex, content_index: 0, delta: text });
+        }
       }
       if (delta.tool_calls) {
         for (const tc of delta.tool_calls) {

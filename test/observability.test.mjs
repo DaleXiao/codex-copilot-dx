@@ -175,6 +175,11 @@ test("dashboard assets serve on loopback without initializing image tools or aff
   const arm = await invoke(handler, { url: "/tool-activity-arm.js", ...request });
   assert.equal(arm.statusCode, 200);
   assert.match(arm.body, /globalThis\.ccdxToolArm\s*=/);
+  assert.doesNotMatch(dashboard.body, /globalThis\.ccdxToolWarehouse\s*=/);
+  assert.doesNotMatch(dashboard.body, /function mountClient\(/);
+  const warehouse = await invoke(handler, { url: "/tool-activity-warehouse.js", ...request });
+  assert.equal(warehouse.statusCode, 200);
+  assert.match(warehouse.body, /globalThis\.ccdxToolWarehouse\s*=/);
   const head = await invoke(handler, { method: "HEAD", url: "/", ...request });
   assert.equal(head.statusCode, 200);
   assert.equal(head.body, "");

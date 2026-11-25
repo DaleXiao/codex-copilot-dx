@@ -1,7 +1,9 @@
-# CCDX 1.4.22
+# CCDX 1.4.23
 
-- Select Articulated robot arm in Requests for an isometric motion style with linked cylinders, gears and grippers. Occlusion follows the arm through turns and placement.
-- Antigravity keeps the model list, focus and unsaved choices when you return to the page. The page Refresh button reads local state. Refresh models explicitly fetches the upstream catalog.
-- Claude generation and token counting reject non-string user and system text blocks consistently and identify the invalid field.
+- Add warehouse pallet robots to Requests, with right-angle aisles, dashed markings and coordinated intersection access.
+- Show localized page names when you hover over or focus collapsed sidebar icons.
+- Add a native Windows Antigravity App launcher for verified official x64 and ARM64 builds.
+- Preserve text and thinking blocks from compatible Chat upstreams in Responses and Antigravity.
+- Load model editors and optional drawing assets when needed. Cancel in-flight Bark delivery when the service shuts down.
 
-Unverified: arm motion on physical touch devices and live provider replay of malformed Claude requests.
+Unverified: signed-in Windows Antigravity App catalog, inference and ordinary-chat isolation.

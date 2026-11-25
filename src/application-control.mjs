@@ -6,12 +6,13 @@ import { inspectApplicationConfiguration } from "./application-configuration.mjs
 import { createApplicationEvidence } from "./application-evidence.mjs";
 import { planGeminiAppLaunch, inspectGeminiApp } from "./gemini-app.mjs";
 import { readUserSettings } from "./user-settings.mjs";
+import { launchWindowsAntigravity } from "./windows-antigravity-app.mjs";
 
 const execute = promisify(execFile), ids = ["codex", "claude_app", "antigravity"];
 export function createApplicationControl({ providerRuntime, clientIntegration, imageHostState, env = process.env, home,
   platform = process.platform, port = 2026, host = "127.0.0.1", now = Date.now, exec = execute, wait = sleep,
   inspect = inspectApplicationProcesses, connections = applicationConnections, control = controlApplicationProcess,
-  inspectGemini = inspectGeminiApp,
+  inspectGemini = inspectGeminiApp, launchWindowsGemini = launchWindowsAntigravity,
   configuration = inspectApplicationConfiguration, openCodexApp, evidence = providerRuntime?.applicationEvidence || createApplicationEvidence({ now }) } = {}) {
   const options = { env, home, platform, exec };
   const states = Object.fromEntries(ids.map(id => [id, { status: "unknown", connection: "pending" }]));
@@ -56,6 +57,10 @@ export function createApplicationControl({ providerRuntime, clientIntegration, i
     if (operation === "restart" && expectedPid !== undefined && (expectedPid !== app?.pid || expectedStarted !== app?.started)) return { status: "app_changed", app: state };
     if (["unknown", "multiple", "unsupported", "not_installed"].includes(state.status)) return { status: state.status, app: state };
     if (state.status === "starting") return { status: "opening", app: state };
+    if (platform === "win32" && id === "antigravity" && state.status === "running") {
+      const verified = await inspectGemini({ ...options, app: app.app });
+      if (verified.status !== "running" || !verified.pids.includes(app.pid)) return { status: "app_changed", app: state };
+    }
     if (state.status === "running" && operation !== "restart") {
       if (state.needs_reload && operation !== "focus") return { status: "needs_app_relaunch", app: state };
       const result = await control(app, "focus", options);
@@ -84,10 +89,13 @@ export function createApplicationControl({ providerRuntime, clientIntegration, i
         handled = true;
       }
     }
-    if (!handled && platform === "darwin") {
-      const plan = id === "antigravity" ? await antigravityPlan(app) : { status: "prepared", command: "/usr/bin/open", args: ["-a", app.app] };
+    if (!handled && id === "antigravity") {
+      const plan = await antigravityPlan(app);
       if (plan.status !== "prepared") return { status: plan.status, app: states[id] };
-      await exec(plan.command, plan.args, { encoding: "utf8", timeout: 5000, maxBuffer: 4096 });
+      if (platform === "win32") await launchWindowsGemini(plan);
+      else await exec(plan.command, plan.args, { encoding: "utf8", timeout: 5000, maxBuffer: 4096 });
+    } else if (!handled && platform === "darwin") {
+      await exec("/usr/bin/open", ["-a", app.app], { encoding: "utf8", timeout: 5000, maxBuffer: 4096 });
     } else if (!handled && platform === "win32") {
       if (app.target.startsWith("shell:AppsFolder\\")) await exec("explorer.exe", [app.target], { encoding: "utf8", timeout: 5000, maxBuffer: 4096, windowsHide: true });
       else await exec(app.target, [], { encoding: "utf8", timeout: 5000, maxBuffer: 4096, windowsHide: true });
@@ -101,11 +109,10 @@ export function createApplicationControl({ providerRuntime, clientIntegration, i
       const config = readUserSettings({ env, home, strict: true });
       return config.gemini_antigravity_enabled === true || typeof config.gemini_antigravity_native_source === "string";
     };
-    if (!bridgeEnabled()) return { status: "prepared", command: "/usr/bin/open", args: ["-a", app.app] };
+    if (platform === "darwin" && !bridgeEnabled()) return { status: "prepared", command: "/usr/bin/open", args: ["-a", app.app] };
     const verified = await inspectGemini({ ...options, app: app.app });
     if (verified.status !== "stopped") return { status: verified.status === "running" ? "app_changed" : verified.status };
-    if (!bridgeEnabled()) return { status: "prepared", command: "/usr/bin/open", args: ["-a", app.app] };
-    return planGeminiAppLaunch(verified, { cloudCodeUrl: `http://${host}:${port}/antigravity`, env, home });
+    return planGeminiAppLaunch(verified, { cloudCodeUrl: bridgeEnabled() ? `http://${host}:${port}/antigravity` : undefined, env, home, platform });
   }
   return { snapshot, evidence, check, busy: () => operations > 0,
     async previewAntigravity() {

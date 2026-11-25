@@ -9,7 +9,7 @@ const MAX_METADATA_BYTES = 64 * 1024;
 const MAX_APPS = 9;
 export const clientVersionName = client => ({ codex: "Codex App", claude: "Claude App", antigravity: "Antigravity" })[client] || client;
 const validId = value => /^(?:codex|claude)_(?:system|user|windows)_(?:chatgpt|codex|claude)$/.test(value)
-  || /^antigravity_(?:system|user)_gemini$/.test(value);
+  || /^antigravity_(?:system|user)_gemini$/.test(value) || value === "antigravity_windows_antigravity";
 const validVersion = value => typeof value === "string" && /^[0-9][0-9A-Za-z.+_-]{0,63}$/.test(value);
 const optionalVersion = value => value == null || validVersion(value);
 const validDate = value => value == null || typeof value === "string" && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(value);
@@ -46,7 +46,7 @@ async function macBundle(root, scope, name, client) {
 }
 
 export async function inspectInstalledClientVersions({ home = os.homedir(), env = process.env, platform = process.platform,
-  systemApplications = "/Applications", windowsCodexVersion } = {}) {
+  systemApplications = "/Applications", windowsCodexVersion, windowsAntigravityVersion } = {}) {
   if (platform === "darwin") {
     const roots = [["system", systemApplications], ["user", path.join(home, "Applications")]], jobs = [];
     for (const [scope, root] of roots) for (const [name, client] of [["ChatGPT.app", "codex"], ["Codex.app", "codex"], ["Claude.app", "claude"], ["Gemini.app", "antigravity"]]) {
@@ -56,8 +56,12 @@ export async function inspectInstalledClientVersions({ home = os.homedir(), env 
   }
   if (platform === "win32") {
     const inspect = windowsCodexVersion || (await import("./native-prediction-windows.mjs")).inspectWindowsCodexVersion;
-    const version = await inspect({ env }).catch(() => null);
-    return validVersion(version) ? [{ id: "codex_windows_codex", name: "Codex", client: "codex", scope: "windows", version, build: null, cli_version: null }] : [];
+    const antigravity = windowsAntigravityVersion || (await import("./windows-antigravity-app.mjs")).inspectWindowsAntigravity;
+    const [version, app] = await Promise.all([inspect({ env }).catch(() => null), antigravity({ env }).catch(() => null)]);
+    return [
+      ...(validVersion(version) ? [{ id: "codex_windows_codex", name: "Codex", client: "codex", scope: "windows", version, build: null, cli_version: null }] : []),
+      ...(validVersion(app?.version) ? [{ id: "antigravity_windows_antigravity", name: "Antigravity", client: "antigravity", scope: "windows", version: app.version, build: null, cli_version: null }] : []),
+    ];
   }
   return [];
 }

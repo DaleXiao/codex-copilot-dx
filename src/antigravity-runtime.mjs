@@ -7,6 +7,7 @@ import {createAntigravityHandler} from "./antigravity-handler.mjs";
 import {createAntigravityImages} from "./antigravity-images.mjs";
 import {createCopilotWeb} from "./copilot-web.mjs";
 import {inspectGeminiApp,planGeminiAppLaunch} from "./gemini-app.mjs";
+import {launchWindowsAntigravity} from "./windows-antigravity-app.mjs";
 import {readUserSettings,userSettingsPath} from "./user-settings.mjs";
 import {readAccessSettings} from "./access-settings.mjs";
 import {readClientGatewayKeys} from "./client-gateway-keys.mjs";
@@ -26,8 +27,8 @@ const nativeSourceKey="gemini_antigravity_native_source";
 const validTimeout=value=>Number.isSafeInteger(value)&&value>=1&&value<=600;
 const validAlias=id=>typeof id==="string"&&/^ccdx-copilot-[a-z0-9._-]{1,140}$/.test(id);
 
-export function createAntigravityRuntime({client,models=()=>[],refreshModels,privacy,home=os.homedir(),env=process.env,inspect=inspectGeminiApp,
-  exec=execute,searchFn,imageFn,guardSource,googleFetch,acquireRequest,applicationControl,readToken=()=>readSavedGithubToken(home),
+export function createAntigravityRuntime({client,models=()=>[],refreshModels,privacy,home=os.homedir(),env=process.env,platform=process.platform,inspect=inspectGeminiApp,
+  exec=execute,launchWindows=launchWindowsAntigravity,searchFn,imageFn,guardSource,googleFetch,acquireRequest,applicationControl,readToken=()=>readSavedGithubToken(home),
   upstreamTimeoutMs=180000,copilotTimeoutMs,nativeSources=()=>[],getSource=()=>null,...timeouts}={}) {
   const options={home,env},guard=createConversationSourceGuard(options);
   const web=searchFn?null:createCopilotWeb({client,readToken});
@@ -178,13 +179,15 @@ export function createAntigravityRuntime({client,models=()=>[],refreshModels,pri
       }else await applicationControl.check("antigravity",true);
       return snapshot();
     }
-    app=await inspect();route=baseUrl+"/antigravity";
+    app=await inspect({home,env,platform,exec});route=baseUrl+"/antigravity";
     if(["open","preview"].includes(operation)){
       const config=settings();
-      const plan=config.enabled||config.native_source?planGeminiAppLaunch(app,{cloudCodeUrl:route,env,home}):app.status==="stopped"?{status:"prepared",command:"/usr/bin/open",args:["-a",app.app]}:{status:app.status==="running"?"needs_app_relaunch":app.status};
+      const plan=planGeminiAppLaunch(app,{cloudCodeUrl:config.enabled||config.native_source?route:undefined,env,home,platform});
       lastOperation={action:operation,status:plan.status};
       if(operation==="open"&&plan.status==="prepared"){
-        await exec(plan.command,plan.args,{encoding:"utf8",timeout:5000,maxBuffer:4096});lastOperation.status="opened";app={...app,status:"starting"};
+        if(platform==="win32")await launchWindows(plan);
+        else await exec(plan.command,plan.args,{encoding:"utf8",timeout:5000,maxBuffer:4096});
+        lastOperation.status="opened";app={...app,status:"starting"};
       }
       if(operation==="preview"&&plan.status==="prepared")lastOperation.plan={command:plan.command,args:plan.args};
     }

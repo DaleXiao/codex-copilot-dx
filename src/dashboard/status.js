@@ -249,7 +249,11 @@
         text("updated", "snapshot_time", { time: time(Date.now()) });
         return;
       }
-      for (const source of data.providers?.connections?.providers || []) sourceNames.set(source.id, source.name);
+      const connections = data.providers?.connections;
+      if (Array.isArray(connections?.providers)) {
+        for (const source of connections.providers) sourceNames.set(source.id, source.name);
+        globalThis.ccdxConnectionNames = Object.fromEntries(connections.providers.map(({ id, name }) => [id, name]));
+      }
       globalThis.ccdxConnections?.updateMemory?.(data.providers?.connections);
       globalThis.ccdxDashboardActivity?.update(data.model_activity);
       globalThis.ccdxDashboardFlow?.update(data);globalThis.ccdxToolActivity?.update(data);

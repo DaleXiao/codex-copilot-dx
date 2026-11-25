@@ -3,11 +3,17 @@ import path from "node:path";
 import os from "node:os";
 import {execFile} from "node:child_process";
 import {promisify} from "node:util";
+import { inspectWindowsAntigravity, windowsAntigravityEnvironment, windowsAntigravityPath } from "./windows-antigravity-app.mjs";
 
 const execute=promisify(execFile);
 
-export async function inspectGeminiApp({platform=process.platform,app="/Applications/Gemini.app",exec=execute,exists=fs.existsSync}={}) {
+export async function inspectGeminiApp({platform=process.platform,app,env=process.env,exec=execute,exists=fs.existsSync}={}) {
+  if(platform==="win32"){
+    const state=await inspectWindowsAntigravity({env,exec,app});
+    return !app&&state.app?inspectWindowsAntigravity({env,exec,app:state.app}):state;
+  }
   if(platform!=="darwin")return {status:"unsupported"};
+  app??="/Applications/Gemini.app";
   const metadata=path.join(app,"Contents/Info.plist");
   if(!exists(metadata))return {status:"not_installed"};
   const result=await exec("/usr/bin/plutil",["-convert","json","-o","-",metadata],{encoding:"utf8",timeout:3000,maxBuffer:65536});
@@ -24,12 +30,17 @@ export async function inspectGeminiApp({platform=process.platform,app="/Applicat
 
 // A launch plan is reviewable without changing files, credentials, or running apps.
 // A prepared environment is not evidence that the App has adopted the route.
-export function planGeminiAppLaunch(state,{cloudCodeUrl,env=process.env,home=os.homedir(),managedGateway=false}={}) {
+export function planGeminiAppLaunch(state,{cloudCodeUrl,env=process.env,home=os.homedir(),platform=process.platform,managedGateway=false}={}) {
   if(!["running","stopped","multiple"].includes(state?.status))return {status:state?.status||"unknown"};
-  if(state.status==="stopped"&&!["/Applications/Gemini.app",path.join(home,"Applications/Gemini.app")].includes(state.app))throw new Error("Unrecognized Gemini App location");
-  const url=new URL(cloudCodeUrl);
-  if(url.protocol!=="http:"||url.hostname!=="127.0.0.1"||!url.port||Number(url.port)<1||url.username||url.password||url.search||url.hash)throw new Error("Gemini route must use a local CCDX endpoint");
-  if(managedGateway||Object.entries(env).some(([key,value])=>key.startsWith("AGY_LLM_GATEWAY_")&&value)||env.CLOUD_CODE_URL&&env.CLOUD_CODE_URL!==url.href)return {status:"route_conflict"};
+  if(state.status==="stopped"&&!(platform==="win32"?windowsAntigravityPath(state.app):
+    ["/Applications/Gemini.app",path.join(home,"Applications/Gemini.app")].includes(state.app)))throw new Error("Unrecognized Gemini App location");
+  const url=cloudCodeUrl===undefined?null:new URL(cloudCodeUrl);
+  if(url&&(url.protocol!=="http:"||url.hostname!=="127.0.0.1"||!url.port||Number(url.port)<1||url.username||url.password||url.search||url.hash))throw new Error("Gemini route must use a local CCDX endpoint");
+  if(url&&(managedGateway||platform==="win32"&&state.wsl||Object.entries(env).some(([name,value])=>{
+    const key=name.toUpperCase();
+    return Boolean(value)&&(key.startsWith("AGY_LLM_GATEWAY_")||key==="CLOUD_CODE_URL"&&value!==url.href||platform==="win32"&&key==="ANTIGRAVITY_WSL_DISTRO");
+  })))return {status:"route_conflict"};
   if(state.status!=="stopped")return {status:state.status==="multiple"?"multiple":"needs_app_relaunch",pids:[...state.pids]};
-  return {status:"prepared",command:"/usr/bin/open",args:["-a",state.app,"--env","CLOUD_CODE_URL="+url.href]};
+  if(platform==="win32")return {status:"prepared",command:state.app,args:[],environment:windowsAntigravityEnvironment(env,url?.href)};
+  return {status:"prepared",command:"/usr/bin/open",args:["-a",state.app,...(url?["--env","CLOUD_CODE_URL="+url.href]:[])]};
 }

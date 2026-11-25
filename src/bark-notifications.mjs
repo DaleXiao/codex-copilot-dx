@@ -165,7 +165,8 @@ export function createBarkNotifications({ env = process.env, home = os.homedir()
   const antigravity = path.join(home, ".gemini", "antigravity");
   let timer, lastResult = null, closed = false, running = false, watching = false, since = now();
   let settings = readSettings(), antigravityCatalog, insecureRef;
-  let stopWatcher, antigravityScan;
+  let stopWatcher, antigravityScan, scanFlight, closeFlight;
+  const shutdown = new AbortController();
   const scanned = new Map();
 
   function readSettings() {
@@ -238,14 +239,15 @@ export function createBarkNotifications({ env = process.env, home = os.homedir()
       if (closed || snapshot !== settings) return;
       try { if (!claim(event)) return; }
       catch { lastResult = "ledger_failed";return; }
+      const signal = AbortSignal.any([shutdown.signal, AbortSignal.timeout(5000)]);
       const result = await fetchImpl(destination.endpoint, {
-        method: "POST", headers: { "Content-Type": "application/json" }, redirect: "error", signal: AbortSignal.timeout(5000),
+        method: "POST", headers: { "Content-Type": "application/json" }, redirect: "error", signal,
         body: JSON.stringify({ device_key: destination.deviceKey, ...notificationMessage(snapshot, event) }),
       });
-      const reply = await readBoundedResponseText(result, { maxBytes: 4096, label: "Bark response" });
-      if (snapshot === settings) lastResult = result.ok && record(reply)?.code === 200 ? "sent" : "failed";
+      const reply = await readBoundedResponseText(result, { maxBytes: 4096, label: "Bark response", signal });
+      if (!closed && snapshot === settings) lastResult = result.ok && record(reply)?.code === 200 ? "sent" : "failed";
     } catch {
-      if (snapshot === settings) lastResult = "failed";
+      if (!closed && snapshot === settings) lastResult = "failed";
     }
   }
 
@@ -332,7 +334,7 @@ export function createBarkNotifications({ env = process.env, home = os.homedir()
 
   function schedule(interval = scanIntervalMs) {
     clearTimeout(timer);
-    if (!closed && settings.enabled) timer = setTimeout(() => { void scan(); }, interval).unref();
+    if (!closed && settings.enabled) timer = setTimeout(() => { scanFlight = scan(); }, interval).unref();
   }
 
   function watchAntigravityStop() {
@@ -385,6 +387,15 @@ export function createBarkNotifications({ env = process.env, home = os.homedir()
       schedule(0);
       return snapshot();
     },
-    close() { closed = true;clearTimeout(timer);stopWatcher?.close();secretStore.close?.(); },
+    close() {
+      if (closeFlight) return closeFlight;
+      closed = true;clearTimeout(timer);stopWatcher?.close();shutdown.abort();
+      let deadline;
+      closeFlight = Promise.race([
+        Promise.allSettled([scanFlight, antigravityScan]),
+        new Promise(resolve => { deadline = setTimeout(resolve, 5000).unref(); }),
+      ]).finally(() => { clearTimeout(deadline);secretStore.close?.(); });
+      return closeFlight;
+    },
   };
 }

@@ -1,8 +1,16 @@
 # CCDX
 
-Use your model services in **Codex App, Claude App and Claude Code** through one local gateway.
+Use your model services in **Codex App, Claude App, Claude Code and Antigravity App** through one local gateway.
 
-On macOS, the optional Gemini integration adds compatible Copilot Gemini models to the original App's Antigravity. Ordinary Gemini chat keeps Google. The Antigravity page lists each model once, with its advertised reasoning levels shown in the same format as Codex and Claude. Refresh the catalog there or with `ccdx app antigravity models --refresh`. Existing clients keep their setup.
+The optional Antigravity integration adds compatible Copilot Gemini models to the desktop App. Ordinary Gemini chat keeps Google. The Antigravity page lists each model and its advertised reasoning levels. Refresh the catalog there or with `ccdx app antigravity models --refresh`.
+
+| Antigravity client | Integration |
+| --- | --- |
+| macOS Gemini App | Integrated App detection, model routing and launch |
+| Windows x64/ARM64 Antigravity App | Native launch path for the official 2.35.1 payloads. Signed-in App routing is pending live verification. |
+| Antigravity standalone IDE or CLI | Separate clients outside this integration |
+
+See [Antigravity setup](docs/REFERENCE.md#antigravity-in-gemini-app) for installation, local routing and connection checks.
 
 Connect GitHub Copilot, Microsoft 365 or your own API. Choose which apps can use each source, then select their models. CI and prebuilt releases cover **macOS on Apple Silicon** and **Windows on x64/ARM64**. Intel Mac code remains available, without CI coverage or new prebuilt assets.
 
@@ -33,7 +41,7 @@ On Windows, use `npm.cmd` or `ccdx.cmd` if PowerShell blocks npm-generated scrip
 The Web UI opens at [http://127.0.0.1:2026](http://127.0.0.1:2026/). Run `ccdx web` to open it again, including before signing in.
 
 1. **Model sources:** connect an account or API, read its models, choose allowed apps and save. Source tabs only change the view.
-2. **Codex / Claude:** choose visible models, set a default and save. Preview and synchronize client settings when needed.
+2. **Codex / Claude / Antigravity:** choose visible models, set a default and save. For Antigravity, enable the integration and open the verified App from its page.
 3. **Overview / Requests:** check configuration, activity and errors.
 4. **Usage → Context:** inspect reported input, model windows and observed compactions from this run.
 

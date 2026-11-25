@@ -390,7 +390,7 @@
           }
         }
         if(stroke){
-          const ink=colorFor(stroke),count=fill?vertices.length:vertices.length-1;
+          const ink=colorFor(stroke,colors),count=fill?vertices.length:vertices.length-1;
           for(let i=0;i<count;i++){
             const a=vertices[i], b=vertices[(i+1)%vertices.length];
             const dx=(b[0]-a[0])*w,dy=(b[1]-a[1])*h;

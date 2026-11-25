@@ -1,5 +1,5 @@
 (() => {
-  function create({ element: el, change, localize, isBusy = () => false }) {
+  function create({ element: el, change, localize, isBusy = () => false, isMutating = isBusy }) {
     let data, pending = false, sequence = 0, confirmation = null, claudeApp = true, note = null, autoError = false, antigravityCatalogPending = false;
     const route = () => ({ codex: "codex", claude: claudeApp ? "claude_app" : null, gemini: "antigravity" })[location.hash.slice(1)] || null;
     const label = (id, key) => localize(el(id), key);
@@ -23,7 +23,7 @@
         el("codex-auto-launch").disabled = isBusy() || data?.effective?.codex_auto_launch?.locked === true || !data;
         label("codex-auto-launch-note", autoError ? "application_preference_failed" : data?.effective?.codex_auto_launch?.locked ? "controlled_by_environment" : "next_ccdx_start");
       }
-      window.dispatchEvent(new CustomEvent("ccdx:application-state", { detail: { id, application: state, pending: pending || isBusy() } }));
+      window.dispatchEvent(new CustomEvent("ccdx:application-state", { detail: { id, application: state, pending: pending || isMutating() } }));
     }
     function sync(next) {
       const applications = { ...next.applications };

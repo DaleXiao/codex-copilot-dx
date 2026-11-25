@@ -89,7 +89,8 @@
   globalThis.ccdxSettingsPreferences = preferences;
   const bark = globalThis.ccdxBarkSettings?.create({ element: el, api });
   const features = globalThis.ccdxDashboardFeatures?.create({ element: el, api, apply: applySettings, change, localize: label });
-  const applications = globalThis.ccdxApplications?.create({ element: el, change, localize: label, isBusy: () => settingsPending });
+  const applications = globalThis.ccdxApplications?.create({ element: el, change, localize: label,
+    isBusy: () => settingsPending, isMutating: () => settingsPending && !settingsReadPending });
   globalThis.ccdxApplicationControls = applications;
   const states = { needs_github_access: "image_needs_github", image_model_unavailable: "image_no_models", immediate: "effective_now", terminal_unavailable: "terminal_animation_unavailable_in_this_output_mode", next_start: "next_ccdx_start", next_call: "applies_to_new_calls", needs_setup: "setup_required",
     next_config_request: "next_configuration_request_cached_suggestions_may_remain", needs_app_relaunch: "reopen_the_client_to_finish", needs_service_restart: "restart_ccdx_to_finish" };
@@ -201,11 +202,12 @@
   async function loadSettings() {
     if (settingsPending) return settingsReadPending;
     settingsPending = true;
+    settingsReadPending = api();
     applications?.render();
     el("terminal-color-theme").disabled = true;
     syncAccountControls();
     const readVersion = preferences?.version;
-    try { settingsReadPending = api();applySettings(await settingsReadPending, { readVersion });settingsReadAt = time(Date.now());void globalThis.ccdxConnections?.load(); }
+    try { applySettings(await settingsReadPending, { readVersion });settingsReadAt = time(Date.now());void globalThis.ccdxConnections?.load(); }
     catch (error) {
       for (const id of ["settings-note", ...(settingsViews.includes(current) ? ["page-settings-note"] : [])]) {
         label(el(id), settingsReadAt ? "showing_previous_data_updated_time" : "could_not_read_settings", { time: settingsReadAt });

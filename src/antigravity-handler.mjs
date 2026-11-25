@@ -6,7 +6,7 @@ import {safeUpstreamResponseHeaders,upstreamRejectionHeaders} from "./upstream-h
 import {isLoopbackAddress,isLoopbackHostHeader} from "./security.mjs";
 import {antigravityToChat,chatToAntigravity,chatStreamToAntigravity,mergeChatUsage,chatReasoningTokens,parseAntigravityJSON} from "./antigravity-chat-bridge.mjs";
 import {createAntigravityOpaqueReasoning} from "./antigravity-opaque-reasoning.mjs";
-import {ANTIGRAVITY_MODEL_PREFIX,ANTIGRAVITY_NATIVE_PREFIX,antigravityCopilotModels,hasAntigravityAgentDefault,mergeAntigravityModels} from "./antigravity-models.mjs";
+import {ANTIGRAVITY_MODEL_PREFIX,ANTIGRAVITY_NATIVE_PREFIX,antigravityCopilotModels,groupedAntigravityRoutes,hasAntigravityAgentDefault,mergeAntigravityModels} from "./antigravity-models.mjs";
 import {createPrivacyTextFragments} from "./privacy-stream.mjs";
 import {createGoogleResponseObserver,googleUsageEvent} from "./antigravity-usage.mjs";
 import {currentRequestContext,observeRequestedModel} from "./request-context.mjs";
@@ -61,7 +61,8 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
   if(![GOOGLE_ORIGIN,"https://cloudcode-pa.googleapis.com"].includes(googleOrigin))throw new Error("Unrecognized Google control origin");
   const acquireControl=createRequestAdmission({maxBytes:4*CONTROL_BODY_BYTES,maxQueued:8});
   const opaqueReasoning=createAntigravityOpaqueReasoning();
-  let active=0,observed=false,catalogModels=null,catalogDefaultSupported=null,catalogDefaultModel=null;const nativeWindows=new Map();
+  let active=0,observed=false,catalogModels=null,catalogDefaultSupported=null,catalogDefaultModel=null;
+  const nativeWindows=new Map(),catalogGroups=new Map();
   const counts={total:0,google:0,copilot:0,search:0,images:0,failed:0};
   const handler=async(req,res)=>{
     const startedAt=performance.timeOrigin+performance.now(),abort=createRequestAbort(req,res);let commitBinding,release=()=>{},releaseControl,session,body,request,converted,finish,phase="validation",usageEvent=null,usageModel=null,outcome=null,usageMode,usageProvider;
@@ -153,9 +154,16 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
           const value=JSON.parse(await readBoundedResponseText(upstream,{maxBytes:8*1024*1024,signal:abort.signal,label:"Google model catalog"}));
           nativeWindows.clear();for(const[id,entry]of Object.entries(value.models||{}).slice(0,256))if(Number.isSafeInteger(entry?.maxTokens)&&entry.maxTokens>0){nativeWindows.set(id,entry.maxTokens);if(typeof entry.model==="string")nativeWindows.set(entry.model,entry.maxTokens)}
           const merged=mergeAntigravityModels(value,models(config),selectedModels(config),defaultModel(config),nativeModels(config));
+          catalogGroups.clear();
+          for(const [id,group] of Object.entries(merged.groupedModels||{})){
+            if(!id.startsWith(ANTIGRAVITY_MODEL_PREFIX)||Object.hasOwn(value.groupedModels??{},id))continue;
+            const routes=groupedAntigravityRoutes(id,group,merged.models);
+            if(routes.defaultAlias)catalogGroups.set(id,routes);
+          }
           catalogDefaultSupported=hasAntigravityAgentDefault(value);
           catalogDefaultModel=catalogDefaultSupported&&merged.defaultAgentModelId.startsWith(ANTIGRAVITY_MODEL_PREFIX)?merged.defaultAgentModelId:null;
-          catalogModels=Object.keys(merged.models).filter(id=>id.startsWith(ANTIGRAVITY_MODEL_PREFIX)||id.startsWith(ANTIGRAVITY_NATIVE_PREFIX));
+          catalogModels=Object.keys(merged.models).filter(id=>!catalogGroups.has(id)&&
+            (id.startsWith(ANTIGRAVITY_MODEL_PREFIX)||id.startsWith(ANTIGRAVITY_NATIVE_PREFIX)));
           res.writeHead(200,{"Content-Type":"application/json","Cache-Control":"no-store"});res.end(JSON.stringify(merged));return;
         }
         const nativeStreaming=/text\/event-stream/i.test(upstream.headers.get("content-type")||"");
@@ -289,7 +297,14 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
         }catch(error){sourceResponseFailed(upstream);await cancelSourceResponse(upstream).catch(()=>{});markResponseErrorOrigin("upstream_event");throw error;}
         return;
       }
-      const copilotModels=antigravityCopilotModels(models(config)),selected=copilotModels.find(model=>model.id===body.model&&(selection===null||selection.includes(model.id)));
+      const copilotModels=antigravityCopilotModels(models(config)),group=catalogGroups.get(body.model);
+      let selectedId=body.model;
+      if(group){
+        const effort=body.request?.generationConfig?.thinkingConfig?.thinkingLevel;
+        selectedId=effort===undefined?group.defaultAlias:typeof effort==="string"?group.aliases.get(effort.toLowerCase()):null;
+        if(!selectedId)throw httpError("Unsupported Antigravity reasoning level",400);
+      }
+      const selected=copilotModels.find(model=>model.id===selectedId&&(selection===null||selection.includes(model.id)));
       if((body.requestType==="agent"||compactBinding?.source==="google")&&!selected){
         if(body.model.startsWith(ANTIGRAVITY_MODEL_PREFIX))throw httpError("The selected Copilot model is unavailable",503);
         const hasSession=body.requestType==="agent"||body.request?.labels?.root_cascade_id||body.request?.labels?.cascade_id;
@@ -332,7 +347,8 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
         }
       }
       if(!target)throw httpError(bound?"The conversation model is unavailable for Antigravity":"No eligible Copilot model is available for Antigravity background tasks",503);
-      if(body.requestType==="agent")commitBinding=prepareConversationBinding(body,"github",profile,startedAt);
+      if(body.requestType==="agent")commitBinding=prepareConversationBinding(
+        body.model===target.id?body:{...body,model:target.id},"github",profile,startedAt);
       const stream=method==="streamGenerateContent";usageModel=target.model;usageMode=stream?"sse":"json";usageProvider="github";
       const conversation=request.labels?.root_cascade_id||request.labels?.cascade_id;
       const scope=body.requestType==="agent"&&typeof profile==="string"&&profile&&typeof conversation==="string"&&conversation.length<=160

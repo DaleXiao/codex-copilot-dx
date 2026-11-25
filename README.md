@@ -6,7 +6,7 @@ Antigravity can use compatible Copilot Gemini models with their advertised reaso
 
 | Antigravity client | Integration |
 | --- | --- |
-| macOS Gemini App | Integrated App detection, model routing and launch |
+| macOS Antigravity App or Gemini App | Integrated App detection, model routing and launch |
 | Windows x64/ARM64 Antigravity App | Native launch path for the official 2.35.1 payloads. Signed-in App routing is pending live verification. |
 | Antigravity standalone IDE or CLI | Separate clients outside this integration |
 

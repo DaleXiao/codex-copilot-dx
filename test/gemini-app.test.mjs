@@ -16,6 +16,20 @@ test("native Gemini identity and existing process are inspected without controll
 test("an unrelated app is refused before signature or process checks",async()=>{
   const input=options({...info,CFBundleIdentifier:"other.app"});await assert.rejects(inspectGeminiApp(input),/identity/);assert.equal(input.calls.length,1);
 });
+test("the standalone macOS App is found, signed by Google and routed through its own launcher",async()=>{
+  const app="/Applications/Antigravity.app";
+  const input=options({CFBundleIdentifier:"com.google.antigravity",CFBundleExecutable:"Antigravity",CFBundleShortVersionString:"2.35.1"});
+  input.exists=file=>file.includes("Antigravity.app");
+  const state=await inspectGeminiApp(input);
+  assert.equal(state.status,"stopped");
+  assert.equal(state.app,app);
+  assert.equal(state.helper,path.join(app,"Contents/Resources/bin/language_server"));
+  assert.match(input.calls[1].args.join(" "),/com\.google\.antigravity.*certificate leaf.*EQHXZ8M8AV/);
+  const plan=planGeminiAppLaunch(state,{platform:"darwin",cloudCodeUrl:"http://127.0.0.1:2026/antigravity",env:{}});
+  assert.deepEqual(plan.args,["-a",app,"--env","CLOUD_CODE_URL=http://127.0.0.1:2026/antigravity"]);
+  const ide=options({CFBundleIdentifier:"com.google.antigravity",CFBundleExecutable:"Electron"});
+  await assert.rejects(inspectGeminiApp({...ide,app}),/identity/);
+});
 test("a running native app requires a separate relaunch decision",()=>{
   const plan=planGeminiAppLaunch({status:"running",pids:[38378]},{platform:"darwin",cloudCodeUrl:"http://127.0.0.1:18080/antigravity/",env:{}});
   assert.equal(plan.status,"needs_app_relaunch");assert.equal(plan.command,undefined);

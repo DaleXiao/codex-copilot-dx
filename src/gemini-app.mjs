@@ -4,25 +4,30 @@ import os from "node:os";
 import {execFile} from "node:child_process";
 import {promisify} from "node:util";
 import { inspectWindowsAntigravity, windowsAntigravityEnvironment, windowsAntigravityPath } from "./windows-antigravity-app.mjs";
+import { googleMacTeam, macAntigravityBundles, macAntigravityBundlePaths } from "./macos-antigravity-app.mjs";
 
 const execute=promisify(execFile);
 
-export async function inspectGeminiApp({platform=process.platform,app,env=process.env,exec=execute,exists=fs.existsSync}={}) {
+export async function inspectGeminiApp({platform=process.platform,app,home=os.homedir(),env=process.env,exec=execute,exists=fs.existsSync}={}) {
   if(platform==="win32"){
     const state=await inspectWindowsAntigravity({env,exec,app});
     return !app&&state.app?inspectWindowsAntigravity({env,exec,app:state.app}):state;
   }
   if(platform!=="darwin")return {status:"unsupported"};
-  app??="/Applications/Gemini.app";
+  app??=macAntigravityBundlePaths(home).find(candidate=>exists(path.join(candidate,"Contents/Info.plist")));
+  if(!app)return {status:"not_installed"};
+  const bundle=macAntigravityBundles[path.basename(app)];
+  if(!bundle)throw new Error("Unrecognized Antigravity App identity");
   const metadata=path.join(app,"Contents/Info.plist");
   if(!exists(metadata))return {status:"not_installed"};
   const result=await exec("/usr/bin/plutil",["-convert","json","-o","-",metadata],{encoding:"utf8",timeout:3000,maxBuffer:65536});
   const info=JSON.parse(String(result.stdout??result));
-  if(info.CFBundleIdentifier!=="com.google.GeminiMacOS"||info.CFBundleExecutable!=="Gemini")throw new Error("Unrecognized Gemini App identity");
-  const helper=path.join(app,"Contents/Helpers/agy");
+  if(info.CFBundleIdentifier!==bundle.identifier||info.CFBundleExecutable!==bundle.executable)throw new Error("Unrecognized Antigravity App identity");
+  const helper=path.join(app,bundle.helper);
   if(!exists(helper))return {status:"antigravity_unavailable"};
-  await exec("/usr/bin/codesign",["--verify","--deep","--strict","-R",'=identifier "com.google.GeminiMacOS" and anchor apple generic',app],{encoding:"utf8",timeout:15000,maxBuffer:65536});
-  const executable=path.join(app,"Contents/MacOS/Gemini");
+  await exec("/usr/bin/codesign",["--verify","--deep","--strict","-R",
+    `=identifier "${bundle.identifier}" and anchor apple generic and certificate leaf[subject.OU] = "${googleMacTeam}"`,app],{encoding:"utf8",timeout:15000,maxBuffer:65536});
+  const executable=path.join(app,"Contents/MacOS",bundle.executable);
   const processes=await exec("/bin/ps",["-axo","pid=,comm="],{encoding:"utf8",timeout:3000,maxBuffer:4*1024*1024});
   const pids=String(processes.stdout??processes).split("\n").flatMap(line=>{const match=/^\s*(\d+)\s+(.+?)\s*$/.exec(line);return match?.[2]===executable?[Number(match[1])]:[]});
   return {status:pids.length>1?"multiple":pids.length?"running":"stopped",app,executable,helper,version:info.CFBundleShortVersionString,pids};
@@ -33,7 +38,7 @@ export async function inspectGeminiApp({platform=process.platform,app,env=proces
 export function planGeminiAppLaunch(state,{cloudCodeUrl,env=process.env,home=os.homedir(),platform=process.platform,managedGateway=false}={}) {
   if(!["running","stopped","multiple"].includes(state?.status))return {status:state?.status||"unknown"};
   if(state.status==="stopped"&&!(platform==="win32"?windowsAntigravityPath(state.app):
-    ["/Applications/Gemini.app",path.join(home,"Applications/Gemini.app")].includes(state.app)))throw new Error("Unrecognized Gemini App location");
+    macAntigravityBundlePaths(home).includes(state.app)))throw new Error("Unrecognized Gemini App location");
   const url=cloudCodeUrl===undefined?null:new URL(cloudCodeUrl);
   if(url&&(url.protocol!=="http:"||url.hostname!=="127.0.0.1"||!url.port||Number(url.port)<1||url.username||url.password||url.search||url.hash))throw new Error("Gemini route must use a local CCDX endpoint");
   if(url&&(managedGateway||platform==="win32"&&state.wsl||Object.entries(env).some(([name,value])=>{

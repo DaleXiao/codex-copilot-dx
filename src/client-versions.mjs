@@ -4,12 +4,13 @@ import path from "node:path";
 import { atomicWriteFile } from "./atomic-file.mjs";
 import { readBoundedFile } from "./bounded-file.mjs";
 import { userSettingsPath } from "./user-settings.mjs";
+import { macAntigravityBundles } from "./macos-antigravity-app.mjs";
 
 const MAX_METADATA_BYTES = 64 * 1024;
-const MAX_APPS = 9;
+const MAX_APPS = 12;
 export const clientVersionName = client => ({ codex: "Codex App", claude: "Claude App", antigravity: "Antigravity" })[client] || client;
 const validId = value => /^(?:codex|claude)_(?:system|user|windows)_(?:chatgpt|codex|claude)$/.test(value)
-  || /^antigravity_(?:system|user)_gemini$/.test(value) || value === "antigravity_windows_antigravity";
+  || /^antigravity_(?:system|user)_(?:gemini|antigravity)$/.test(value) || value === "antigravity_windows_antigravity";
 const validVersion = value => typeof value === "string" && /^[0-9][0-9A-Za-z.+_-]{0,63}$/.test(value);
 const optionalVersion = value => value == null || validVersion(value);
 const validDate = value => value == null || typeof value === "string" && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(value);
@@ -33,9 +34,14 @@ async function stableRead(file) {
 
 async function macBundle(root, scope, name, client) {
   const bundle = path.join(root, name), infoPath = path.join(bundle, "Contents", "Info.plist"), info = await stableRead(infoPath), plist = info.data;
-  const expected = client === "codex" ? "com.openai.codex" : client === "claude" ? "com.anthropic.claudefordesktop" : "com.google.GeminiMacOS";
+  const antigravity = client === "antigravity" ? macAntigravityBundles[name] : null;
+  const expected = antigravity?.identifier ?? (client === "codex" ? "com.openai.codex" : "com.anthropic.claudefordesktop");
   const version = tag(plist, "CFBundleShortVersionString"), build = tag(plist, "CFBundleVersion");
   if (tag(plist, "CFBundleIdentifier") !== expected || !validVersion(version) || !optionalVersion(build)) return null;
+  if (name === "Antigravity.app") {
+    if (tag(plist, "CFBundleExecutable") !== antigravity.executable) return null;
+    await fs.access(path.join(bundle, antigravity.helper));
+  }
   let cliVersion = null;
   if (client === "codex") try {
     const metadata = JSON.parse((await stableRead(path.join(bundle, "Contents", "Resources", "codex-cli", "codex-package.json"))).data);
@@ -49,7 +55,8 @@ export async function inspectInstalledClientVersions({ home = os.homedir(), env 
   systemApplications = "/Applications", windowsCodexVersion, windowsAntigravityVersion } = {}) {
   if (platform === "darwin") {
     const roots = [["system", systemApplications], ["user", path.join(home, "Applications")]], jobs = [];
-    for (const [scope, root] of roots) for (const [name, client] of [["ChatGPT.app", "codex"], ["Codex.app", "codex"], ["Claude.app", "claude"], ["Gemini.app", "antigravity"]]) {
+    for (const [scope, root] of roots) for (const [name, client] of [["ChatGPT.app", "codex"], ["Codex.app", "codex"], ["Claude.app", "claude"],
+      ...Object.keys(macAntigravityBundles).map(name => [name, "antigravity"])]) {
       jobs.push(macBundle(root, scope, name, client).catch(() => null));
     }
     return (await Promise.all(jobs)).filter(Boolean);

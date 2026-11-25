@@ -61,15 +61,42 @@ export function hasAntigravityAgentDefault(catalog) {
   return typeof id==="string"&&!!catalog.models&&Object.hasOwn(catalog.models,id);
 }
 
+function nativeGrouping(catalog) {
+  const groups = catalog.groupedModels;
+  if (!groups || typeof groups !== "object" || Array.isArray(groups) || !Array.isArray(catalog.agentModelSorts)) return null;
+  const listed = new Set(catalog.agentModelSorts.flatMap(sort =>
+    Array.isArray(sort?.groups) ? sort.groups.flatMap(group => Array.isArray(group?.modelIds) ? group.modelIds : []) : []));
+  for (const [id, group] of Object.entries(groups)) {
+    if (!listed.has(id) || !Array.isArray(group?.supportedThinkingLevels)) continue;
+    const proved = group.supportedThinkingLevels.find(level => typeof level?.thinkingSuffix === "string" &&
+      /^(?:-)?[a-z][a-z0-9-]{0,30}$/.test(level.thinkingSuffix) &&
+      (Object.hasOwn(catalog.models, id + level.thinkingSuffix) || Object.hasOwn(catalog.models, id + "-" + level.thinkingSuffix)));
+    if (proved) return { dashedSuffix: proved.thinkingSuffix.startsWith("-"), parentInModels: Object.hasOwn(catalog.models, id) };
+  }
+  return null;
+}
+
+export function groupedAntigravityRoutes(id, group, models) {
+  const aliases = new Map((group.supportedThinkingLevels || []).flatMap(({thinkingSuffix:suffix})=>{
+    const effort=suffix.replace(/^-/,""),alias=id+"-"+effort;
+    return Object.hasOwn(models,alias)?[[effort,alias]]:[];
+  }));
+  return {aliases,defaultAlias:aliases.get(group.defaultThinkingSuffix?.replace(/^-/,""))};
+}
+
 export function mergeAntigravityModels(googleCatalog,copilotCatalog,selection=null,defaultModel=null,nativeModels=[]) {
   if(!googleCatalog?.models||typeof googleCatalog.models!=="object"||Array.isArray(googleCatalog.models))throw new Error("Unrecognized Google model catalog");
   const entries=[...antigravityCopilotModels(copilotCatalog).filter(model=>selection===null||selection.includes(model.id)),...nativeModels],models={...googleCatalog.models};
   if(!entries.length)return googleCatalog;
   const used=new Set(Object.values(models).map(model=>model?.model));let next=500;
-  for(const entry of entries){
+  const modelId=()=>{
     while(next<600&&used.has("MODEL_PLACEHOLDER_M"+next))next++;
-    if(next>=600||Object.hasOwn(models,entry.id))throw new Error("Antigravity model catalog has no free client identifiers");
-    const model="MODEL_PLACEHOLDER_M"+next++;used.add(model);
+    if(next>=600)return null;
+    const model="MODEL_PLACEHOLDER_M"+next++;used.add(model);return model;
+  };
+  for(const entry of entries){
+    const model=modelId();
+    if(!model||Object.hasOwn(models,entry.id))throw new Error("Antigravity model catalog has no free client identifiers");
     models[entry.id]={displayName:entry.displayName,model,maxTokens:entry.maxTokens,maxOutputTokens:entry.maxOutputTokens,
       supportsImages:entry.supportsImages,supportsThinking:Boolean(entry.effort),apiProvider:"API_PROVIDER_GOOGLE_GEMINI"};
   }
@@ -77,7 +104,32 @@ export function mergeAntigravityModels(googleCatalog,copilotCatalog,selection=nu
   // Gemini App reads only the first group in the Recommended sort.
   const sort=sorts.find(item=>item.displayName?.toLowerCase()==="recommended")||sorts[0];
   sort.groups??=[];sort.groups[0]??={modelIds:[]};
-  sort.groups[0].modelIds=[...(sort.groups[0].modelIds||[]),...entries.map(entry=>entry.id)];
-  return {...googleCatalog,models,agentModelSorts:sorts,
+  const contract=nativeGrouping(googleCatalog), parents=new Map();
+  let groupedModels;
+  if(contract){
+    const families=new Map();
+    for(const row of entries){
+      if(!row.effort||!row.id.startsWith(ANTIGRAVITY_MODEL_PREFIX))continue;
+      const rows=families.get(row.model)||[];rows.push(row);families.set(row.model,rows);
+    }
+    groupedModels={...googleCatalog.groupedModels};
+    for(const [family,rows] of families){
+      const parent=ANTIGRAVITY_MODEL_PREFIX+family;
+      if(rows.length<2||Object.hasOwn(models,parent)||Object.hasOwn(groupedModels,parent))continue;
+      const chosen=rows.find(row=>row.id===defaultModel)||rows.find(row=>row.effort==="medium")||rows[0];
+      const displayName=chosen.displayName.split(" · Copilot")[0]+" · Copilot";
+      if(contract.parentInModels){
+        const model=modelId();if(!model)continue;
+        models[parent]={...models[chosen.id],model,displayName};
+      }
+      const suffix=effort=>(contract.dashedSuffix?"-":"")+effort;
+      groupedModels[parent]={displayName,defaultThinkingSuffix:suffix(chosen.effort),supportedThinkingLevels:rows.map(row=>({
+        thinkingSuffix:suffix(row.effort),thinkingDisplayName:row.effort[0].toUpperCase()+row.effort.slice(1),
+      }))};
+      for(const row of rows)parents.set(row.id,parent);
+    }
+  }
+  sort.groups[0].modelIds=[...(sort.groups[0].modelIds||[]),...new Set(entries.map(entry=>parents.get(entry.id)||entry.id))];
+  return {...googleCatalog,models,agentModelSorts:sorts,...(groupedModels?{groupedModels}:{}),
     ...(hasAntigravityAgentDefault(googleCatalog)&&entries.some(entry=>entry.id===defaultModel)?{defaultAgentModelId:defaultModel}:{})};
 }

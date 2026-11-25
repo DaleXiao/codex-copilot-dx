@@ -5,12 +5,13 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { installedWindowsPredictionAppAsync } from "./native-prediction-windows.mjs";
 import { inspectWindowsAntigravity } from "./windows-antigravity-app.mjs";
+import { macAntigravityBundles } from "./macos-antigravity-app.mjs";
 
 const execute = promisify(execFile);
 const definitions = {
   codex: { bundles: ["Codex.app", "ChatGPT.app"], id: "com.openai.codex", executables: ["Codex", "ChatGPT"] },
   claude_app: { bundles: ["Claude.app"], id: "com.anthropic.claudefordesktop", executables: ["Claude"] },
-  antigravity: { bundles: ["Gemini.app"], id: "com.google.GeminiMacOS", executables: ["Gemini"] },
+  antigravity: { bundles: Object.keys(macAntigravityBundles) },
 };
 const runOptions = { encoding: "utf8", timeout: 3000, maxBuffer: 4 * 1024 * 1024, windowsHide: true };
 const metadataEnvironment = env => ({ ...Object.fromEntries(["PATH", "SystemRoot", "WINDIR", "TEMP", "TMP", "LOCALAPPDATA", "APPDATA", "USERPROFILE", "HOME", "TZ"]
@@ -49,8 +50,12 @@ export async function inspectApplicationProcesses({ platform = process.platform,
         try { await fs.access(file); } catch { continue; }
         const result = await exec("/usr/bin/plutil", ["-convert", "json", "-o", "-", file], { ...runOptions, maxBuffer: 65536 });
         const info = JSON.parse(result.stdout);
-        if (info.CFBundleIdentifier !== definition.id || !definition.executables.includes(info.CFBundleExecutable)) continue;
-        installed.push({ app, target: app, identity: definition.id, executable: path.join(app, "Contents/MacOS", info.CFBundleExecutable), version: info.CFBundleShortVersionString });
+        const antigravity = id === "antigravity" ? macAntigravityBundles[bundle] : null;
+        const identity = antigravity?.identifier ?? definition.id;
+        if (info.CFBundleIdentifier !== identity ||
+          !(antigravity ? antigravity.executable === info.CFBundleExecutable : definition.executables.includes(info.CFBundleExecutable))) continue;
+        if (antigravity) try { await fs.access(path.join(app, antigravity.helper)); } catch { continue; }
+        installed.push({ app, target: app, identity, executable: path.join(app, "Contents/MacOS", info.CFBundleExecutable), version: info.CFBundleShortVersionString });
       }
       const running = installed.filter(info => processes.some(row => row.command === info.executable));
       apps[id] = running.length > 1 ? { status: "multiple" } : running[0] || installed[0] || { status: "not_installed" };

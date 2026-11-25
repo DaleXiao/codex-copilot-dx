@@ -491,6 +491,25 @@ test("an Antigravity default changes only a compatible agent catalog, not explic
   assert.equal(Object.hasOwn(mergeAntigravityModels({models:native.models},catalog,null,preferred),"defaultAgentModelId"),false);
   assert.equal(mergeAntigravityModels({...native,defaultAgentModelId:23},catalog,null,preferred).defaultAgentModelId,23);
 });
+test("native grouped choices route and pin the exact selected alias in a conversation",async()=>{
+  const parent="ccdx-copilot-gemini-4-carbon",level=parent+"-medium",pins=[];
+  const native={models:{native:{model:"NATIVE"},"native-low":{model:"NATIVE_LOW"},"native-high":{model:"NATIVE_HIGH"}},
+    groupedModels:{native:{displayName:"Native",defaultThinkingSuffix:"-low",
+      supportedThinkingLevels:[{thinkingSuffix:"-low",thinkingDisplayName:"Low"},{thinkingSuffix:"-high",thinkingDisplayName:"High"}]}},
+    defaultAgentModelId:"native",agentModelSorts:[{groups:[{modelIds:["native"]}]}]};
+  const f=fixture({defaultModel:()=>level,prepareConversationBinding:body=>{pins.push(body.model);},fetchGoogle:async()=>Response.json(native)});
+  assert.equal((await invoke(f.handler,{}, {url:"/antigravity/v1internal:fetchAvailableModels"}).done).status,200);
+  assert.ok(!f.handler.snapshot().catalog_models.includes(parent));
+  assert.equal((await invoke(f.handler,body(parent)).done).status,200);
+  const groupedHigh=body(parent);
+  groupedHigh.request.generationConfig.thinkingConfig.thinkingLevel="HIGH";
+  assert.equal((await invoke(f.handler,groupedHigh).done).status,200);
+  assert.equal((await invoke(f.handler,body(alias)).done).status,200);
+  groupedHigh.request.generationConfig.thinkingConfig.thinkingLevel="MAX";
+  assert.equal((await invoke(f.handler,groupedHigh).done).status,400);
+  assert.deepEqual(f.copilot.map(call=>call.value.reasoning_effort),["medium","high","high"]);
+  assert.deepEqual(pins,[level,alias,alias]);
+});
 test("Copilot main requests use the advertised model and level without forwarding Google authorization",async()=>{
   const f=fixture(),result=await invoke(f.handler,body()).done;
   assert.equal(result.status,200);assert.equal(f.google.length,0);assert.equal(f.copilot.length,1);

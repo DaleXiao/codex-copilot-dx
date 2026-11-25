@@ -35,13 +35,14 @@ test('dashboard resource validators distinguish HTML, content changes and mismat
   assert.match(asset.headers['Content-Type'],/javascript/);
  }
 });
-test('one deferred entry delivers shared view dependencies before their consumers',async()=>{
+test('deferred language and dashboard entries deliver shared dependencies in order',async()=>{
  const headers={host:'127.0.0.1:2026'},html=await invokeAdapter({}, {method:'GET',url:'/',headers});
- const deferred=[...html.text.matchAll(/<script src="([^"]+)" defer>/g)];assert.equal(deferred.length,1);
- const entry=await invokeAdapter({}, {method:'GET',url:deferred[0][1],headers});assert.equal(entry.status,200);
+ const deferred=[...html.text.matchAll(/<script src="([^"]+)" defer>/g)].map(match=>match[1]);
+ assert.deepEqual(deferred.map(url=>url.split('?')[0]),['/language.js','/dashboard.js']);
+ const entry=await invokeAdapter({}, {method:'GET',url:deferred[1],headers});assert.equal(entry.status,200);
  const provider=entry.text.indexOf('globalThis.ccdxViewBoundary ='),consumer=entry.text.indexOf('globalThis.ccdxViewBoundary.create(');
  assert.ok(provider>=0&&consumer>provider);assert.ok(entry.text.includes('globalThis.ccdxRefresh ='));
  assert.doesNotThrow(()=>new Script(entry.text));
- const cached=await invokeAdapter({}, {method:'GET',url:deferred[0][1],headers:{...headers,'if-none-match':entry.headers.ETag||entry.headers.etag}});
+ const cached=await invokeAdapter({}, {method:'GET',url:deferred[1],headers:{...headers,'if-none-match':entry.headers.ETag||entry.headers.etag}});
  assert.equal(cached.status,304);assert.equal(cached.text,'');
 });

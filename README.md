@@ -2,15 +2,13 @@
 
 Use your model services in **Codex App, Claude App, Claude Code and Antigravity App** through one local gateway.
 
-The optional Antigravity integration adds compatible Copilot Gemini models to the desktop App. Ordinary Gemini chat keeps Google. The Antigravity page lists each model and its advertised reasoning levels. Refresh the catalog there or with `ccdx app antigravity models --refresh`.
+Antigravity can use compatible Copilot Gemini models with their advertised reasoning levels. Ordinary Gemini chat keeps Google. See [setup and connection checks](docs/REFERENCE.md#antigravity-in-gemini-app).
 
 | Antigravity client | Integration |
 | --- | --- |
 | macOS Gemini App | Integrated App detection, model routing and launch |
 | Windows x64/ARM64 Antigravity App | Native launch path for the official 2.35.1 payloads. Signed-in App routing is pending live verification. |
 | Antigravity standalone IDE or CLI | Separate clients outside this integration |
-
-See [Antigravity setup](docs/REFERENCE.md#antigravity-in-gemini-app) for installation, local routing and connection checks.
 
 Connect GitHub Copilot, Microsoft 365 or your own API. Choose which apps can use each source, then select their models. CI and prebuilt releases cover **macOS on Apple Silicon** and **Windows on x64/ARM64**. Intel Mac code remains available, without CI coverage or new prebuilt assets.
 
@@ -89,8 +87,6 @@ Use the Web UI for accounts, APIs, models, client access, input suggestions, nat
 - **Images:** Codex native host tools use the selected GitHub image model, with GPT Image 2.5 Flare as the default. Images start enabled; saved off choices are retained. On macOS with Codex 0.166+, fully quit a running App that lacks the host, start Codex through CCDX, and use a new chat. ChatGPT sign-in and Apps are retained. The Web UI provides model selection without an extra API key, MCP or CCDX image skill. [Details](docs/REFERENCE.md#native-image-generation).
 - **Updates:** Settings → Install update downloads and verifies a stable release, then switches the installed service when idle. Busy work postpones the switch. Unmanaged launches require the installer or an installed command. [Details](docs/REFERENCE.md#installation-and-updates).
 - **App updates:** Checks & repairs and `ccdx doctor` show observed installed Codex, Claude and Antigravity versions. A version change does not by itself verify the running App or its integrations. [Details](docs/REFERENCE.md#checks-and-troubleshooting).
-
-Web UI activity updates through server push; the terminal uses the same in-process activity feed. Reconnecting restores current state and bounded recent records.
 
 The foreground terminal stops with **Ctrl+C**. Client configuration marked **Unchanged** means CCDX kept the existing settings. Configuration and successful model access are separate checks.
 

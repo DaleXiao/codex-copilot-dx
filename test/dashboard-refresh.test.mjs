@@ -11,7 +11,7 @@ const flush = () => new Promise(resolve => setImmediate(resolve));
 
 test("the real page supplies chart timestamps and loads the controller before its consumers", async () => {
   assert.match(html, /id="analytics-updated"/);
-  const entry=/<script src="([^"]+)" defer>/.exec(html)[1];
+  const entry=/<script src="(\/dashboard\.js)" defer>/.exec(html)[1];
   const boot=await invokeAdapter({}, {method:"GET",url:entry,headers:{host:"127.0.0.1:2026"}});
   const controller=boot.text.indexOf("globalThis.ccdxRefresh ="),consumer=boot.text.indexOf("globalThis.ccdxRefresh.createController(");
   assert.ok(controller>=0&&consumer>controller);

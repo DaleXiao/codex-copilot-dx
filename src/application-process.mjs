@@ -58,8 +58,8 @@ export async function inspectApplicationProcesses({ platform = process.platform,
   } else {
     const [result, codex, antigravity] = await Promise.all([
       exec("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", windowsInventory], { ...runOptions, env: metadataEnvironment(env) }),
-      discoverWindows({ env }).catch(() => null),
-      discoverWindowsAntigravity({ env, exec }).catch(() => ({ status: "unknown" })),
+      Promise.resolve().then(() => discoverWindows({ env })).catch(() => null),
+      Promise.resolve().then(() => discoverWindowsAntigravity({ env, exec })).catch(() => ({ status: "unknown" })),
     ]);
     const inventory = JSON.parse(result.stdout);
     for (const row of inventory.processes || []) if (Number.isSafeInteger(row.pid) && row.pid > 0 && Number.isFinite(Date.parse(row.started))) processes.push(row);

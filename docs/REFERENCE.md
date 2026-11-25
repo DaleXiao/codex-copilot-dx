@@ -288,7 +288,7 @@ The initial internal ceiling is 128 concurrent requests per source/account. This
 
 Settings separates saved preferences from effective state. Auto-save applies changes by default; required restarts remain explicit. Restore-defaults creates a backup first and keeps accounts, keys, model plans and chats. CLI preference reset/restore uses its own service-only backup; it does not change browser appearance or replace the Web UI's backup.
 
-Use the button beside the CCDX wordmark to collapse the sidebar to icons. The browser remembers the layout for this dashboard address. The current page stays selected when the sidebar changes width.
+Use the button beside the CCDX wordmark to collapse the sidebar to icons. Hover over or focus an icon to see its page name. Escape dismisses the tooltip. The browser remembers the layout for this dashboard address. The current page stays selected when the sidebar changes width.
 
 **Settings → Bark notifications** is collapsed by default. Enable it and paste the URL containing the device key from Bark. The minimum duration defaults to 30 minutes. Zero includes every eligible completed turn. Leave the title and description blank to use the name of the app that finished. The phone retrieves the matching public PNG from [Lobe Icons](https://github.com/lobehub/lobe-icons).
 

@@ -61,6 +61,50 @@ document.querySelector(".sidebar-brand").addEventListener("click", animateLogo);
 const sidebarPreference = "ccdx.dashboard.sidebar";
 const sidebarToggle = element("sidebar-toggle");
 const sidebarLinks = element("sidebar-navigation").querySelectorAll("a");
+const sidebarTooltip = element("sidebar-tooltip");
+let hoveredSidebarLink, focusedSidebarLink, lastSidebarLink;
+function updateSidebarTooltip() {
+  const link = lastSidebarLink === hoveredSidebarLink || lastSidebarLink === focusedSidebarLink
+    ? lastSidebarLink : hoveredSidebarLink || focusedSidebarLink;
+  if (!link || document.documentElement.dataset.sidebarCollapsed !== "true") {
+    sidebarTooltip.hidden = true;
+    return;
+  }
+  const name = link.querySelector("span");
+  localize(sidebarTooltip, name.dataset.i18n || name.textContent);
+  sidebarTooltip.hidden = false;
+  const anchor = link.getBoundingClientRect(), tip = sidebarTooltip.getBoundingClientRect();
+  const viewport = document.documentElement.clientWidth;
+  const rail = viewport > 640;
+  const x = rail ? anchor.right + 8 : anchor.left + (anchor.width - tip.width) / 2;
+  const y = rail ? anchor.top + (anchor.height - tip.height) / 2 : anchor.bottom + 6;
+  sidebarTooltip.style.left = `${Math.max(6, Math.min(x, viewport - tip.width - 6))}px`;
+  sidebarTooltip.style.top = `${Math.max(6, Math.min(y, window.innerHeight - tip.height - 6))}px`;
+}
+for (const link of sidebarLinks) {
+  link.addEventListener("pointerenter", event => {
+    if (event.pointerType === "touch") return;
+    lastSidebarLink = hoveredSidebarLink = link;
+    updateSidebarTooltip();
+  });
+  link.addEventListener("pointerleave", () => {
+    if (hoveredSidebarLink === link) hoveredSidebarLink = null;
+    updateSidebarTooltip();
+  });
+  link.addEventListener("focus", () => { lastSidebarLink = focusedSidebarLink = link;updateSidebarTooltip(); });
+  link.addEventListener("blur", () => {
+    if (focusedSidebarLink === link) focusedSidebarLink = null;
+    updateSidebarTooltip();
+  });
+}
+document.addEventListener("keydown", event => {
+  if (event.key !== "Escape" || sidebarTooltip.hidden) return;
+  hoveredSidebarLink = focusedSidebarLink = null;
+  updateSidebarTooltip();
+});
+for (const event of ["resize", "scroll"]) window.addEventListener(event, () => {
+  if (!sidebarTooltip.hidden) updateSidebarTooltip();
+}, { passive: true });
 function setSidebarCollapsed(collapsed) {
   if (collapsed) document.documentElement.dataset.sidebarCollapsed = "true";
   else delete document.documentElement.dataset.sidebarCollapsed;
@@ -68,10 +112,7 @@ function setSidebarCollapsed(collapsed) {
   const label = collapsed ? "sidebar_expand" : "sidebar_collapse";
   localize(sidebarToggle, label, {}, "aria-label");
   localize(sidebarToggle, label, {}, "title");
-  for (const link of sidebarLinks) {
-    const name = link.querySelector("span");
-    localize(link, collapsed ? name.dataset.i18n || name.textContent : "", {}, "title");
-  }
+  updateSidebarTooltip();
 }
 try { setSidebarCollapsed(localStorage.getItem(sidebarPreference) === "collapsed"); }
 catch { setSidebarCollapsed(false); }

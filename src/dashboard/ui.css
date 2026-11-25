@@ -336,6 +336,7 @@ input[role="switch"]:disabled { opacity: .5; cursor: wait; }
 [data-sidebar-collapsed] .sidebar-chevron { transform: scaleX(-1); transform-origin: 14.5px 12px; }
 [data-sidebar-collapsed] .sidebar nav a { position: relative; justify-content: center; gap: 0; padding-inline: 0; min-height: 36px; border-inline-end: 2px solid transparent; }
 [data-sidebar-collapsed] .sidebar nav a > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.sidebar-tooltip { position: fixed; z-index: 8; pointer-events: none; max-width: calc(100vw - 12px); padding: 5px 9px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
 @media (max-width: 640px) {
   [data-sidebar-collapsed] .sidebar { padding-inline-end: 0; }
   [data-sidebar-collapsed] .sidebar-header { justify-content: flex-start; }

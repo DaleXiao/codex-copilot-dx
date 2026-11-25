@@ -239,6 +239,8 @@ test("custom Gemini discovery and generation pin credentials and paths to the co
       if (init.method === "GET") return Response.json(url === root
         ? { models: [{ name: "models/gemini-fixture", supportedGenerationMethods: ["generateContent"], inputTokenLimit: 100000 }], nextPageToken: "next+page" }
         : { models: [{ name: "models/embedding-fixture", supportedGenerationMethods: ["embedContent"] }] });
+      if (JSON.parse(init.body).generationConfig?.candidateCount === 0)
+        return Response.json({ error: { code: 400, status: "INVALID_ARGUMENT", message: "Invalid candidate_count" } }, { status: 400 });
       return Response.json({ totalTokens: 7 });
     } }) });
   try {
@@ -248,10 +250,22 @@ test("custom Gemini discovery and generation pin credentials and paths to the co
     assert.equal(calls[1].url, root + "?pageToken=next%2Bpage");
     const input = { model: "gemini-fixture", request: { labels: { root_cascade_id: "local-only" }, contents: [] } };
     await provider.client.gemini(input, { countTokens: true });
-    await provider.client.gemini(input, { stream: true });
+    const observations = [];
+    const generate = { ...input, request: { ...input.request, generationConfig: {
+      maxOutputTokens: 64, thinkingConfig: { thinkingLevel: "XHIGH" },
+    } } };
+    await runWithRequestContext({ streamPerformance: { upstreamStarted() {}, observeContext: fields => observations.push(fields) } },
+      () => provider.client.gemini(generate, { stream: true }));
     assert.equal(calls[2].url, root + "/gemini-fixture:countTokens");
     assert.equal(calls[3].url, root + "/gemini-fixture:streamGenerateContent?alt=sse");
     assert.deepEqual(JSON.parse(calls[2].init.body), { generateContentRequest: { model: "models/gemini-fixture", contents: [] } });
+    assert.deepEqual(JSON.parse(calls[3].init.body), { contents: [], generationConfig: generate.request.generationConfig });
+    assert.ok(observations.some(fields => fields.reasoning_effort_sent === "xhigh" && fields.max_output_tokens_sent === 64));
+    const invalid = await provider.client.gemini({ ...input, request: { contents: [], generationConfig: { candidateCount: 0 } } });
+    assert.equal(invalid.status, 400);
+    await invalid.json();
+    assert.equal(calls.length, 5, "A provider's Gemini 400 is returned without retries");
+    assert.equal(JSON.parse(calls[4].init.body).generationConfig.candidateCount, 0);
     for (const { init } of calls) {
       assert.equal(init.headers["x-goog-api-key"], "synthetic-gemini-key");
       assert.equal(init.headers.Authorization, undefined);

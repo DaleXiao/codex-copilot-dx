@@ -118,10 +118,14 @@ export function createApiProvider({ config, secrets, env = process.env, platform
     const recovery = cooldown?.enter();let observed = false;
     try {
       const transport = !closed && network && (network.healthy?.() ?? true) ? network : await getNetwork(options.signal);
+      const generation = api === "gemini" ? body?.generationConfig : undefined;
+      const thinkingLevel = generation?.thinkingConfig?.thinkingLevel;
       const result = await sourceTransport(options, { send: transport.fetch, receiver: transport, args: [url, { method: body ? "POST" : "GET", headers, body: serialized, signal: options.signal }],
         model: requestModel, bodyText: serialized, stream, observe: Boolean(body && options.observeUpstream !== false),
-        evidence: body && !options.countTokens ? { max_output_tokens_sent: api === "messages" ? body.max_tokens : api === "chat" ? body.max_completion_tokens : body.max_output_tokens,
-          reasoning_effort_sent: api === "messages" ? body.output_config?.effort : api === "chat" ? body.reasoning_effort : body.reasoning?.effort } : undefined });
+        evidence: body && !options.countTokens ? { max_output_tokens_sent: api === "messages" ? body.max_tokens : api === "chat" ? body.max_completion_tokens :
+          api === "gemini" ? generation?.maxOutputTokens : body.max_output_tokens,
+          reasoning_effort_sent: api === "messages" ? body.output_config?.effort : api === "chat" ? body.reasoning_effort :
+            api === "gemini" ? typeof thinkingLevel === "string" ? thinkingLevel.toLowerCase() : undefined : body.reasoning?.effort } : undefined });
       const temporary = result.status === 502 || result.status === 503 || result.status === 504;
       let retryAfterMs = 0;
       if (temporary) { const retry = result.headers.get("retry-after");retryAfterMs = /^\d{1,8}$/.test(retry || "") ? Number(retry) * 1000 : Math.max(0, Date.parse(retry) - now()); }

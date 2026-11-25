@@ -1,9 +1,7 @@
-# CCDX 1.4.23
+# CCDX 1.4.24
 
-- Add warehouse pallet robots to Requests, with right-angle aisles, dashed markings and coordinated intersection access.
-- Show localized page names when you hover over or focus collapsed sidebar icons.
-- Add a native Windows Antigravity App launcher for verified official x64 and ARM64 builds.
-- Preserve text and thinking blocks from compatible Chat upstreams in Responses and Antigravity.
-- Load model editors and optional drawing assets when needed. Cancel in-flight Bark delivery when the service shuts down.
+- Group Copilot reasoning levels in the native Antigravity model picker when the catalog supports grouping. Saved aliases and existing conversation routes still work.
+- Detect the verified standalone Antigravity App on macOS alongside the Gemini App.
+- Show the actual thinking level and output limit sent to custom Gemini sources in request diagnostics.
 
-Unverified: signed-in Windows Antigravity App catalog, inference and ordinary-chat isolation.
+Unverified: Windows App model-picker rendering and signed-in native inference.

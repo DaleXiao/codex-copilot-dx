@@ -1,6 +1,7 @@
-# CCDX 1.4.21
+# CCDX 1.4.22
 
-- Use the button next to the CCDX wordmark to collapse navigation to icons. The dashboard remembers the last layout in each browser.
-- The dashboard loads the tool animation renderer when you open Requests with an animation style enabled.
+- Select Articulated robot arm in Requests for an isometric motion style with linked cylinders, gears and grippers. Occlusion follows the arm through turns and placement.
+- Antigravity keeps the model list, focus and unsaved choices when you return to the page. The page Refresh button reads local state. Refresh models explicitly fetches the upstream catalog.
+- Claude generation and token counting reject non-string user and system text blocks consistently and identify the invalid field.
 
-Unverified: browser behavior on physical touch devices.
+Unverified: arm motion on physical touch devices and live provider replay of malformed Claude requests.

@@ -1232,6 +1232,20 @@ try {
         if(language==="zh"&&theme==="dark"&&width===1280){
           const before=geminiRefreshes;geminiExpand=true;
           await modelBoxes.first().uncheck();
+          await page.evaluate(()=>{
+            window.geminiDraftNode=document.querySelector("#gemini-models input");
+            window.geminiDraftNode.focus();
+            window.geminiPageReads=0;
+            window.addEventListener("ccdx-gemini-state",()=>{if(location.hash==="#gemini")window.geminiPageReads++;});
+          });
+          await nav("overview");await nav("gemini");
+          await page.waitForFunction(()=>window.geminiPageReads>0);
+          assert.ok(await page.evaluate(()=>document.activeElement===window.geminiDraftNode),"Reopening restores the model control's focus");
+          const getStatus=page.waitForResponse(response=>response.url().endsWith("/_ccdx/ui/gemini")&&response.request().method()==="GET");
+          await page.locator("#refresh").click();await getStatus;
+          assert.equal(geminiRefreshes,before,"The top refresh only reads local Antigravity status");
+          assert.ok(await page.evaluate(()=>document.querySelector("#gemini-models input")===window.geminiDraftNode));
+          assert.equal(await modelBoxes.first().isChecked(),false,"The draft survives leaving the page and refreshing");
           await page.locator("#gemini-refresh").click();await page.waitForFunction(()=>document.querySelectorAll('#gemini-models input').length===3&&!document.getElementById('gemini-refresh').disabled);
           assert.equal(geminiRefreshes,before+1);assert.equal(await modelBoxes.first().isChecked(),false,"A real upstream refresh keeps the unsaved model draft");
           const hydrogen=page.locator('#gemini-models tr').filter({hasText:'Gemini 4 Hydrogen'});assert.equal(await hydrogen.locator('td').nth(3).textContent(),'low / medium / high / xhigh');

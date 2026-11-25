@@ -67,7 +67,7 @@
 
   function face(points,fill,stroke=null,width=.43,bias=0) {
     const depth = points.reduce((sum,p)=>sum+dot(p,camera),0)/points.length;
-    queue.push({points,fill,stroke,width,depth:depth+bias});
+    queue.push({points,fill,stroke,width,depth:depth+bias,bias});
   }
   function line(a,b,stroke="fine",width=.46,bias=.15) {face([a,b],null,stroke,width,bias);}
   function ring(at,u,v,r,n=24,phase=0) {
@@ -75,25 +75,45 @@
   }
   function disk(at,u,v,r,fill="metal",stroke="edge",bias=.2) {face(ring(at,u,v,r),fill,stroke,.55,bias);}
   function visible(normal) {return dot(normal,camera) > .005;}
-  function body(a,b,r,options={}) {
-    const axis=unit(sub(b,a));
-    const guide=options.guide ?? (Math.abs(dot(axis,Z))>.95 ? X : Z);
+  function turnedPart(origin,axis,guide,profile,options={}) {
     const u=unit(cross(guide,axis)),v=cross(axis,u);
-    const n=options.sectors ?? 24, start=ring(a,u,v,r,n), end=ring(b,u,v,r,n);
-    for(let i=0;i<n;i++) {
-      const j=(i+1)%n, normal=radial(u,v,tau*(i+.5)/n);
-      if(!visible(normal))continue;
-      const endI=end[i], endJ=end[j];
-      const shade=clamp(Math.round((dot(normal,[-.42,-.49,.76])+1)*3),0,6);
-      face([start[i],start[j],endJ,endI],options.color??"shade"+shade,
-        null,.43);
-      line(start[i],start[j],"edge",.42,.12);
-      line(endI,endJ,"edge",.42,.12);
-      if(!visible(radial(u,v,tau*(i-.5)/n)))line(start[i],endI,"edge",.62,.12);
-      if(!visible(radial(u,v,tau*(i+1.5)/n)))line(start[j],endJ,"edge",.62,.12);
+    const facing=Math.atan2(dot(v,camera),dot(u,camera));
+    const n=Math.max(8,(options.sectors??24)/2|0);
+    // The two silhouette tangents move continuously; the rim does not switch facets.
+    const normals=Array.from({length:n+1},(_,i)=>radial(u,v,facing-Math.PI/2+Math.PI*i/n));
+    const sample=([offset,radius])=>{
+      const center=add(origin,scale(axis,offset));
+      return normals.map(normal=>add(center,scale(normal,radius)));
+    };
+    let previous=sample(profile[0]);
+    face(previous,null,"edge",.46,.12);
+    for(let i=1;i<profile.length;i++) {
+      const next=sample(profile[i]);
+      const [begin,r1]=profile[i-1], [end,r2,palette]=profile[i];
+      const sections=Math.max(1,Math.ceil((end-begin)/9));
+      for(let j=0;j<n;j++) {
+        const normal=unit(add(normals[j],normals[j+1]));
+        const shade=clamp(Math.round((dot(normal,[-.42,-.49,.76])+1)*3),0,6);
+        const paint=palette??options.color??"shade"+shade;
+        for(let k=0;k<sections;k++) {
+          const t=k/sections,s=(k+1)/sections;
+          face([mix(previous[j],next[j],t),mix(previous[j+1],next[j+1],t),
+            mix(previous[j+1],next[j+1],s),mix(previous[j],next[j],s)],paint);
+        }
+      }
+      line(previous[0],next[0],"edge",.53,.12);
+      line(previous[n],next[n],"edge",.53,.12);
+      if(r1!==r2||i===profile.length-1)face(next,null,"edge",.43,.12);
+      previous=next;
     }
-    if(visible(axis))disk(b,u,v,r,options.cap??"metal");
-    else disk(a,u,v,r,options.cap??"metal");
+    const [offset,radius]=dot(axis,camera)>0?profile.at(-1):profile[0];
+    disk(add(origin,scale(axis,offset)),u,v,radius,options.cap??"metal");
+    return sample;
+  }
+  function body(a,b,r,options={}) {
+    const offset=sub(b,a),axis=unit(offset);
+    const guide=options.guide??(Math.abs(dot(axis,Z))>.95?X:Z);
+    return turnedPart(a,axis,guide,[[0,r],[len(offset),r]],options);
   }
   function slab(corners,z0,z1,offset=[0,0,0],top="metal") {
     const layer=z=>corners.map(([x,y])=>add([x,y,z],offset));
@@ -168,10 +188,10 @@
   }
   function piston(anchor,pin,side) {
     const d=sub(pin,anchor), axis=unit(d);
-    const barrel=add(anchor,scale(axis,16));
-    body(add(anchor,scale(axis,1)),barrel,2.25,{guide:side,sectors:12});
-    body(add(barrel,scale(axis,-1.7)),pin,1.04,{guide:side,sectors:12,color:"paper"});
-    body(add(barrel,scale(axis,-1.1)),barrel,2.52,{guide:side,sectors:14,color:"dark-metal"});
+    turnedPart(anchor,axis,side,[
+      [1,2.20],[2.8,2.20],[2.8,2.03],[13.1,2.03],[13.1,2.5],
+      [15.8,2.5,"metal"],[15.8,1.11],[len(d),1.11,"paper"],
+    ],{sectors:16,cap:"metal"});
     for(const joint of [anchor,pin])body(add(joint,scale(side,-1.8)),add(joint,scale(side,1.8)),2.05,{sectors:12});
   }
   function ringBolts(at,u,v,r,count=6) {
@@ -179,23 +199,14 @@
   }
 
   function actuatorTube(a,b,side,r) {
-    const axis=unit(sub(b,a)), extent=len(sub(b,a)), at=d=>add(a,scale(axis,d));
-    body(at(0),at(extent),r,{guide:side});
-    for(const d of [1.2,extent-3.3])body(at(d),at(d+2.1),r+1.12,{guide:side,color:"dark-metal"});
-    for(const d of [5,7.2,extent-6.8,extent-4.8])body(at(d),at(d+.48),r+.54,{guide:side,color:"edge",sectors:24});
-    const normal=unit(cross(side,axis));
-    for(const angle of [0,2.1,4.2]) {
-      const outward=radial(side,normal,angle);
-      if(!visible(outward))continue;
-      const tangent=unit(cross(outward,axis));
-      const surface=add(at(extent*.54),scale(outward,r+.16));
-      const patch=[[0,-2],[9,-2],[9,2],[0,2]].map(([x,y])=>add(surface,add(scale(axis,x-4.5),scale(tangent,y))));
-      face(patch,"dark-metal","fine",.41,.4);
-      for(const k of [-3,0,3]){
-        const tick=add(surface,scale(axis,k));
-        line(add(tick,scale(tangent,-1.1)),add(tick,scale(tangent,1.1)),"edge",.48,.65);
-      }
-    }
+    const extent=len(sub(b,a)),axis=unit(sub(b,a));
+    const collar=r+1.05;
+    const surface=turnedPart(a,axis,side,[
+      [0,r],[1.3,r],[1.3,collar],[3.2,collar,"metal"],[3.2,r],
+      [extent-3.2,r],[extent-3.2,collar],[extent-1.3,collar,"metal"],[extent-1.3,r],[extent,r],
+    ]);
+    for(const offset of [5,6.6,extent*.48-1.8,extent*.48,extent*.48+1.8,extent-6.6,extent-5])
+      face(surface([offset,r+.085]),null,"edge",.46,.22);
   }
   function joint(at,side,d,r,u,v) {
     body(add(at,scale(side,-d)),add(at,scale(side,d)),r,{guide:u,cap:"paper"});
@@ -259,7 +270,7 @@
 
     actuatorTube(add(shoulder,scale(upper,7)),add(elbow,scale(upper,-6)),side,7);
     actuatorTube(add(elbow,scale(fore,6)),add(wrist,scale(fore,-5)),side,5.5);
-    const sign=visible(side)?1:-1, outward=scale(side,sign);
+    const outward=side;
     const lateral=scale(outward,13);
     const anchor=add(add(shoulder,scale(radialAxis,-1)),add(scale(Z,-14),lateral));
     const pin=add(add(shoulder,scale(upper,24)),lateral);
@@ -279,7 +290,7 @@
     const bracket=scale(outward,-2.4);
     body(add(pinionCenter,bracket),add(ringCenter,bracket),3.7,{guide:outward,color:"dark-metal",sectors:12});
     body(add(pinionCenter,scale(outward,-4)),pinionCenter,4.65,{guide:upper,color:"dark-metal"});
-    const drivenAngle=-sign*bend;
+    const drivenAngle=-bend;
     gear(ringCenter,upper,planeV,10.8,24,drivenAngle);
     gear(pinionCenter,upper,planeV,5.4,12,Math.PI/12-2*drivenAngle);
     gripper(wrist,state.jaw,yaw);
@@ -314,29 +325,126 @@
     queue.length=0;
   }
 
+  function createDepthRenderer(context) {
+    const layer=document.createElement("canvas");
+    const gl=layer.getContext("webgl",{alpha:true,antialias:true,depth:true,premultipliedAlpha:false,preserveDrawingBuffer:true});
+    if(!gl)return null;
+    function shader(type,source) {
+      const compiled=gl.createShader(type);
+      gl.shaderSource(compiled,source);gl.compileShader(compiled);
+      return gl.getShaderParameter(compiled,gl.COMPILE_STATUS)?compiled:null;
+    }
+    const vertex=shader(gl.VERTEX_SHADER,
+      "attribute vec3 position; attribute vec3 color; varying vec3 ink; void main(){gl_Position=vec4(position,1.0);ink=color;}");
+    const fragment=shader(gl.FRAGMENT_SHADER,
+      "precision mediump float; varying vec3 ink; void main(){gl_FragColor=vec4(ink,1.0);}");
+    if(!vertex||!fragment)return null;
+    const program=gl.createProgram();
+    gl.attachShader(program,vertex);gl.attachShader(program,fragment);gl.linkProgram(program);
+    if(!gl.getProgramParameter(program,gl.LINK_STATUS))return null;
+    gl.useProgram(program);
+    gl.enable(gl.DEPTH_TEST);gl.depthFunc(gl.LEQUAL);
+    gl.bindBuffer(gl.ARRAY_BUFFER,gl.createBuffer());
+    for(const [name,offset] of [["position",0],["color",12]]){
+      const index=gl.getAttribLocation(program,name);
+      gl.enableVertexAttribArray(index);gl.vertexAttribPointer(index,3,gl.FLOAT,false,24,offset);
+    }
+    const pixel=document.createElement("canvas");pixel.width=pixel.height=1;
+    const sampler=pixel.getContext("2d",{willReadFrequently:true});
+    const rgb=new Map();
+    const colorFor=(key,colors)=>{
+      if(!rgb.has(key)){
+        sampler.fillStyle=colors[key]??key;sampler.fillRect(0,0,1,1);
+        const rgba=sampler.getImageData(0,0,1,1).data;
+        rgb.set(key,[rgba[0]/255,rgba[1]/255,rgba[2]/255]);
+      }
+      return rgb.get(key);
+    };
+    let stream=new Float32Array(65536),cursor=0;
+    function vertexAt(p,ink) {
+      if(cursor+6>stream.length){const next=new Float32Array(stream.length*2);next.set(stream);stream=next;}
+      stream[cursor++]=p[0];stream[cursor++]=p[1];stream[cursor++]=p[2];
+      stream[cursor++]=ink[0];stream[cursor++]=ink[1];stream[cursor++]=ink[2];
+    }
+    function triangle(a,b,c,ink) {vertexAt(a,ink);vertexAt(b,ink);vertexAt(c,ink);}
+    function frame(geometry,zoom,posX,posY,dpr,colors) {
+      if(gl.isContextLost())return false;
+      const {width:w,height:h}=context.canvas;
+      if(layer.width!==w||layer.height!==h){layer.width=w;layer.height=h;}
+      gl.viewport(0,0,w,h);
+      gl.clearColor(0,0,0,0);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+      cursor=0;
+      for(const {points,fill,stroke,width,bias} of geometry){
+        const vertices=points.map(p=>{
+          const [x,y]=project(p);
+          return [2*(x*zoom+posX)/w-1,1-2*(y*zoom+posY)/h,-(dot(p,camera)+bias*.05)/384];
+        });
+        if(fill){
+          const ink=colorFor(fill,colors);
+          if(vertices.length===4) {
+            triangle(vertices[0],vertices[1],vertices[2],ink);
+            triangle(vertices[0],vertices[2],vertices[3],ink);
+          } else {
+            const center=scale(vertices.reduce(add,[0,0,0]),1/vertices.length);
+            for(let i=0;i<vertices.length;i++)triangle(center,vertices[i],vertices[(i+1)%vertices.length],ink);
+          }
+        }
+        if(stroke){
+          const ink=colorFor(stroke),count=fill?vertices.length:vertices.length-1;
+          for(let i=0;i<count;i++){
+            const a=vertices[i], b=vertices[(i+1)%vertices.length];
+            const dx=(b[0]-a[0])*w,dy=(b[1]-a[1])*h;
+            const distance=Math.hypot(dx,dy);
+            if(distance<.001)continue;
+            const thick=Math.max(.74*dpr,width*zoom),x=-dy/distance*thick/w,y=dx/distance*thick/h;
+            const forward=.00023;
+            const p=[a[0]-x,a[1]-y,a[2]-forward],q=[a[0]+x,a[1]+y,a[2]-forward];
+            const r=[b[0]-x,b[1]-y,b[2]-forward],s=[b[0]+x,b[1]+y,b[2]-forward];
+            triangle(p,q,r,ink);triangle(q,s,r,ink);
+          }
+        }
+      }
+      gl.bufferData(gl.ARRAY_BUFFER,stream.subarray(0,cursor),gl.DYNAMIC_DRAW);
+      gl.drawArrays(gl.TRIANGLES,0,cursor/6);
+      context.drawImage(layer,0,0);
+      return true;
+    }
+    return {frame,setColors:()=>rgb.clear()};
+  }
   globalThis.ccdxToolArm = context => {
     let key, platform, colors, zoom, left, top;
+    let depthView;
+    try { depthView=createDepthRenderer(context); } catch { /* Continuous 2D geometry is available without WebGL. */ }
+    staticPlate();
+    const plate=queue.splice(0);
     return (_style,{time,width,height,dpr,ink,surface}) => {
-      const next = [width,height,dpr,ink,surface].join("|");
-      if (key !== next) {
-        const w=context.canvas.width, h=context.canvas.height;
+      const next=[width,height,dpr,ink,surface].join("|");
+      if(key!==next){
+        const {width:w,height:h}=context.canvas;
+        const size=Math.min((width-12)/254,(height-12)/180)*dpr;
+        if(!(size>0))return;
+        zoom=size;left=w/2-21*zoom;top=h/2-5*zoom;
         colors=palette(ink,surface);
-        zoom=Math.min((width-12)/254,(height-12)/180)*dpr;
-        if (!(zoom>0)) return;
-        left=w/2-21*zoom;top=h/2-5*zoom;
-        platform=document.createElement("canvas");platform.width=w;platform.height=h;
-        const base=platform.getContext("2d");
-        base.setTransform(zoom,0,0,zoom,left,top);
-        staticPlate();paint(base,colors);
+        platform=null;depthView?.setColors();
         key=next;
       }
       context.setTransform(1,0,0,1,0,0);
-      context.drawImage(platform,0,0);
-      context.setTransform(zoom,0,0,zoom,left,top);
-      const elapsed=Math.max(0,time);
-      const cycle=Math.floor(elapsed/duration);
+      const elapsed=Math.max(0,time),cycle=Math.floor(elapsed/duration);
       drawArm(elapsed-cycle*duration,cycle%2===1);
-      paint(context,colors);
+      if(depthView?.frame([...plate,...queue],zoom,left,top,dpr,colors)){
+        queue.length=0;
+        return;
+      }
+      if(!platform){
+        const moving=queue.splice(0);
+        platform=document.createElement("canvas");
+        platform.width=context.canvas.width;platform.height=context.canvas.height;
+        const base=platform.getContext("2d");
+        base.setTransform(zoom,0,0,zoom,left,top);
+        queue.push(...plate);paint(base,colors);queue.push(...moving);
+      }
+      context.drawImage(platform,0,0);
+      context.setTransform(zoom,0,0,zoom,left,top);paint(context,colors);
     };
   };
 })();

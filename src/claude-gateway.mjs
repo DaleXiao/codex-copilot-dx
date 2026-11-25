@@ -204,6 +204,19 @@ function createGuardedMessagesObserver(onEvent, maxBytes, clientModel, guard, re
   return { write: chunk => run("write", chunk), finish: () => run("finish") };
 }
 
+function malformedTextBlock(body) {
+  const invalidIndex = content => Array.isArray(content)
+    ? content.findIndex(block => block?.type === "text" && typeof block.text !== "string") : -1;
+  const system = invalidIndex(body.system);
+  if (system >= 0) return `system[${system}].text`;
+  for (const [index, message] of body.messages.entries()) {
+    if (message?.role !== "user" && message?.role !== "system") continue;
+    const block = invalidIndex(message.content);
+    if (block >= 0) return `messages[${index}].content[${block}].text`;
+  }
+  return null;
+}
+
 export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = false, appContract, messagesSystemMode = "passthrough", log = () => {}, onRequest = () => {}, env = process.env, performance: sharedPerformance, validateConversation,
   resolveRequest, privacy, compaction, privacyClient = "claude", record = recordUsage, acquireRequest = createRequestAdmission({ maxBytes: 16 * 1024 * 1024, maxQueued: 8 }) } = {}) {
   if (!provider || !isProviderId(provider.id) || typeof apiKey !== "string" || apiKey.length < 32) throw new Error("Claude gateway requires a provider and private local key");
@@ -259,6 +272,13 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
         if (context.requestOptions.client_tool_errors_received) markRequestObservation({ client_tool_errors_received: context.requestOptions.client_tool_errors_received });
         if (!body || typeof body.model !== "string" || !Array.isArray(body.messages)) {
           send(res, 400, apiError("ccdx_messages_invalid", "Expected a model and messages array"));return;
+        }
+        const invalidText = malformedTextBlock(body);
+        if (invalidText) {
+          failureStatus = 400;
+          send(res, failureStatus, { type: "error", error: { type: "invalid_request_error",
+            code: "ccdx_messages_text_invalid", param: invalidText, message: `${invalidText} must be a string.` } });
+          return;
         }
         const apiVersion = req.headers["anthropic-version"];
         if (typeof apiVersion === "string" && apiVersion.trim() === "2026-10-21") {

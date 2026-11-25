@@ -34,6 +34,29 @@ export async function checkToolActivity({ page, codex, metrics, performanceCheck
         return typeof globalThis.ccdxToolArm === "function" &&
           canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height).data.some((alpha, index) => index % 4 === 3 && alpha > 0);
       });
+      assert.ok(await page.evaluate(() => {
+        const canvas = document.createElement("canvas");
+        canvas.width = 400;canvas.height = 275;
+        const context = canvas.getContext("2d", { willReadFrequently: true });
+        const draw = globalThis.ccdxToolArm(context);
+        const sample = time => {
+          context.setTransform(1,0,0,1,0,0);
+          context.clearRect(0,0,400,275);
+          draw("arm", { time, width:400, height:275, dpr:1, ink:"#4c493e", surface:"#fbf5e6" });
+          return context.getImageData(0,0,400,275).data;
+        };
+        for (const time of [4.2, 4.65, 5.2, 6.4, 13.8, 14.45]) {
+          const before = sample(time), after = sample(time + .001);
+          let changed = 0, visible = 0;
+          for (let at = 0; at < before.length; at += 4) {
+            if (before[at + 3] > 240) visible++;
+            if (Math.abs(before[at] - after[at]) + Math.abs(before[at+1] - after[at+1]) +
+              Math.abs(before[at+2] - after[at+2]) + Math.abs(before[at+3] - after[at+3]) > 54) changed++;
+          }
+          if (visible < 4000 || changed > 1600) return false;
+        }
+        return true;
+      }), "The arm remains visible and continuous at nearby frames in both directions");
     }
     assert.equal(await page.locator("#tool-state").textContent(), "Waiting for tool results");
     assert.equal(await page.locator("#tool-stage").getAttribute("data-style"), style);

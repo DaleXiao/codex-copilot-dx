@@ -116,6 +116,37 @@ test("the 2026-10-21 Messages contract rejects sampling parameters in generation
   }
 });
 
+test("generation and token counts validate user and system text at the original block index", async t => {
+  const { server, calls } = await gateway(t, (_body, options) => Response.json(options.countTokens ? { input_tokens: 4 } : message));
+  const valid = { model: "claude-opus-5.5", system: [{ type: "text", text: "fixture" }], messages: [
+    { role: "user", content: "fixture" },
+    { role: "assistant", content: [{ type: "thinking", thinking: "fixture", signature: "fixture" },
+      { type: "tool_use", id: "tool-fixture", name: "read", input: {} }] },
+    { role: "user", content: [{ type: "tool_result", tool_use_id: "tool-fixture", content: "fixture" }] },
+  ] };
+  for (const suffix of ["", "/count_tokens"]) {
+    const send = patch => fetch(`http://127.0.0.1:${server.port}/v1/messages${suffix}`, {
+      method: "POST", headers: { "Content-Type": "application/json", "x-api-key": key },
+      body: JSON.stringify({ ...valid, ...(suffix ? {} : { max_tokens: 8 }), ...patch }),
+    });
+    const before = calls.length;
+    for (const [patch, path] of [
+      [{ system: [{ type: "text", text: null }] }, "system[0].text"],
+      [{ messages: [{ role: "user", content: [{ type: "text", text: "" }, { type: "text", text: 9 }] }] }, "messages[0].content[1].text"],
+      [{ messages: [{ role: "user", content: "fixture" }, { role: "system", content: [{ type: "text" }] }] }, "messages[1].content[0].text"],
+    ]) {
+      const response = await send(patch);
+      assert.equal(response.status, 400);
+      assert.deepEqual((await response.json()).error, { type: "invalid_request_error", code: "ccdx_messages_text_invalid", param: path, message: path + " must be a string." });
+    }
+    assert.equal(calls.length, before);
+    for (const patch of [{}, { system: "fixture" }]) {
+      const response = await send(patch);assert.equal(response.status, 200);await response.text();
+      assert.deepEqual(calls.at(-1).messages, valid.messages);
+    }
+  }
+});
+
 test("Claude App self checks keep the same prepared body across saved effort defaults", async t => {
   const requests = [];
   const provider = { id: "m365", profileId: () => "fixture", models: () => [{ id: "provider-model" }],

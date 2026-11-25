@@ -2,6 +2,7 @@
   const el=id=>document.getElementById(id),language=globalThis.ccdxLanguage;
   let busy=false,state=null,draft=null,defaultDraft,timeoutDraft,nativeDraft,notice=null,pendingAction=null;
   let sharedApplication=null,sharedPending=false,savedTimer,showSaved=false,savedModels=false;
+  let reading, renderedSources, renderedCatalog, modelRows=[], lastFieldFocus;
   const words=(id,key)=>language.set(el(id),key);
   const clear=id=>{el(id).removeAttribute('data-i18n');el(id).removeAttribute('data-i18n-args');el(id).textContent='';el(id).title=''};
   const controls=['gemini-enabled','gemini-open','gemini-refresh','gemini-save','gemini-cancel','gemini-use-app-default'];
@@ -48,7 +49,11 @@
     native.disabled=busy||sharedPending;
     const options=[{id:'',name:language.format('gemini_native_source_none')},...sources];
     if(state.native_source&&!sources.some(source=>source.id===state.native_source))options.push({id:state.native_source,name:language.format('unknown'),disabled:true});
-    native.replaceChildren(...options.map(source=>{const option=document.createElement('option');option.value=source.id;option.textContent=source.name;option.disabled=source.disabled===true;return option}));
+    const sourcesKey=JSON.stringify(options);
+    if(sourcesKey!==renderedSources){
+      native.replaceChildren(...options.map(source=>{const option=document.createElement('option');option.value=source.id;option.textContent=source.name;option.disabled=source.disabled===true;return option}));
+      renderedSources=sourcesKey;
+    }
     native.value=nativeDraft===undefined?state.native_source??'':nativeDraft??'';
     syncSaveControls();
     words('gemini-save',busy&&pendingAction==='models'?'api_saving':'api_save');if(busy&&pendingAction==='models')el('gemini-save').setAttribute('aria-busy','true');else el('gemini-save').removeAttribute('aria-busy');
@@ -66,44 +71,74 @@
     el('gemini-reopen').hidden=!hint;if(hint)words('gemini-reopen',state.enabled?'gemini_reopen':'gemini_pause_reopen');
     el('gemini-open').hidden=!fallback;
     el('gemini-open').disabled=busy||sharedPending||state.app.status!=='stopped';
-    const list=el('gemini-models'),focused=list.contains(document.activeElement)?document.activeElement:null;
-    const focus={value:focused?.value,kind:focused?.tagName};list.replaceChildren();
-    for(const model of groupedModels()){
-      const chosen=new Set(draft||selected()),ids=model.efforts.map(item=>item.id);
-      const row=document.createElement('tr'),name=document.createElement('td'),label=document.createElement('label'),input=document.createElement('input');
-      input.type='checkbox';input.value=model.id;input.checked=ids.some(id=>chosen.has(id));input.disabled=busy||sharedPending;input.setAttribute('aria-label',model.name);
-      const update=(values,checked)=>{const next=new Set(draft||selected());for(const id of values)if(checked)next.add(id);else next.delete(id);draft=[...next];if(!checked&&values.includes(currentDefault()))defaultDraft=null;notice=null;clear('gemini-note');render()};
-      input.addEventListener('change',()=>{const saved=ids.filter(id=>selected().includes(id));update(input.checked&&saved.length?saved:ids,input.checked)});
-      label.append(input,document.createTextNode(model.name));name.append(label);row.append(name);
-      for(const [key,value]of [['source','GitHub Copilot'],['cap_context',count(model.context_window)]]){const cell=document.createElement('td');cell.textContent=value;cell.dataset.label=language.format(key);row.append(cell)}
-      const efforts=document.createElement('td');efforts.dataset.label=language.format('cap_reasoning');
-      efforts.textContent=model.efforts.map(item=>item.effort||'—').join(' / ');
-      const preferred=document.createElement('td'),button=document.createElement('button');preferred.dataset.label=language.format('gemini_new_chat_default');
-      const isDefault=ids.includes(currentDefault())&&chosen.has(currentDefault());
-      button.type='button';button.value=model.id;button.disabled=busy||sharedPending;
-      const title=isDefault?'cap_default':'cap_set_default';language.set(button,title);
-      button.setAttribute('aria-pressed',String(isDefault));button.setAttribute('aria-label',language.format('model_action_label',{name:model.name,action:language.format(title)}));
-      button.addEventListener('click',()=>{
-        if(isDefault)return;
-        const saved=ids.filter(id=>selected().includes(id)),visible=model.efforts.filter(item=>chosen.has(item.id));
-        const available=visible.length?visible:saved.length?model.efforts.filter(item=>saved.includes(item.id)):model.efforts;
-        if(!visible.length){for(const item of available)chosen.add(item.id);draft=[...chosen];}
-        defaultDraft=(available.find(item=>item.effort==='medium')||available[0])?.id??null;
-        notice=null;clear('gemini-note');render();
-      });
-      preferred.append(button);row.append(efforts,preferred);list.append(row);
-    }
-    if(!state.models.length){const row=document.createElement('tr'),cell=document.createElement('td');cell.colSpan=5;language.set(cell,'gemini_no_models');row.append(cell);list.append(row)}
-    if(focus.kind)[...list.querySelectorAll(focus.kind.toLowerCase())].find(control=>control.value===focus.value)?.focus();
+    renderModels();
     for(const id of ['active','failed','copilot','total'])el('gemini-'+id).textContent=state.activity?.[id]??'—';
     if(notice)words('gemini-note',notice);
   }
+  function renderModels(){
+    const list=el('gemini-models'),focused=list.contains(document.activeElement)?document.activeElement:null;
+    const groups=groupedModels(), catalogKey=JSON.stringify([document.documentElement.lang,groups.map(model=>
+      [model.id,model.name,model.context_window,model.efforts.map(item=>[item.id,item.effort])])]);
+    if(catalogKey!==renderedCatalog){
+      const oldFocus=focused||(lastFieldFocus&&list.contains(lastFieldFocus)?lastFieldFocus:null);
+      modelRows=groups.map(model=>{
+        const ids=model.efforts.map(item=>item.id);
+        const row=document.createElement('tr'),name=document.createElement('td'),label=document.createElement('label'),input=document.createElement('input');
+        input.type='checkbox';input.value=model.id;input.setAttribute('aria-label',model.name);
+        input.addEventListener('change',()=>{
+          const saved=ids.filter(id=>selected().includes(id)),checked=input.checked;
+          const values=checked&&saved.length?saved:ids,next=new Set(draft||selected());
+          for(const id of values)if(checked)next.add(id);else next.delete(id);
+          draft=[...next];if(!checked&&values.includes(currentDefault()))defaultDraft=null;
+          notice=null;clear('gemini-note');render();
+        });
+        label.append(input,document.createTextNode(model.name));name.append(label);row.append(name);
+        for(const [key,value]of [['source','GitHub Copilot'],['cap_context',count(model.context_window)]]){
+          const cell=document.createElement('td');cell.textContent=value;cell.dataset.label=language.format(key);row.append(cell);
+        }
+        const efforts=document.createElement('td');efforts.dataset.label=language.format('cap_reasoning');
+        efforts.textContent=model.efforts.map(item=>item.effort||'—').join(' / ');
+        const preferred=document.createElement('td'),button=document.createElement('button');preferred.dataset.label=language.format('gemini_new_chat_default');
+        button.type='button';button.value=model.id;
+        button.addEventListener('click',()=>{
+          if(button.getAttribute('aria-pressed')==='true')return;
+          const chosen=new Set(draft||selected()),saved=ids.filter(id=>selected().includes(id));
+          const visible=model.efforts.filter(item=>chosen.has(item.id));
+          const available=visible.length?visible:saved.length?model.efforts.filter(item=>saved.includes(item.id)):model.efforts;
+          if(!visible.length){for(const item of available)chosen.add(item.id);draft=[...chosen];}
+          defaultDraft=(available.find(item=>item.effort==='medium')||available[0])?.id??null;
+          notice=null;clear('gemini-note');render();
+        });
+        preferred.append(button);row.append(efforts,preferred);return {row,model,ids,input,button};
+      });
+      list.replaceChildren(...modelRows.map(({row})=>row));
+      if(!modelRows.length){const row=document.createElement('tr'),cell=document.createElement('td');cell.colSpan=5;language.set(cell,'gemini_no_models');row.append(cell);list.append(row);}
+      if(oldFocus){
+        lastFieldFocus=[...list.querySelectorAll(oldFocus.tagName.toLowerCase())].find(control=>control.value===oldFocus.value);
+      }
+      renderedCatalog=catalogKey;
+    }
+    const chosen=new Set(draft||selected()),disabled=busy||sharedPending;
+    for(const {model,ids,input,button} of modelRows){
+      const isDefault=ids.includes(currentDefault())&&chosen.has(currentDefault());
+      input.checked=ids.some(id=>chosen.has(id));input.disabled=button.disabled=disabled;
+      const title=isDefault?'cap_default':'cap_set_default';language.set(button,title);
+      button.setAttribute('aria-pressed',String(isDefault));button.setAttribute('aria-label',language.format('model_action_label',{name:model.name,action:language.format(title)}));
+    }
+    if(focused&&!focused.isConnected)lastFieldFocus?.focus({preventScroll:true});
+  }
   async function load(action,extra={},report=true){
-    if(busy){if(!report)throw Error('Antigravity settings are busy');return}
-    busy=true;pendingAction=action;render();
+    if(busy&&!reading){if(!report)throw Error('Antigravity settings are busy');return}
+    const write=Boolean(action&&action!=='summary');
+    if(!write&&reading&&(reading.action===action||action==='summary'))return;
+    reading?.controller.abort();
+    const controller=new AbortController();
+    reading=write?null:{action,controller};
+    if(write||!state){busy=true;pendingAction=action;render();}
     try{
-      const write=action&&action!=='summary',response=await fetch('/_ccdx/ui/gemini'+(action==='summary'?'?scope=summary':''),{method:write?'POST':'GET',headers:{'X-CCDX-Dashboard':'1',...(write?{'Content-Type':'application/json'}:{})},cache:'no-store',signal:AbortSignal.timeout(20000),...(write?{body:JSON.stringify({action,...(action==='enable'?{accept_background_copilot:true}:{}),...extra})}:{})});
+      const response=await fetch('/_ccdx/ui/gemini'+(action==='summary'?'?scope=summary':''),{method:write?'POST':'GET',headers:{'X-CCDX-Dashboard':'1',...(write?{'Content-Type':'application/json'}:{})},cache:'no-store',signal:AbortSignal.any([controller.signal,AbortSignal.timeout(20000)]),...(write?{body:JSON.stringify({action,...(action==='enable'?{accept_background_copilot:true}:{}),...extra})}:{})});
       const value=await response.json();if(!response.ok)throw Error(value.error||'Antigravity setup failed');
+      if(controller.signal.aborted)return;
       state=value;if(action==='models'){
         draft=null;defaultDraft=undefined;timeoutDraft=undefined;nativeDraft=undefined;showSaved=true;savedModels=extra.models!==undefined||extra.native_source!==undefined;clearTimeout(savedTimer);savedTimer=setTimeout(()=>{showSaved=false;render()},2200);
       }
@@ -113,8 +148,14 @@
         clear('gemini-note');
       }
       return state;
-    }catch(error){if(!report)throw error;notice='gemini_operation_failed';words('gemini-note',notice);el('gemini-note').title=error.message}
-    finally{busy=false;pendingAction=null;render();window.dispatchEvent(new CustomEvent('ccdx-gemini-state',{detail:{application:state?.application,needsCatalogReload:(state?.enabled===true&&state.source_enabled!==false||Boolean(state?.native_source))&&state.models_reload_required===true&&state.default_model_unavailable!==true}}))}
+    }catch(error){if(!controller.signal.aborted){if(!report)throw error;notice='gemini_operation_failed';words('gemini-note',notice);el('gemini-note').title=error.message;}}
+    finally{
+      if(!controller.signal.aborted){
+        if(reading?.controller===controller)reading=null;
+        busy=false;pendingAction=null;render();
+        window.dispatchEvent(new CustomEvent('ccdx-gemini-state',{detail:{application:state?.application,needsCatalogReload:(state?.enabled===true&&state.source_enabled!==false||Boolean(state?.native_source))&&state.models_reload_required===true&&state.default_model_unavailable!==true}}));
+      }
+    }
   }
   globalThis.ccdxAntigravity={get state(){return state},get pending(){return busy},refreshStatus:()=>load('summary'),setEnabled:enabled=>load(enabled?'enable':'disable',{},false)};
   el('gemini-enabled').addEventListener('change',event=>void load(event.target.checked?'enable':'disable'));
@@ -131,8 +172,14 @@
   el('gemini-open').addEventListener('click',()=>{if(globalThis.ccdxApplicationControls)globalThis.ccdxApplicationControls.open('antigravity');else void load('open')});
   window.addEventListener('ccdx:application-state',event=>{if(event.detail?.id==='antigravity'){sharedApplication=event.detail.application;sharedPending=event.detail.pending;render()}});
   el('gemini-refresh').addEventListener('click',()=>void load('refresh'));
-  el('refresh').addEventListener('click',()=>{if(['#gemini','#models'].includes(location.hash))void load(location.hash==='#models'?'summary':'refresh')});
-  window.addEventListener('hashchange',()=>{if(['#gemini','#models'].includes(location.hash))void load(location.hash==='#models'?'summary':undefined)});
+  el('refresh').addEventListener('click',()=>{if(['#gemini','#models'].includes(location.hash))void load(location.hash==='#models'?'summary':undefined)});
+  el('gemini-model-form').addEventListener('focusin',event=>{lastFieldFocus=event.target});
+  window.addEventListener('hashchange',()=>{
+    if(location.hash==='#gemini'){
+      if(document.activeElement===el('main-content')&&lastFieldFocus?.isConnected)lastFieldFocus.focus({preventScroll:true});
+      void load();
+    }else if(location.hash==='#models')void load('summary');
+  });
   new MutationObserver(render).observe(document.documentElement,{attributes:true,attributeFilter:['lang']});
   void load(location.hash==='#gemini'?undefined:'summary');
 })();

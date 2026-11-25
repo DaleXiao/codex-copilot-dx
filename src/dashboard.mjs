@@ -18,6 +18,7 @@ const ASSETS = new Map([
   ["/activity.js", ["./dashboard/activity.js", "text/javascript; charset=utf-8"]],
   ["/flow.js", ["./dashboard/flow.js", "text/javascript; charset=utf-8"]],
   ["/tool-activity-machines.js", ["./dashboard/tool-activity-machines.js", "text/javascript; charset=utf-8"]],
+  ["/tool-activity-arm.js", ["./dashboard/tool-activity-arm.js", "text/javascript; charset=utf-8"]],
   ["/tool-activity.js", ["./dashboard/tool-activity.js", "text/javascript; charset=utf-8"]],
   ["/usage.js", ["./dashboard/usage.js", "text/javascript; charset=utf-8"]],
   ["/context.js", ["./dashboard/context.js", "text/javascript; charset=utf-8"]],
@@ -44,7 +45,8 @@ function assets() {
     const installed = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
     if (installed.version !== ADAPTER_VERSION) throw new Error("Dashboard files changed; restart CCDX before loading the new dashboard");
     // The Requests view loads its drawing code separately. Shared view code remains bundled.
-    const scripts = entries.filter(([name, asset]) => asset.type.startsWith("text/javascript") && !["/language.js", "/theme.js", "/tool-activity-machines.js"].includes(name));
+    const scripts = entries.filter(([name, asset]) => asset.type.startsWith("text/javascript") &&
+      !["/language.js", "/theme.js", "/tool-activity-machines.js", "/tool-activity-arm.js"].includes(name));
     const body = Buffer.concat(scripts.flatMap(([name, asset]) => [Buffer.from("// " + name + "\n"), asset.body, Buffer.from("\n;\n")]));
     return new Map([...entries, ["/dashboard.js", { body, type: "text/javascript; charset=utf-8", etag: `"${createHash("sha256").update(body).digest("hex")}"` }]]);
   }).catch(error => { bundle = null;throw error; });

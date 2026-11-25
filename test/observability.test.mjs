@@ -171,6 +171,10 @@ test("dashboard assets serve on loopback without initializing image tools or aff
   const machine = await invoke(handler, { url: "/tool-activity-machines.js", ...request });
   assert.equal(machine.statusCode, 200);
   assert.match(machine.body, /globalThis\.ccdxToolMachines\s*=/);
+  assert.doesNotMatch(dashboard.body, /globalThis\.ccdxToolArm\s*=/);
+  const arm = await invoke(handler, { url: "/tool-activity-arm.js", ...request });
+  assert.equal(arm.statusCode, 200);
+  assert.match(arm.body, /globalThis\.ccdxToolArm\s*=/);
   const head = await invoke(handler, { method: "HEAD", url: "/", ...request });
   assert.equal(head.statusCode, 200);
   assert.equal(head.body, "");
@@ -182,7 +186,7 @@ test("dashboard assets serve on loopback without initializing image tools or aff
 
 test("dashboard and local status reject LAN clients and hostile Host headers", async () => {
   const handler = createAdapterHandler();
-  for (const url of ["/", "/ui.css", "/theme.js", "/language.js", "/refresh.js", "/status.js", "/usage.js", "/ui.js"]) {
+  for (const url of ["/", "/ui.css", "/theme.js", "/language.js", "/refresh.js", "/status.js", "/usage.js", "/ui.js", "/tool-activity-arm.js"]) {
     const lan = await invoke(handler, { url, remoteAddress: "10.0.0.5", headers: { host: "127.0.0.1:2026" } });
     const rebinding = await invoke(handler, { url, headers: { host: "dashboard.example:2026" } });
     assert.equal(lan.statusCode, 403);

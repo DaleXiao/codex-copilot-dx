@@ -1,13 +1,14 @@
 (() => {
   const root = document.getElementById("tool-activity");if (!root) return;
   const el = id => document.getElementById(id), canvas = el("tool-canvas"), ctx = canvas.getContext?.("2d");
-  const styles = new Set(["production", "clock", "assembly", "sorter", "gantry", "rotary", "off"]), storageKey = "ccdx.dashboard.toolMotionStyle";
+  const styles = new Set(["production", "clock", "assembly", "sorter", "gantry", "rotary", "arm", "off"]), storageKey = "ccdx.dashboard.toolMotionStyle";
   const pending = state => ["preparing", "waiting"].includes(state);
   const phrase = (key, values = {}) => globalThis.ccdxLanguage.format(key, values);
   const text = (id, key, values) => globalThis.ccdxLanguage.set(el(id), key, values);
   const state = { scene: "idle", style: "production" };
   const dashboardScript = document.currentScript.src;
-  let drawMachine, machineRequested = false;
+  const renderers = new Map();
+  const rendererName = () => state.style === "arm" ? "arm" : "machines";
   try { const saved = localStorage.getItem(storageKey);if (styles.has(saved)) state.style = saved; } catch {}
   const motion = globalThis.matchMedia?.("(prefers-reduced-motion: reduce)") || { matches: false, addEventListener() {} };
   let records = [], fresh = false, supported = false, visible = true, raf = 0, last = 0, start = performance.now(), expiry = null;
@@ -23,6 +24,7 @@
     refreshAnimation();
   }
   function draw(now = performance.now()) {
+    const drawMachine = renderers.get(rendererName());
     if (!drawMachine || !box.width || !box.height) return;
     const dpr = Math.min(devicePixelRatio || 1, 1.5), width = box.width, height = box.height;
     const w = Math.round(width * dpr), h = Math.round(height * dpr);
@@ -40,20 +42,31 @@
   }
   function refreshAnimation() {
     cancelAnimationFrame(raf);raf = 0;
-    root.dataset.paused = String(!drawMachine || !shown() || motion.matches || !animating() || state.style === "off");
-    if (!shown() || state.style === "off" || !drawMachine) return;
-    draw();if (!motion.matches && animating()) raf = requestAnimationFrame(animate);
+    const ready = shown() && state.style !== "off" && renderers.get(rendererName());
+    const moving = Boolean(ready && !motion.matches && animating());
+    root.dataset.paused = String(!moving);
+    if (!ready) {
+      if (shown() && state.style !== "off" && ctx) {
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+      }
+      return;
+    }
+    draw();if (moving) raf = requestAnimationFrame(animate);
   }
   function loadMachine() {
-    if (!ctx || state.style === "off" || machineRequested) return;
-    machineRequested = true;
+    const name = rendererName();
+    if (!ctx || state.style === "off" || renderers.has(name)) return;
+    renderers.set(name, null);
     const asset = new URL(dashboardScript);
-    asset.pathname = "/tool-activity-machines.js";
+    asset.pathname = "/tool-activity-" + name + ".js";
     const script = document.createElement("script");
     script.src = asset.href;
     script.addEventListener("load", () => {
-      drawMachine = globalThis.ccdxToolMachines(ctx);
-      refreshAnimation();
+      const create = name === "arm" ? globalThis.ccdxToolArm : globalThis.ccdxToolMachines;
+      if (typeof create !== "function") return;
+      renderers.set(name, create(ctx));
+      if (rendererName() === name) refreshAnimation();
     }, { once: true });
     document.head.append(script);
   }

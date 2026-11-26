@@ -287,7 +287,7 @@ try {
           assert.equal(colors.page, theme === "light" ? "rgb(255, 255, 255)" : "rgb(0, 0, 0)");
           assert.equal(colors.text, theme === "light" ? "rgb(0, 0, 0)" : "rgb(255, 255, 255)");
         }
-        await page.waitForFunction(() => !document.getElementById("refresh-models").disabled && !document.getElementById("refresh-usage").disabled);
+        await page.waitForFunction(() => document.getElementById("provider-clients").rows.length === 4);
         assert.equal(await page.evaluate(() => atomMotions.length), 1);
         assert.equal(await page.evaluate(() => atomMotions[0].options.duration), 450);
         assert.equal(await page.locator(".sidebar-brand #status-icon").count(), 1);
@@ -300,7 +300,6 @@ try {
         assert.equal(await page.locator("#source-detail span").count(), 3);
         assert.match(await page.locator("#source-detail").innerText(), /GitHub Copilot.*Microsoft 365.*Third source/s);
         assert.doesNotMatch(await page.locator("#source-detail").innerText(), /→|Codex|Claude/);
-        await page.waitForFunction(()=>globalThis.ccdxGeminiStatus);
         assert.equal(await page.locator("#provider-clients tr").count(), 4, "Each app has one row rather than one per source");
         assert.match(await page.locator("#provider-clients tr").first().innerText(), /Codex App.*Microsoft 365/s);
         const assertAutoRefreshCentered = async () => {
@@ -628,11 +627,13 @@ try {
         await page.waitForFunction(() => document.getElementById("provider-auth").textContent.includes(document.documentElement.lang === "zh-CN" ? "代理例外规则无效" : "Invalid proxy exception rule"));
         assert.match(await page.locator("#provider-auth tr").nth(1).locator("td").nth(3).getAttribute("title"), /proxy_bypass_invalid.*m365_proxy_settings_unsupported/);
         await page.locator("#language-toggle").click();
+        await page.waitForFunction(expected => document.documentElement.lang === expected, language === "zh" ? "en" : "zh-CN");
         assert.match(await page.locator("#provider-auth").innerText(), language === "zh" ? /Invalid proxy exception rule/ : /代理例外规则无效/);
         assert.match(await page.locator("#model-check-fields").innerText(), language === "zh" ? /Interpret proxy rules/ : /解析代理规则/);
         assert.match(await page.locator("#models-note").innerText(), language === "zh" ? /Showing the list from/ : /当前显示/);
         assert.doesNotMatch(await page.locator("#models-note").innerText(), /m365_proxy_settings_unsupported/);
         await page.locator("#language-toggle").click();
+        await page.waitForFunction(expected => document.documentElement.lang === expected, language === "zh" ? "zh-CN" : "en");
         if (output && language === "zh" && width === 1280) await page.screenshot({ path: path.join(output, `${engine}-${palette}-${theme}-network-diagnostic.png`), fullPage: true });
         proxyFailure = false;await page.locator("#refresh").click();
         // A force read joins existing work. Drain any old synthetic refusal
@@ -1111,7 +1112,7 @@ try {
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
         if (palette === "green" && language === "en" && theme === "light" && width === 1280) {
           const brokenUsage = await fs.readFile(new URL("../src/dashboard/usage.js", import.meta.url), "utf8");
-          await page.route("**/dashboard.js*", async route => {
+          await page.route("**/usage.js*", async route => {
             const response=await route.fetch({headers:{...route.request().headers(),"if-none-match":"\"fault-injection\""}}),body=await response.text();
             assert.ok(body.includes(brokenUsage),"The fault must reach the actual delivered usage module");
             await route.fulfill({status:200,contentType:"text/javascript",body:body.replace(brokenUsage,brokenUsage+"\nwindow.workingUsageCreate=ccdxDashboardUsage.create;ccdxDashboardUsage.create=()=>{throw Error('synthetic optional-view failure')};")});

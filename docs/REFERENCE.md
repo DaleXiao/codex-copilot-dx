@@ -71,6 +71,14 @@ Claude App deployments may also specify `reasoning_effort`, for example `{"sourc
 In **Codex → Auto review**, **Save review settings** keeps the selected model and thinking level across CCDX restarts. For a managed GitHub model plan, the page reads the saved Codex binding. This setting does not change the conversation model.
 Choose **Follow conversation model** to use an observed model from the same Codex session, with the managed default as a fallback. CCDX fills in `low` when the request omitted its effort and the selected model declares support. A saved explicit review model stays pinned.
 
+## Client setup and verification
+
+The app header distinguishes a detected installation, a running process and an observed gateway connection. An installed version identifies the build. Feature checks verify the local contract separately, and connection status requires accepted protocol traffic. A read-only check does not launch a client or send an inference request.
+
+On macOS, CCDX recognizes applications in the system and user Applications directories. On Windows, it reads registered Codex and Claude packages, the standalone Claude installation, and the official Antigravity installation records. Claude Code detection follows PATH and reads known native or npm metadata without running the command. In a multiple-installation conflict, check which installation is active before reopening.
+
+The Claude App can retain its native reasoning controls when the installed archive declares a compatible contract. CCDX checks the macOS bundle or registered Windows package and retains conservative feature settings when it cannot confirm the contract. Codex image and suggestion checks remain separate from basic routing.
+
 ## Antigravity in Gemini App
 
 The **Antigravity** page and `ccdx app antigravity status|models|enable|disable|open`
@@ -115,7 +123,7 @@ conflict instead of being overwritten. The Gemini bundle, Google credentials,
 global proxy and certificates are untouched. Endpoint adoption remains
 unconfirmed until an Antigravity request is observed.
 
-On Windows, install the official **Antigravity App** for x64 or ARM64 from [Google](https://antigravity.google/download), then run Windows-native CCDX. CCDX discovers standard and registry-registered installations, reads the installed version without starting the app, and compares the executable, Electron application archive and language server with the same official installer payload. 2.35.1 and 2.35.2 work with bundled digests. A scheduled Windows workflow checks both official installer signatures before publishing new digests. CCDX fetches the compatibility catalog through its configured npm downloader only when checking a build outside the bundled versions, and caches valid records for the running service. Newly issued builds may need to wait for verification and approved GitHub access. Modified builds stay unverified. Local launch preserves Windows and proxy settings and supplies the route only to the launched process. Existing gateway overrides and selected WSL backends cause a route conflict. Standalone Antigravity IDE and CLI remain separate. Signed-in Windows menu rendering and inference require live App acceptance.
+On Windows, install the official **Antigravity App** for x64 or ARM64 from [Google](https://antigravity.google/download). CCDX compares the executable, Electron archive and language server with the corresponding official installer payload. A scheduled Windows workflow checks both installer signatures and fills recent gaps in the compatibility catalog. CCDX fetches the catalog through its configured npm downloader when it encounters a new build. It can reuse previously verified catalog entries offline after a restart. A new build may need to wait for verification and approved GitHub access. Modified builds stay unverified. Launch gives the local route only to the new process. Existing gateway overrides and selected WSL backends cause a route conflict. Antigravity IDE and CLI have separate setup.
 
 For native Antigravity App 2.35 or later in the 2.x series, Copilot variants of a supported model can occupy one menu row with the available thinking levels. CCDX also recognizes compatible grouping in Google's catalog. Existing effort aliases stay available for routing. `ccdx app antigravity status --format json` reports `activity.catalog_group_count` after the app retrieves its catalog.
 

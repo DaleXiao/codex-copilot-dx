@@ -1,5 +1,6 @@
 (() => {
   const translations = {
+    skip_to_content: ["Skip to content", "跳到主要内容"],
     bark_heading: ["Bark notifications", "Bark 通知"],
     bark_enable: ["Notify when a task finishes", "任务完成时通知"],
     bark_sources: ["Supported local clients appear here when settings load.", "加载后显示支持的本机应用。"],
@@ -7,7 +8,7 @@
     bark_source_codex: ["Codex", "Codex"],
     bark_source_claude_app: ["Claude Desktop (Code)", "Claude 桌面端（Code）"],
     bark_source_antigravity: ["Antigravity", "Antigravity"],
-    bark_url: ["Bark URL with key", "带 key 的 Bark URL"],
+    bark_url: ["Bark URL with device key", "Bark 地址（含设备密钥）"],
     bark_url_saved: ["Saved. Enter a new URL to replace it.", "已保存。输入新地址可替换。"],
     bark_minutes: ["Minimum duration (minutes)", "最短任务时长（分钟）"],
     bark_title: ["Notification title", "消息标题"],
@@ -80,7 +81,7 @@
     gemini_route_waiting: ["No Antigravity request observed yet", "尚未观察到 Antigravity 请求"],
     gemini_route_observed: ["Antigravity requests observed", "已观察到 Antigravity 请求"],
     gemini_catalog_unknown: ["Client model list not yet confirmed", "尚未确认客户端模型列表"],
-    gemini_maybe_reopen: ["If CCDX models are missing, finish your work, quit Gemini, refresh its status, then open it here.", "如未显示 CCDX 模型，请在任务完成后退出 Gemini，刷新状态后从这里打开。"],
+    gemini_maybe_reopen: ["If models are missing, finish your tasks and reopen Antigravity from this page.", "如果看不到已选模型，等任务结束后从此页重新打开 Antigravity。"],
     gemini_models_pending: ["Client model list needs reloading", "客户端模型列表待重新加载"],
     gemini_no_models: ["No Copilot models are listed. Check GitHub access in Model sources.", "暂无 Copilot 模型，请在模型来源页检查 GitHub 连接。"],
     gemini_version: ["Version", "版本"],
@@ -97,7 +98,7 @@
     gemini_enable: ["Enable Copilot access", "启用 Copilot 接入"], gemini_disable: ["Pause Copilot access", "停用 Copilot 接入"], gemini_open: ["Open client", "打开客户端"],
     gemini_reopen: ["Reopen the app to load the settings.", "重新打开应用以加载设置。"],
     gemini_pause_reopen: ["Reopen the app to restore the Google route.", "重新打开应用以恢复 Google 接入。"],
-    gemini_open_to_load: ["Open Gemini here to load CCDX models.", "请从这里打开 Gemini，以加载 CCDX 模型。"],
+    gemini_open_to_load: ["Open Antigravity here to load your CCDX models.", "从这里打开 Antigravity，加载已选模型。"],
     gemini_opened: ["Client launch requested. Verify Antigravity access in the client.", "已请求打开客户端，请在 Antigravity 中确认接入。"],
     gemini_starting: ["Gemini is starting", "Gemini 正在启动"],
     gemini_conflict: ["An existing gateway route was preserved. Resolve the conflict before opening.", "已保留原有网关路由，请先处理配置冲突。"],
@@ -418,7 +419,7 @@
     "view_retry": ["Try again", "重试"],
     "api_saving": ["Saving…", "保存中…"],
     "api_reading": ["Reading…", "读取中…"],
-    "api_read_cancelled": ["Read cancelled. Saved metadata is kept.", "已取消读取，保留已存资料。"],
+    "api_read_cancelled": ["Model lookup cancelled. Your saved source is still available.", "已取消读取模型。已保存的来源仍可使用。"],
     "cap_unsaved": ["Unsaved changes", "尚未保存"],
     "cap_saved": ["Saved", "已保存"],
     "cap_default_unavailable": ["Default model unavailable. Choose a default before saving.", "默认模型暂不可用，请选择默认后保存。"],
@@ -439,17 +440,17 @@
     "application_check": ["Check state", "检查状态"],
     "application_opening": ["Opening…", "正在打开…"],
     "application_connected": ["Connected", "已接入"],
-    "application_pending": ["Connection unconfirmed", "接入待确认"],
+    "application_pending": ["App is open. Waiting for its first request.", "应用已打开，等待它发出首个请求。"],
     "application_stopped": ["Not running", "未运行"],
-    "application_unknown": ["App state unconfirmed", "应用状态待确认"],
+    "application_unknown": ["Could not check the app. Try again.", "暂时无法确认应用状态，请再检查一次。"],
     "application_not_installed": ["Not installed", "未安装"],
     "application_unsupported": ["Unavailable on this platform", "当前平台暂不支持"],
     "application_multiple": ["Multiple app processes found", "检测到多个应用进程"],
-    "application_reload_pending": ["Configuration pending load", "配置待加载"],
+    "application_reload_pending": ["Settings saved. Reopen the app when your tasks finish.", "设置已保存。当前任务结束后，重新打开应用生效。"],
     "application_reopen_warning": ["Reopening may interrupt current tasks.", "重新打开可能中断当前任务。"],
     "application_action_failed": ["Could not open the app. Check its state and retry.", "未能打开应用，请检查状态后重试。"],
     "application_action_open_failed": ["Could not open the app.", "未能打开应用。"],
-    "application_action_unverified_build": ["CCDX could not verify this Antigravity installation yet.", "CCDX 暂未验证此 Antigravity 安装。"],
+    "application_action_unverified_build": ["This Antigravity build needs verification. Try again later with GitHub access.", "此 Antigravity 版本待验证。确认能访问 GitHub 后稍后再试。"],
     "application_action_focus_unavailable": ["Could not switch to the running app.", "无法切换到运行中的应用。"],
     "application_action_quit_refused": ["The app did not accept the quit request.", "应用未接受退出请求。"],
     "application_action_quit_timeout": ["Finish tasks and quit the app manually, then open it here.", "请完成任务并手动退出应用，再从这里打开。"],
@@ -1805,10 +1806,11 @@
     "Claude Code: {code} / Claude App: {app}": "claude_code_code_claude_app_app",
   };
   const storageKey = "ccdx.dashboard.language";
+  const upgrade = globalThis.ccdxLanguage?.upgrade;
   let language = "en";
   try { if (localStorage.getItem(storageKey) === "zh") language = "zh"; } catch {}
   document.documentElement.lang = language === "zh" ? "zh-CN" : "en";
-  const messages = new WeakMap();
+  const messages = upgrade || new WeakMap();
   const attributes = { textContent: "data-i18n", title: "data-i18n-title", "aria-label": "data-i18n-label", placeholder: "data-i18n-placeholder" };
 
   function format(key, values = {}) {
@@ -1848,13 +1850,40 @@
     button.title = label;
   }
 
-  globalThis.ccdxLanguage = { set, format };
-  document.addEventListener("DOMContentLoaded", () => {
+  const hasChinese = translations.bark_heading[1] !== null;
+  function initialize() {
     apply();
-    document.getElementById("language-toggle").addEventListener("click", () => {
-      language = language === "en" ? "zh" : "en";
-      try { localStorage.setItem(storageKey, language); } catch {}
-      apply();
+    const button = document.getElementById("language-toggle");
+    button.addEventListener("click", async () => {
+      if (globalThis.ccdxLanguage.format !== format) { globalThis.ccdxLanguage.toggle();return; }
+      if (!hasChinese) {
+        button.disabled = true;
+        globalThis.ccdxLanguage.upgrade = messages;
+        try { await globalThis.ccdxLoadDashboardLanguage(); }
+        catch {
+          delete globalThis.ccdxLanguage.upgrade;
+          const note = document.getElementById("page-settings-note");
+          if (note) note.textContent = "Could not load Chinese. Try again.";
+          return;
+        }
+        finally { button.disabled = false; }
+        globalThis.ccdxLanguage.toggle();
+        return;
+      }
+      toggle();
     });
-  });
+  }
+  function toggle() {
+    language = language === "en" ? "zh" : "en";
+    try { localStorage.setItem(storageKey, language); } catch {}
+    apply();
+  }
+  // Some views retain a reference to this object across language switches.
+  const api = globalThis.ccdxLanguage || {};
+  delete api.upgrade;
+  globalThis.ccdxLanguage = Object.assign(api, { set, format, toggle });
+  if (upgrade) {
+    language = "en";
+  } else if (document.readyState && document.readyState !== "loading") initialize();
+  else document.addEventListener("DOMContentLoaded", initialize);
 })();

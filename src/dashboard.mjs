@@ -21,6 +21,10 @@ function asset(name) {
       const files = await Promise.all(DASHBOARD_BUNDLE_ASSETS.map(asset));
       body = Buffer.concat(files.flatMap(({ body }, i) => [Buffer.from("// " + DASHBOARD_BUNDLE_ASSETS[i] + "\n"), body, Buffer.from("\n;\n")]));
       type = "text/javascript; charset=utf-8";
+    } else if (name === "/language-en.js") {
+      const source = (await asset("/language.js")).body.toString();
+      body = Buffer.from(source.replace(/(:\s*\["(?:\\.|[^"\\])*",) "(?:\\.|[^"\\])*"\],/g, "$1 null],"));
+      type = DASHBOARD_ASSETS.get(name)[1];
     } else {
       const [file, contentType] = DASHBOARD_ASSETS.get(name);
       body = await readFile(new URL(file, import.meta.url));

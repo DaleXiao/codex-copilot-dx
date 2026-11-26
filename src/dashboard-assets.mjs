@@ -2,6 +2,8 @@ export const DASHBOARD_ASSETS = new Map([
   ["/", ["./dashboard/index.html", "text/html; charset=utf-8"]],
   ["/ui.css", ["./dashboard/ui.css", "text/css; charset=utf-8"]],
   ["/language.js", ["./dashboard/language.js", "text/javascript; charset=utf-8"]],
+  ["/language-en.js", [null, "text/javascript; charset=utf-8"]],
+  ["/language-boot.js", ["./dashboard/language-boot.js", "text/javascript; charset=utf-8"]],
   ["/theme.js", ["./dashboard/theme.js", "text/javascript; charset=utf-8"]],
   ["/refresh.js", ["./dashboard/refresh.js", "text/javascript; charset=utf-8"]],
   ["/live.js", ["./dashboard/live.js", "text/javascript; charset=utf-8"]],
@@ -32,7 +34,8 @@ export const DASHBOARD_ASSETS = new Map([
   ["/privacy.js", ["./dashboard/privacy.js", "text/javascript; charset=utf-8"]],
   ["/gemini.js", ["./dashboard/gemini.js", "text/javascript; charset=utf-8"]],
 ]);
-const STANDALONE = new Set(["/language.js", "/theme.js", "/connections.js",
+const STANDALONE = new Set(["/language.js", "/language-en.js", "/language-boot.js", "/theme.js", "/connections.js", "/usage.js", "/context.js", "/flow.js",
+  "/tool-activity.js", "/animation.js", "/tools.js", "/gemini.js", "/privacy.js", "/features.js", "/updates.js", "/bark.js",
   "/tool-activity-machines.js", "/tool-activity-arm.js", "/tool-activity-warehouse.js"]);
 export const DASHBOARD_BUNDLE_ASSETS = [...DASHBOARD_ASSETS].filter(([name, [, type]]) =>
   type.startsWith("text/javascript") && !STANDALONE.has(name)).map(([name]) => name);

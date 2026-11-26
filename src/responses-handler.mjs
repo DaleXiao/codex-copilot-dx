@@ -1,3 +1,4 @@
+import { applySelectedRoute, resolveRequestModel } from "./responses-route-preparation.mjs";
 import { markToolActivity } from "./stream-performance.mjs";
 import { defaultGithubProvider } from "./providers/github.mjs";
 import { observeContextSession } from "./context-metrics.mjs";
@@ -16,7 +17,6 @@ import {
 import {
   CODEX_AUTO_REVIEW_MODEL,
   modelContextWindowTokens,
-  resolveOpenAIModel,
 } from "./models.mjs";
 import { chatToResponses, forwardToChat, responsesBodyUsesCustomTools } from "./responses-bridge.mjs";
 import { prepareResponsesChatPayload } from "./responses-chat-payload.mjs";
@@ -25,7 +25,6 @@ import { clearResponsesToolOutputPartsCache } from "./responses-content.mjs";
 import { proxyCopilotResponses } from "./responses-proxy.mjs";
 import { acquireResponseHistorySnapshot } from "./response-history.mjs";
 import {
-  applyResponseHistoryRoutePlan,
   dropMaterializedResponseHistory,
   prepareResponsesRequest,
   rememberResponseHistory,
@@ -97,36 +96,6 @@ function adaptiveResponsesCompaction(options, state) {
       }, restoreText: state.context.restoreText, onActivity: state.onActivity });
     if (result[COMPACTION_USAGE_RECORDED]) state.prepared.compactionUsageRecorded = true;return result;
   };
-}
-
-function resolveRequestModel(model, openAIModelEnv, autoReviewModelResolver) {
-  const preference = model === CODEX_AUTO_REVIEW_MODEL && typeof autoReviewModelResolver === "function"
-    ? autoReviewModelResolver() : undefined;
-  const resolved = resolveOpenAIModel(model, openAIModelEnv, {
-    autoReviewModel: typeof preference === "string" ? preference : preference?.model,
-  });
-  return { ...resolved, reasoningEffort: preference?.model === resolved.upstreamModel
-    ? preference.reasoningEffort : undefined };
-}
-
-function applySelectedRoute(prepared, routePlan, options) {
-  try { return applyResponseHistoryRoutePlan(prepared, routePlan); }
-  catch (error) {
-    if (error.code !== "ccdx_provider_history_rebuild_required") throw error;
-    return recoverSelectedRoute(prepared, routePlan, error, options);
-  }
-}
-
-async function recoverSelectedRoute(prepared, routePlan, error, { req, env, signal, assertActive, reserveHistory }) {
-  try {
-    const { recoverLocalCompaction } = await import("./local-compaction-recovery.mjs");
-    const restored = await recoverLocalCompaction(prepared, { request: req, env, signal, assertActive, reserveHistory, maxBytes: MAX_DECODED_BODY_BYTES });
-    return applyResponseHistoryRoutePlan(restored, routePlan);
-  } catch (failure) {
-    assertActive?.();
-    error.jsonBody.error.recovery.local_status = /^[a-z][a-z_]{1,60}$/.test(failure.code || "") ? failure.code : "local_history_unavailable";
-    throw error;
-  }
 }
 
 export function createResponsesHandler(options) {

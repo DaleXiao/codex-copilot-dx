@@ -2,9 +2,11 @@ param([string]$Version, [switch]$Publish)
 $ErrorActionPreference = 'Stop'
 
 $feed = 'https://antigravity-hub-auto-updater-974169037036.us-central1.run.app/releases'
-$release = Invoke-RestMethod -Uri $feed -TimeoutSec 20 -MaximumRedirection 0
-$release = @($release | Where-Object { !$Version -or $_.version -eq $Version })[0]
-if ($release.version -cnotmatch '^\d{1,4}\.\d{1,4}\.\d{1,4}$' -or $release.execution_id -cnotmatch '^\d{12,20}$') {
+$feedEntries = Invoke-RestMethod -Uri $feed -TimeoutSec 20 -MaximumRedirection 0
+$available = @($feedEntries | Where-Object {
+    (!$Version -or $_.version -eq $Version) -and $_.version -cmatch '^\d{1,4}\.\d{1,4}\.\d{1,4}$' -and $_.execution_id -cmatch '^\d{12,20}$'
+} | Sort-Object { [version]$_.version } -Descending | Select-Object -First 4)
+if (!$available.Count) {
     throw 'The official Antigravity release index did not return a stable Windows build.'
 }
 
@@ -31,12 +33,14 @@ if ($Publish) {
         if ($manifest.schema -ne 1 -or $manifest.releases.Count -gt 12) { throw 'Invalid existing compatibility metadata.' }
         $releases = @($manifest.releases)
     } elseif (($content -join "`n") -notmatch 'HTTP 404') { throw 'Could not read the compatibility manifest.' }
-    if ($releases.version -contains $release.version) {
-        Write-Output "Windows Antigravity $($release.version) is already verified."
+    $available = @($available | Where-Object { $releases.version -notcontains $_.version })
+    if (!$available.Count) {
+        Write-Output 'Recent Windows Antigravity releases are already verified.'
         return
     }
 }
 
+$release = $available[0]
 $work = Join-Path ([IO.Path]::GetTempPath()) ('ccdx-agy-' + [Guid]::NewGuid().ToString('N'))
 [IO.Directory]::CreateDirectory($work) | Out-Null
 try {

@@ -1,6 +1,8 @@
-# CCDX 1.4.26
+# CCDX 1.5.0
 
-- Restore the selectable reasoning levels under each Copilot model in the native Antigravity menu. Existing model choices and aliases continue to route.
-- Exclude failed, incomplete and cancelled streams from average output speed.
+- Read Windows Claude App versions and recognize native or npm-installed Claude Code from PATH.
+- Keep verified Windows Antigravity compatibility records available after a CCDX restart.
+- Load WebUI tools and larger panels when opened. Clarify setup, connection and recovery messages in English and Chinese.
+- Reduce terminal redraw work and stop cancelled usage queries when their last reader leaves.
 
-Unverified: signed-in Windows menu interaction and inference on a physical device.
+Unverified: signed-in physical Windows/macOS coverage for every client feature and first-use usability with new users.

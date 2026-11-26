@@ -52,7 +52,7 @@ async function macBundle(root, scope, name, client) {
 }
 
 export async function inspectInstalledClientVersions({ home = os.homedir(), env = process.env, platform = process.platform,
-  systemApplications = "/Applications", windowsCodexVersion, windowsAntigravityVersion } = {}) {
+  systemApplications = "/Applications", windowsCodexVersion, windowsAntigravityVersion, windowsClaudeVersion } = {}) {
   if (platform === "darwin") {
     const roots = [["system", systemApplications], ["user", path.join(home, "Applications")]], jobs = [];
     for (const [scope, root] of roots) for (const [name, client] of [["ChatGPT.app", "codex"], ["Codex.app", "codex"], ["Claude.app", "claude"],
@@ -64,9 +64,11 @@ export async function inspectInstalledClientVersions({ home = os.homedir(), env 
   if (platform === "win32") {
     const inspect = windowsCodexVersion || (await import("./native-prediction-windows.mjs")).inspectWindowsCodexVersion;
     const antigravity = windowsAntigravityVersion || (await import("./windows-antigravity-app.mjs")).inspectWindowsAntigravity;
-    const [version, app] = await Promise.all([inspect({ env }).catch(() => null), antigravity({ env }).catch(() => null)]);
+    const claude = windowsClaudeVersion || (await import("./application-process.mjs")).inspectWindowsClaude;
+    const [version, app, desktop] = await Promise.all([inspect({ env }).catch(() => null), antigravity({ env }).catch(() => null), claude({ env }).catch(() => null)]);
     return [
       ...(validVersion(version) ? [{ id: "codex_windows_codex", name: "Codex", client: "codex", scope: "windows", version, build: null, cli_version: null }] : []),
+      ...(validVersion(desktop?.version) ? [{ id: "claude_windows_claude", name: "Claude App", client: "claude", scope: "windows", version: desktop.version, build: null, cli_version: null }] : []),
       ...(validVersion(app?.version) ? [{ id: "antigravity_windows_antigravity", name: "Antigravity", client: "antigravity", scope: "windows", version: app.version, build: null, cli_version: null }] : []),
     ];
   }

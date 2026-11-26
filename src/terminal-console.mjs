@@ -17,7 +17,7 @@ export function createTerminalConsole({ output = process.stdout, errorOutput = p
   let running = false, timer = null, lines = 0, frame = 0, lastRead = 0, data = {}, projection = projectTerminalState();
   let imageRuntime = null;
   let notices = 0, lastNotice = "", lastPrintedNotice = "", previous = [];
-  let content = [], dirty = true, readFailed = false, updatedAt = null, fits = true;
+  let content = [], styledContent = [], styledTheme, dirty = true, readFailed = false, updatedAt = null, fits = true;
   let current = { theme: DEFAULT_TERMINAL_ANIMATION_THEME, color_theme: "green", terminal_animation_enabled: true };
   let frameDelay = 1000;
   let unsubscribe = null, live = null;
@@ -102,10 +102,15 @@ export function createTerminalConsole({ output = process.stdout, errorOutput = p
           ...table(width, usage, view.requests, readFailed ? null : view.active, key => view.outcomes[key], true), notice ? clip(notice, width) : ""];
       }
       dirty = false;
+      styledTheme = undefined;
     }
     // Apply color after clipping/layout so escape sequences never consume columns.
-    const body = [...content.map(line => ["klein", "pink"].includes(current.color_theme) && /^[┌│├└]/.test(line)
-      ? colorTerminalText(line, current.color_theme, { output, env }) : line), `${motion} ${active === null ? "Status unknown" : active ? "Active" : "Idle"}`];
+    if (styledTheme !== current.color_theme) {
+      styledTheme = current.color_theme;
+      styledContent = ["klein", "pink"].includes(styledTheme) ? content.map(line => /^[┌│├└]/.test(line)
+        ? colorTerminalText(line, styledTheme, { output, env }) : line) : content;
+    }
+    const body = [...styledContent, `${motion} ${active === null ? "Status unknown" : active ? "Active" : "Idle"}`];
     fits = body.length < (Number(output.rows) || 24);
     if (!fits) { frameDelay = 1000;return; }
     // Animation ticks do not read status; activity notifications update state.

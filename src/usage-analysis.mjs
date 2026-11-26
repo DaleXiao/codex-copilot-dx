@@ -73,7 +73,7 @@ export async function analyzeUsageLogs(filePath = usageLogPath(), { timeZone = "
   const zone = dateFormatter(timeZone);
   const file = path.resolve(filePath), query = `${file}\0${selection.key}\0${zone.format(new Date(now))}`;
   const version = warn === console.error ? await usageSummaryVersion(file, { settled: false }) : null;
-  const collect = async () => {
+  const collect = async (scanSignal) => {
     const cached = version && cache.get(query);
     if (cached?.version === version) {
       cache.delete(query);cache.set(query, cached);
@@ -111,7 +111,7 @@ export async function analyzeUsageLogs(filePath = usageLogPath(), { timeZone = "
     const summary = await summarizeUsageLogs(filePath, { provider, onRecordTotals: analytics.record, archiveSelection, recordFilter: record => {
       observeModel(record);return selection.matches(record);
     },
-      warn(message) { warned = true;warn(message); } });
+      warn(message) { warned = true;warn(message); }, signal: scanSignal });
     const snapshot = analytics.snapshot();
     const result = { summary, analytics: { ...snapshot, models: [...models].sort(), models_truncated: snapshot.models_truncated || modelsTruncated }, filters: selection.filters };
     const complete = version && await completeLines(file);
@@ -122,5 +122,5 @@ export async function analyzeUsageLogs(filePath = usageLogPath(), { timeZone = "
     }
     return result;
   };
-  return structuredClone(await (version ? activeReads.run(`${version}\0${query}`, collect, { signal }) : collect()));
+  return structuredClone(await (version ? activeReads.run(`${version}\0${query}`, collect, { signal }) : collect(signal)));
 }

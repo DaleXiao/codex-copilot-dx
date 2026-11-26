@@ -1,5 +1,4 @@
 import fs from "node:fs";
-import path from "node:path";
 import { readBoundedFileSync } from "./bounded-file.mjs";
 import { m365Paths, readM365Json } from "./m365-settings.mjs";
 import { claudeEffortsExpressible, claudeEffortPrefix } from "./model-capabilities.mjs";
@@ -7,19 +6,10 @@ import { claudeModelEntries } from "./claude-models.mjs";
 import { claudeClientPaths, reconcileClaudeConfiguration } from "./claude-client-config.mjs";
 import { claudeNativeModelHint } from "./claude-app-contract.mjs";
 import { claudeRouteAliases } from "./clients/claude-models.mjs";
+import { installedClaudeCodeVersion } from "./claude-code-installation.mjs";
 
 export function inspectClaudeCapabilitySupport({ platform = process.platform, env = process.env, appVersion, codeVersion, appContract } = {}) {
-  if (!codeVersion) for (const directory of (env.PATH || "").split(path.delimiter).filter(Boolean)) {
-    try {
-      const executable = fs.realpathSync(path.join(directory, platform === "win32" ? "claude.exe" : "claude"));
-      codeVersion = /[\\/]versions[\\/](2\.1\.\d+)(?:\.exe)?(?:[\\/]|$)/.exec(executable)?.[1];
-      let parent = path.dirname(executable);
-      for (let i = 0; !codeVersion && i < 4; i++, parent = path.dirname(parent)) {
-        try { const value = JSON.parse(readBoundedFileSync(path.join(parent, "package.json"), { maxBytes: 65536, encoding: "utf8" }));if (value.name === "@anthropic-ai/claude-code") codeVersion = value.version; } catch { /* Native installs may encode their version in the resolved path. */ }
-      }
-      break;
-    } catch { /* No executable in this PATH entry. */ }
-  }
+  codeVersion ||= installedClaudeCodeVersion({ platform, env });
   if (!appVersion && platform === "darwin") {
     try { appVersion = /<key>CFBundleShortVersionString<\/key>\s*<string>([^<]+)<\/string>/.exec(readBoundedFileSync("/Applications/Claude.app/Contents/Info.plist", { maxBytes: 65536, encoding: "utf8" }))?.[1]; } catch { /* Unknown builds keep the conservative alias. */ }
   }
@@ -33,7 +23,7 @@ export function inspectClaudeCapabilitySupport({ platform = process.platform, en
 
 export function claudeSupportForSync(support, observations) {
   const rows = Array.isArray(observations?.claude) ? observations.claude : [];
-  const app = rows.find(entry => entry.id === "claude_system_claude");
+  const app = rows.find(entry => entry.version === support.app_version) || rows[0];
   if (support.app_contract?.status === "verified" && (!app?.version || app.version === support.app_version)) return support;
   return observations?.claude_unrecognized === true || app?.version && !/^[34]\./.test(app.version) ? { ...support, app: false } : support;
 }

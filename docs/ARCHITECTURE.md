@@ -4,6 +4,31 @@ CCDX is one local Node service with client-specific protocol surfaces and isolat
 upstream providers. GitHub is the default Codex provider; Microsoft 365 and explicit manual API connections are optional.
 Client integration, image tools and the dashboard are not a general plugin framework.
 
+`bin/cli.mjs` handles short commands before it imports `foreground-service.mjs`.
+The foreground service owns startup, hot-update handoff and shutdown. The
+adapter dispatches the native model catalog to `adapter-models-route.mjs` on
+demand. Responses request preparation applies the selected history boundary
+in `responses-route-preparation.mjs`. `responses-sse.mjs` owns bounded event
+framing and terminal inspection, while `responses-proxy.mjs` owns upstream
+attempts, client delivery and usage settlement.
+
+The dashboard loads its selected language before the shell. English can load
+the Chinese dictionary on demand. Page scripts for usage, request visualizers,
+account tools and advanced settings load at their existing navigation entries.
+Styles, routes and user preferences keep their original ownership. The terminal
+reuses formatted static lines across animation frames. A scan of retained usage
+stops when the last reader of that scan cancels.
+
+The 1.5 compatibility work follows the native installation discovery in
+[Magpie](https://github.com/yetone/magpie/blob/567a43fff3f9efd8d675c43c191203e05ac68fad/internal/agent/desktopapp.go)
+and PATH precedence in
+[CC Switch](https://github.com/farion1231/cc-switch/blob/de14050163aca0d8341c0b66f25c8af2d65e268a/src-tauri/src/commands/tool_version.rs).
+[Floway's Responses boundary](https://github.com/Menci/Floway/blob/56b51c2d6e3f340f0503379f283fbf6556c01f03/packages/gateway/src/data-plane/chat/openai-responses/attempt.ts)
+informed the separation between a native history plan and an upstream attempt.
+Requests select an eligible endpoint before dispatch and retain their private
+history boundary, consistent with
+[LiteLLM's affinity checks](https://github.com/BerriAI/litellm/blob/fcb456ba3b6bed163c8ec44d7b13058989401577/litellm/router_utils/pre_call_checks/encrypted_content_affinity_check.py).
+
 | Responsibility | Ownership | Boundary |
 | --- | --- | --- |
 | Core inference | `adapter.mjs`, Responses modules, model catalog, history | Codex wire contracts, streaming and recovery |

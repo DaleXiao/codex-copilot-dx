@@ -8,6 +8,19 @@
   }
 
   function create({ time, element, phrase, localize, text, finite, number, mib, tableRow, emptyTable, document, navigator, modelLabel = value => value, usageChanged = () => {}, motionAllowed = () => false }) {
+    const calendar = element?.("activity-calendar");
+    calendar?.addEventListener("keydown", event => {
+      const step = { ArrowUp: -1, ArrowDown: 1, ArrowLeft: -7, ArrowRight: 7 }[event.key];
+      if (!step || !event.target.matches?.("button.calendar-day")) return;
+      const usable = [...calendar.querySelectorAll("button.calendar-day:not(:disabled)")];
+      const index = usable.indexOf(event.target);
+      if (index < 0) return;
+      const next = usable[Math.max(0, Math.min(usable.length - 1, index + step))];
+      if (!next || next === event.target) return;
+      event.preventDefault();
+      for (const button of usable) button.tabIndex = button === next ? 0 : -1;
+      next.focus();
+    });
     function usageValues(row) {
       const rate = Number.isFinite(row.cache_hit_rate) && row.cache_hit_rate >= 0 && row.cache_hit_rate <= 1
         ? `${row.cache_hit_rate_partial ? "~" : ""}${(row.cache_hit_rate * 100).toFixed(1)}%` : "—";
@@ -174,6 +187,7 @@
       const button = document.createElement("button");
       button.type = "button";
       button.disabled = !day.available;
+      button.dataset.date = day.date === "earlier" ? "<" + day.before : day.date;
       button.setAttribute("aria-pressed", String(day.date === selectedUsageDate));
       const description = !day.available ? phrase("no_retained_history")
         : phrase("calls_recorded_calls_input_input_output_output_cached_cached_inc", {
@@ -238,9 +252,11 @@
         spacer.setAttribute("aria-hidden", "true");
         calendar.append(spacer);
       }
+      const selectedDay = days.find(day => day.available && day.date === selectedUsageDate) || days.findLast(day => day.available);
       for (const day of days) {
         const button = dayButton(day, analyticsPoint(day, model));
         button.className = "calendar-day";
+        button.tabIndex = day === selectedDay ? 0 : -1;
         const count = value(day);
         button.dataset.level = String(count > 0 ? Math.min(4, Math.ceil(count / peak * 4)) : 0);
         calendar.append(button);

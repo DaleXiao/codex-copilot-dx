@@ -108,8 +108,8 @@ test("all annotated static English prose has a Chinese translation and the switc
   assert.ok(keys.length > 60);
   for (const key of keys) assert.notEqual(page.language.format(key), key, `Untranslated: ${key}`);
   assert.match(html, /id="theme-toggle"[\s\S]*?<\/button><button id="language-toggle"/);
-  assert.match(html, /src="\/theme\.js"><\/script>\s*<script src="\/language\.js" defer>/);
-  assert.ok(html.indexOf('/language.js') < html.indexOf('/dashboard.js'));
+  assert.match(html, /src="\/theme\.js"><\/script>/);
+  assert.match(html, /src="\/language-boot\.js" defer/);
   assert.doesNotMatch(languageScript, /fetch\(|setTimeout\(|setInterval\(|MutationObserver|innerHTML/);
 });
 

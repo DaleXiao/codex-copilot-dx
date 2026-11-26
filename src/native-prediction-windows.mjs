@@ -55,7 +55,7 @@ const WINDOWS_APP_SCRIPT = `$p=@(Get-AppxPackage -Name OpenAI.Codex | Where-Obje
     $m=Get-AppxPackageManifest -Package ([string]$p[0].PackageFullName);
     $a=@($m.Package.Applications.Application | Where-Object { [System.IO.Path]::GetFileName($_.Executable) -in @('Codex.exe','ChatGPT.exe') });
     if($a.Count -ne 1){throw 'Unknown Windows App executable'};
-    @{root=$p[0].InstallLocation;executable=$a[0].Executable;family=$p[0].PackageFamilyName} | ConvertTo-Json -Compress`;
+    @{root=$p[0].InstallLocation;executable=$a[0].Executable;family=$p[0].PackageFamilyName;version=[string]$p[0].Version} | ConvertTo-Json -Compress`;
 
 export async function inspectWindowsCodexVersion({ env = process.env, exec = execFileAsync } = {}) {
   const script = `$p=@(Get-AppxPackage -Name OpenAI.Codex | Where-Object { [int]$_.Status -eq 0 -and [int]$_.SignatureKind -eq 3 -and $_.Publisher -eq '${WINDOWS_PUBLISHER}' -and $_.PackageFamilyName -eq '${WINDOWS_PACKAGE_FAMILY}' });if($p.Count -ne 1){throw 'Unknown App registration'};[string]$p[0].Version`;
@@ -68,7 +68,7 @@ export async function inspectWindowsCodexVersion({ env = process.env, exec = exe
 function registeredApp(raw) {
   let metadata;
   try { metadata = JSON.parse(raw); } catch { throw new Error("Could not read the registered Windows Codex App"); }
-  const { root, executable, family } = metadata;
+  const { root, executable, family, version } = metadata;
   if (typeof root !== "string" || !/^[a-z]:[\\/]/i.test(root) || typeof executable !== "string"
     || path.win32.isAbsolute(executable) || executable.split(/[\\/]/).includes("..")
     || !/^(Codex|ChatGPT)\.exe$/i.test(path.win32.basename(executable))
@@ -76,7 +76,7 @@ function registeredApp(raw) {
     throw new Error("Unknown Windows App registration; prediction setup was skipped");
   }
   const app = path.win32.join(root, executable);
-  return { app, family };
+  return { app, family, ...(typeof version === "string" && /^\d+(?:\.\d+){1,3}$/.test(version) ? { version } : {}) };
 }
 
 export function installedWindowsPredictionApp(options = {}) {

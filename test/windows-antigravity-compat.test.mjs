@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import path from "node:path";
+import os from "node:os";
 import { inspectWindowsAntigravity } from "../src/windows-antigravity-app.mjs";
 import { createWindowsAntigravityManifest, parseWindowsAntigravityManifest, windowsAntigravityManifestUrl } from "../src/windows-antigravity-compat.mjs";
 
@@ -8,6 +11,16 @@ const future = { version: "2.39.1", x64: triple("123"), arm64: triple("456") };
 const manifest = { schema: 1, releases: [future] };
 const app = String.raw`D:\Developer Tools\Antigravity\Antigravity.exe`;
 const version = "2.39.1.0";
+
+test("a verified manifest is available offline after restarting CCDX", async t => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "ccdx-compat-"));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const options = { env: {}, home };
+  const online = createWindowsAntigravityManifest({ persistent: true, getFetch: () => async () => Response.json(manifest) });
+  assert.deepEqual(await online(version, options), [future.x64, future.arm64]);
+  const offline = createWindowsAntigravityManifest({ persistent: true, getFetch: () => assert.fail("must not need the network") });
+  assert.deepEqual(await offline(version, options), [future.x64, future.arm64]);
+});
 
 test("recognizes future releases from one bounded fetch and validates all three files", async () => {
   let requests = 0;

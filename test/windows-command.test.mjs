@@ -9,7 +9,7 @@ test("package adds no installation lifecycle scripts or packaged postinstall ent
   const pkg = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8"));
   for (const name of ["preinstall", "install", "postinstall", "prepare"]) assert.equal(pkg.scripts[name], undefined, name);
   assert.equal(fs.existsSync(new URL("../bin/postinstall.mjs", import.meta.url)), false);
-  const cli = fs.readFileSync(new URL("../bin/cli.mjs", import.meta.url), "utf8");
+  const cli = fs.readFileSync(new URL("../src/foreground-service.mjs", import.meta.url), "utf8");
   const startup = cli.slice(cli.indexOf('console.log(`\\n${startupBanner('));
   assert.match(startup, /process\.platform === "win32"[\s\S]*inspectWindowsCommand\(\{ repair: true \}\)/);
 });

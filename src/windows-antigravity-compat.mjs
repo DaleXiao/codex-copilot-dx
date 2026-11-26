@@ -1,5 +1,7 @@
 import path from "node:path";
+import { mkdir } from "node:fs/promises";
 import { readBoundedResponseText } from "./upstream-body.mjs";
+import { boundedReadManifestPath, readManifestCache, writeManifestCache } from "./windows-antigravity-cache.mjs";
 
 export const windowsAntigravityManifestUrl = "https://raw.githubusercontent.com/DaleXiao/codex-copilot-dx/antigravity-compat/windows-antigravity.json";
 const refreshIntervalMs = 5 * 60 * 1000;
@@ -29,11 +31,16 @@ async function configuredReleaseFetch(env) {
   return createNpmReleaseFetch(path.win32.join(path.win32.dirname(npm), "node_modules/npm/bin/npm-cli.js"), { env });
 }
 
-export function createWindowsAntigravityManifest({ getFetch = configuredReleaseFetch, now = Date.now } = {}) {
-  let releases = new Map(), nextRefresh = 0, pending;
-  return async (version, { env = process.env } = {}) => {
+export function createWindowsAntigravityManifest({ getFetch = configuredReleaseFetch, now = Date.now, persistent = false } = {}) {
+  let releases = new Map(), nextRefresh = 0, pending, initial;
+  return async (version, { env = process.env, home } = {}) => {
     const release = version.replace(/^(\d+\.\d+\.\d+)\.0$/, "$1");
     if (!releaseVersion.test(release)) return [];
+    const file = persistent ? boundedReadManifestPath({ env, home }) : undefined;
+    if (file) {
+      initial ||= readManifestCache(file, maxManifestBytes).then(value => { if (value) releases = parseWindowsAntigravityManifest(value); }).catch(() => {});
+      await initial;
+    }
     if (!releases.has(release) && !pending && now() >= nextRefresh) {
       nextRefresh = now() + refreshIntervalMs;
       pending = (async () => {
@@ -42,7 +49,12 @@ export function createWindowsAntigravityManifest({ getFetch = configuredReleaseF
         const response = await fetch(windowsAntigravityManifestUrl, { signal, redirect: "error" });
         if (!response.ok) { await response.body?.cancel(); return; }
         const text = await readBoundedResponseText(response, { signal, maxBytes: maxManifestBytes, label: "Antigravity compatibility metadata" });
-        releases = parseWindowsAntigravityManifest(JSON.parse(text));
+        const value = JSON.parse(text);
+        releases = parseWindowsAntigravityManifest(value);
+        if (file) {
+          await mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
+          await writeManifestCache(file, value);
+        }
       })().catch(() => undefined).finally(() => { pending = undefined; });
     }
     if (!releases.has(release)) await pending;

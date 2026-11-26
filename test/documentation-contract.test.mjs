@@ -46,7 +46,7 @@ test("public environment controls and README command examples match code", () =>
 });
 
 test("startup advertises the canonical help command on new and reused adapters", () => {
-  const source = fs.readFileSync(path.join(root, "bin/cli.mjs"), "utf8");
+  const source = fs.readFileSync(path.join(root, "src/foreground-service.mjs"), "utf8");
   assert.equal(source.match(/console\.log\(startupReady\(/g)?.length, 2);
   for (const reused of [false, true]) assert.match(startupReady({ reused }), /Help    ccdx help/);
 });

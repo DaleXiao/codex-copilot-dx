@@ -880,3 +880,13 @@ input[role="switch"]:disabled { opacity: .5; cursor: wait; }
   .failure-table th:last-child { width: 40%; }
 }
 #action-confirm-apply { background:var(--accent); color:var(--page); border-color:var(--accent); }
+
+/* Keep field notes and action feedback aligned inside their existing sections. */
+.skip-link { position: fixed; inset: 12px auto auto 12px; z-index: 50; padding: 10px 14px; color: var(--strong); background: var(--surface); transform: translateY(-200%); }
+.skip-link:focus { transform: none; }
+#application-launch .hint,
+#gemini-model-form .section-actions > span,
+#bark-settings .section-actions > span { line-height: 1.45;align-self: center; }
+#gemini-model-form .section-actions + .section-actions { margin-top: 16px; }
+#bark-settings .bark-fields { row-gap: 12px; }
+#request-limits .hint { margin-block: 8px 12px; }

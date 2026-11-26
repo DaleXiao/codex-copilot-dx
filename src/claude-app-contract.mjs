@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import { watch } from "node:fs";
 import path from "node:path";
+import os from "node:os";
 import { createHash } from "node:crypto";
 import { readBoundedFile } from "./bounded-file.mjs";
 
@@ -56,15 +57,30 @@ export function parseClaudeAppContract(source) {
     fingerprint: createHash("sha256").update(JSON.stringify(facts)).digest("hex").slice(0, 24) };
 }
 
-export async function inspectClaudeAppContract({ platform = process.platform, appPath = "/Applications/Claude.app", appSource } = {}) {
+export async function inspectClaudeAppContract({ platform = process.platform, appPath, appSource, home, env, inspectWindows } = {}) {
   if (typeof appSource === "string") return parseClaudeAppContract(appSource);
-  if (platform !== "darwin") return { status: "unavailable", fields: {}, profiles: [], fingerprint: null };
-  const archive = path.join(appPath, "Contents", "Resources", "app.asar");let handle;
+  const unavailable = { status: "unavailable", fields: {}, profiles: [], fingerprint: null };
+  let handle;
   try {
-    const info = await readBoundedFile(path.join(appPath, "Contents", "Info.plist"), { maxBytes: 65536, encoding: "utf8" });
-    if (!/<key>CFBundleIdentifier<\/key>\s*<string>com\.anthropic\.claudefordesktop<\/string>/.test(info)) throw Error("Unrecognized App");
+    let archive, appVersion;
+    if (platform === "win32") {
+      const inspect = inspectWindows || (await import("./application-process.mjs")).inspectWindowsClaude;
+      const app = await inspect({ env });
+      if (!app.version || !app.executable || !app.target?.startsWith("shell:AppsFolder\\")) return unavailable;
+      appVersion = app.version;
+      archive = path.join(path.dirname(app.executable), "resources", "app.asar");
+    } else if (platform === "darwin") {
+      if (!appPath) for (const candidate of ["/Applications/Claude.app", path.join(home || os.homedir(), "Applications", "Claude.app")]) {
+        try { await fs.access(path.join(candidate, "Contents", "Info.plist"));appPath = candidate;break; } catch {}
+      }
+      if (!appPath) return unavailable;
+      const info = await readBoundedFile(path.join(appPath, "Contents", "Info.plist"), { maxBytes: 65536, encoding: "utf8" });
+      if (!/<key>CFBundleIdentifier<\/key>\s*<string>com\.anthropic\.claudefordesktop<\/string>/.test(info)) return unavailable;
+      appVersion = version(info);
+      archive = path.join(appPath, "Contents", "Resources", "app.asar");
+    } else return unavailable;
     const before = await fs.stat(archive), key = stamp(before), previous = cache.get(archive);
-    if (previous?.key === key) return { ...structuredClone(previous.value), app_version: version(info) || null };
+    if (previous?.key === key) return { ...structuredClone(previous.value), app_version: appVersion || null };
     handle = await fs.open(archive, "r");const prefix = Buffer.alloc(16);await handle.read(prefix, 0, 16, 0);
     const headerSize = prefix.readUInt32LE(12), base = 8 + prefix.readUInt32LE(4);
     if (headerSize <= 0 || headerSize > MAX_HEADER || base > before.size) throw Error("Invalid archive");
@@ -79,10 +95,10 @@ export async function inspectClaudeAppContract({ platform = process.platform, ap
       if (candidate.status === "verified") { result = candidate;break; }
     }
     if (stamp(await fs.stat(archive)) !== key) throw Error("App changed during inspection");
-    const value = { ...result, app_version: version(info) || null, installation: key };
+    const value = { ...result, app_version: appVersion || null, installation: key };
     cache.set(archive, { key, value });if (cache.size > 2) cache.delete(cache.keys().next().value);
     return structuredClone(value);
-  } catch { return { status: "unavailable", fields: {}, profiles: [], fingerprint: null }; }
+  } catch { return unavailable; }
   finally { await handle?.close(); }
 }
 

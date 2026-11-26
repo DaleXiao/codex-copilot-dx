@@ -6,12 +6,13 @@
     <meta name="color-scheme" content="dark light">
     <link id="favicon" rel="icon" type="image/svg+xml" href="data:,">
     <script src="/theme.js"></script>
-    <script src="/language.js" defer></script>
+    <link rel="preload" as="script" href="/dashboard.js">
     <link rel="stylesheet" href="/ui.css">
-    <script src="/dashboard.js" defer></script>
+    <script src="/language-boot.js" defer></script>
     <title data-i18n="ccdx_local_dashboard">CCDX Dashboard</title>
   </head>
   <body>
+    <a class="skip-link" href="#main-content" data-i18n="skip_to_content">Skip to content</a>
     <div class="shell">
       <div id="sidebar-tooltip" class="sidebar-tooltip" aria-hidden="true" hidden></div>
       <aside class="sidebar">
@@ -197,7 +198,7 @@
             <p id="gemini-route-state" class="client-sync-state" role="status">—</p>
             <p class="hint" data-i18n="gemini_scope">Native Google models remain available. Copilot models and background requests use Copilot.</p>
             <div class="table-wrap"><table class="dense-table column-table"><thead><tr><th data-width="balanced" data-i18n="client">App</th><th data-i18n="installed_version">Installed version</th></tr></thead><tbody><tr><td>Antigravity</td><td id="gemini-version">—</td></tr></tbody></table></div><p id="gemini-app-state" class="table-note">—</p>
-            <p id="gemini-reopen" class="hint" data-i18n="gemini_reopen" hidden>Quit Gemini, then open it here to load CCDX models.</p>
+            <p id="gemini-reopen" class="hint" data-i18n="gemini_reopen" hidden>Quit Antigravity, then open it here to load your selected models.</p>
             <div class="section-actions"><button id="gemini-open" type="button" data-i18n="gemini_open">Open Antigravity</button><a class="section-link" href="#models" data-source-link="github" data-i18n="gemini_open_sources">Model sources</a></div>
           </details>
           <details class="panel dashboard-section"><summary data-i18n="gemini_activity">Connection activity</summary>
@@ -300,7 +301,7 @@
           <div class="section-actions"><button id="refresh-models" type="button" data-i18n="refresh">Refresh</button></div>
           <p id="models-note" class="table-note" data-i18n="reading_provider_catalog">Loading model list…</p>
           <details id="model-check-details" class="model-check-details" hidden><summary data-i18n="source_check_details">Check details</summary><dl id="model-check-fields" class="failure-detail"></dl></details>
-          <div class="table-wrap"><table class="column-table"><thead><tr><th scope="col" data-i18n="model">MODEL</th><th data-width="balanced" scope="col" data-i18n="catalog_supported_apps">Supported apps</th><th data-width="compact" scope="col" data-i18n="tools_details">Details</th></tr></thead><tbody id="live-models-body" role="tabpanel"><tr><td colspan="3" data-i18n="loading">Loading…</td></tr></tbody></table></div>
+          <div class="table-wrap"><table class="column-table"><thead><tr><th scope="col" data-i18n="model">MODEL</th><th data-width="balanced" scope="col" data-i18n="catalog_supported_apps">Supported apps</th><th data-width="compact" scope="col" data-i18n="tools_details">Details</th></tr></thead><tbody id="live-models-body"><tr><td colspan="3" data-i18n="loading">Loading…</td></tr></tbody></table></div>
           <p class="hint" data-i18n="catalog_listing_does_not_guarantee_inference_access">Inference access unverified.</p>
         </details>
         <details class="panel dashboard-section" id="account-authorization">

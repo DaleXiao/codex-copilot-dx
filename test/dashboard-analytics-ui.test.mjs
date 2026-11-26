@@ -110,13 +110,15 @@ function harness({ fetchFn, clipboard = async () => {}, reduced = false, languag
   });
   runInContext(languageScript, context);
   runInContext(refreshScript, context);
-  const api = runInContext(`${viewScripts}\n${script}\n({ renderFailures, renderProviders, loadAuth, loadAnimation, loadUsage, loadModels, readModelCatalog, renderAnalytics, selectUsageDay, dashboardRefresh });`, context);
+  const api = runInContext(`${viewScripts}\n${script}\n({ renderFailures, renderProviders, loadAuth, loadAnimation, loadUsage, loadModels, readModelCatalog, renderAnalytics, selectUsageDay, dashboardRefresh, usageView, animationView });`, context);
   Object.defineProperties(api, {
     timer: { get: () => [...timers].find(fn => scheduled.get(fn) === 32) ?? null },
     selection: { get: () => nodes.get("animation-options")?.children.find(node => node.attributes["aria-pressed"] === "true")?.dataset.theme },
   });
   // Component tests exercise opened data views; real navigation is replayed in browsers.
-  api.loadUsage();api.loadAuth().then(() => api.loadModels());
+  void api.usageView.loadView().then(api.loadUsage);
+  void api.animationView.loadView().then(api.loadAnimation);
+  api.loadAuth().then(() => api.loadModels());
   ready.forEach((fn) => fn());
   return { api, nodes, requests, timers, scheduled, motions, chartMotions,
     advance(ms) { now += ms; },

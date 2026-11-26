@@ -257,8 +257,11 @@
       globalThis.ccdxConnections?.updateMemory?.(data.providers?.connections);
       globalThis.ccdxDashboardActivity?.update(data.model_activity);
       globalThis.ccdxDashboardFlow?.update(data);globalThis.ccdxToolActivity?.update(data);
-      text("version", `v${data.version || "?"}`);
-      text("uptime", "pid_pid_uptime_duration", { pid: number(data.pid), duration: duration(data.uptime_ms) });
+      if (visible(element("uptime"))) {
+        text("version", `v${data.version || "?"}`);
+        text("uptime", "pid_pid_uptime_duration", { pid: number(data.pid), duration: duration(data.uptime_ms) });
+        text("updated", "snapshot_time", { time: time(Date.now()) });
+      }
     
       const models = data.models || {};
       text("models", number(models.models));
@@ -364,12 +367,9 @@
       text("version", `v${data.version || "?"}`);
       text("uptime", "pid_pid_uptime_duration", { pid: number(data.pid), duration: duration(data.uptime_ms) });
       renderRequestCounts(data);
-      for (const key of ["completed", "incomplete", "failed", "cancelled"]) {
-        text(key, number(data.stream_performance?.by_route?.responses?.terminal_outcomes?.totals[key]));
-        text(`claude-${key}`, number(data.providers?.claude?.requests?.performance?.by_route?.messages?.terminal_outcomes?.totals[key]));
-      }
+      if (visible(element("completed"))) for (const key of ["completed", "incomplete", "failed", "cancelled"]) text(key, number(data.stream_performance?.by_route?.responses?.terminal_outcomes?.totals[key]));
+      if (visible(element("claude-completed"))) for (const key of ["completed", "incomplete", "failed", "cancelled"]) text(`claude-${key}`, number(data.providers?.claude?.requests?.performance?.by_route?.messages?.terminal_outcomes?.totals[key]));
       renderRuntimeUsage(data);renderRequestTables(data);
-      text("updated", "snapshot_time", { time: time(Date.now()) });
     }
     function renderRuntimeUsage(data) {
       if (element("runtime-usage") && visible(element("runtime-usage"))) {

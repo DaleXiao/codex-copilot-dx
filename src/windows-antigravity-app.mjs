@@ -5,7 +5,7 @@ import { windowsPowerShellEnvironment } from "./windows-process.mjs";
 import { createWindowsAntigravityManifest } from "./windows-antigravity-compat.mjs";
 
 const execute = promisify(execFile);
-const publishedBundles = createWindowsAntigravityManifest();
+const publishedBundles = createWindowsAntigravityManifest({ persistent: true });
 // Extracted from Google's Authenticode-bearing Antigravity App installers, not the IDE.
 // Windows App payload identity is verified against all three routing components.
 // https://antigravity.google/download
@@ -87,7 +87,7 @@ ConvertTo-Json -InputObject @($rows) -Depth 4 -Compress
 export const windowsAntigravityPath = value => typeof value === "string" && /^[a-z]:\\/i.test(value)
   && path.win32.normalize(value) === value && path.win32.basename(value).toLowerCase() === "antigravity.exe";
 
-export async function inspectWindowsAntigravity({ env = process.env, exec = execute, app, readBundles = publishedBundles } = {}) {
+export async function inspectWindowsAntigravity({ env = process.env, home, exec = execute, app, readBundles = publishedBundles } = {}) {
   if (app !== undefined && !windowsAntigravityPath(app)) throw new Error("Unrecognized Antigravity App location");
   const command = path.win32.join(env.SystemRoot || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
   const childEnv = windowsPowerShellEnvironment({ ...env, CCDX_AGY_INSPECT_APP: app || "" });
@@ -108,7 +108,7 @@ export async function inspectWindowsAntigravity({ env = process.env, exec = exec
   const known = expected?.every((value, i) => hashes[i + 1] === value);
   if (!known) {
     const installed = hashes.length === 3 && !/^2\.35\.[12](?:\.0)?$/.test(row.version)
-      ? await readBundles(row.version, { env }) : [];
+      ? await readBundles(row.version, { env, home }) : [];
     if (!installed.some(files => files.every((hash, i) => hashes[i] === hash))) return { ...result, status: "unverified_build" };
   }
   const pids = Array.isArray(row.pids) ? row.pids.filter(pid => Number.isSafeInteger(pid) && pid > 0) : [];

@@ -29,7 +29,7 @@ test('dashboard resource validators distinguish HTML, content changes and mismat
  const same=await invokeAdapter({}, {method:'GET',url:'/flow.js',headers:{...headers,'if-none-match':etag}});assert.equal(same.status,304);assert.equal(same.text,'');
  const changed=await invokeAdapter({}, {method:'GET',url:'/flow.js',headers:{...headers,'if-none-match':'"other"'}});assert.equal(changed.status,200);
  const wrong=await invokeAdapter({}, {method:'GET',url:'/flow.js?v=0.0.0',headers});assert.equal(wrong.status,409);assert.equal(wrong.headers['Cache-Control'],'no-store');
- const html=await invokeAdapter({}, {method:'GET',url:'/',headers});assert.equal(html.headers['Cache-Control'],'no-store');assert.match(html.text,/dashboard\.js\?v=\d+\.\d+\.\d+/);
+ const html=await invokeAdapter({}, {method:'GET',url:'/',headers});assert.equal(html.headers['Cache-Control'],'no-store');assert.match(html.text,/language-boot\.js\?v=\d+\.\d+\.\d+/);
  for(const match of html.text.matchAll(/src="(\/[a-z-]+\.js(?:\?[^\"]*)?)"/g)){
   const asset=await invokeAdapter({}, {method:'GET',url:match[1],headers});assert.equal(asset.status,200,match[1]);
   assert.match(asset.headers['Content-Type'],/javascript/);
@@ -38,11 +38,17 @@ test('dashboard resource validators distinguish HTML, content changes and mismat
 test('deferred language and dashboard entries deliver shared dependencies in order',async()=>{
  const headers={host:'127.0.0.1:2026'},html=await invokeAdapter({}, {method:'GET',url:'/',headers});
  const deferred=[...html.text.matchAll(/<script src="([^"]+)" defer>/g)].map(match=>match[1]);
- assert.deepEqual(deferred.map(url=>url.split('?')[0]),['/language.js','/dashboard.js']);
- const entry=await invokeAdapter({}, {method:'GET',url:deferred[1],headers});assert.equal(entry.status,200);
+ assert.deepEqual(deferred.map(url=>url.split('?')[0]),['/language-boot.js']);
+ const version=new URL(deferred[0],'http://localhost').search;
+ const entryUrl='/dashboard.js'+version;
+ const entry=await invokeAdapter({}, {method:'GET',url:entryUrl,headers});assert.equal(entry.status,200);
  const provider=entry.text.indexOf('globalThis.ccdxViewBoundary ='),consumer=entry.text.indexOf('globalThis.ccdxViewBoundary.create(');
  assert.ok(provider>=0&&consumer>provider);assert.ok(entry.text.includes('globalThis.ccdxRefresh ='));
  assert.doesNotThrow(()=>new Script(entry.text));
- const cached=await invokeAdapter({}, {method:'GET',url:deferred[1],headers:{...headers,'if-none-match':entry.headers.ETag||entry.headers.etag}});
+ const compact=await invokeAdapter({}, {method:'GET',url:'/language-en.js'+version,headers});
+ const bilingual=await invokeAdapter({}, {method:'GET',url:'/language.js'+version,headers});
+ assert.ok(Buffer.byteLength(compact.text)<Buffer.byteLength(bilingual.text)-25000);assert.doesNotThrow(()=>new Script(compact.text));
+ assert.ok(!entry.text.includes('globalThis.ccdxDashboardUsage ='));
+ const cached=await invokeAdapter({}, {method:'GET',url:entryUrl,headers:{...headers,'if-none-match':entry.headers.ETag||entry.headers.etag}});
  assert.equal(cached.status,304);assert.equal(cached.text,'');
 });

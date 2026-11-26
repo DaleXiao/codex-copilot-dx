@@ -467,3 +467,22 @@ test("accepted Codex evidence uses request completion once and excludes rejected
   }
   assert.equal(observed.length, 1);assert.equal(observed[0][1], "codex");assert.equal(observed[0][2], "inference");assert.ok(Number.isFinite(observed[0][3]));
 });
+
+test("a slow catalog read cannot replace a newer picker snapshot", async t => {
+  const first = Promise.withResolvers(), entered = Promise.withResolvers();
+  const catalog = id => ({ data: [{ id }] });
+  const registry = { models: catalog("previous") };
+  let reads = 0;
+  const options = { codexModelRegistry: registry, listModelsFn: async () => {
+    if (++reads === 1) { entered.resolve();await first.promise;return { status: 200, body: JSON.stringify(catalog("old")) }; }
+    return { status: 200, body: JSON.stringify(catalog("new")) };
+  } };
+  const request = { method: "GET", url: "/v1/models" };
+  const slow = invokeAdapter(options, request);
+  t.after(() => first.resolve());
+  await entered.promise;
+  assert.equal((await invokeAdapter(options, request)).status, 200);
+  first.resolve();
+  assert.equal((await slow).status, 200);
+  assert.deepEqual(registry.models.data.map(({ id }) => id), ["new"]);
+});

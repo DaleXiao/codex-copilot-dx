@@ -2,6 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { parseClaudeAppContract, claudeNativeModelHint, watchClaudeAppContract } from "../src/claude-app-contract.mjs";
 import { EventEmitter } from "node:events";
+import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { installedClaudeCodeVersion } from "../src/claude-code-installation.mjs";
 
 test("installation hints combine repeated events and stop after close", async () => {
   const callbacks = [];let changes = 0, closes = 0;
@@ -29,4 +33,19 @@ test("native hint matches source levels without inventing intermediate or extra 
   assert.equal(claudeNativeModelHint({reasoning_efforts:["low","high","max"]},contract),null);
   assert.equal(parseClaudeAppContract(source.replace('row.effort_options','row.other')).status,"unverified");
   assert.equal(parseClaudeAppContract('flatKey:"inferenceModels";maxEffort;behavesAs').status,"unverified");
+});
+
+test("Claude Code reads the PATH-selected package without executing it", async t => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "ccdx-claude-path-"));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const windows = process.platform === "win32";
+  const directories = [path.join(home, "selected"), path.join(home, "fallback")];
+  for (const [index, directory] of directories.entries()) {
+    const metadata = windows ? path.join(directory, "node_modules", "@anthropic-ai", "claude-code") : directory;
+    await mkdir(metadata, { recursive: true });
+    await writeFile(path.join(metadata, "package.json"), JSON.stringify({ name: "@anthropic-ai/claude-code", version: index ? "2.1.350" : "2.1.330" }));
+    await writeFile(path.join(directory, windows ? "claude.cmd" : "claude"),
+      windows ? '@echo off\r\n"%dp0%node.exe" "%dp0%\\node_modules\\@anthropic-ai\\claude-code\\cli.js" %*' : '#!/invalid\nexit 1', { mode: 0o755 });
+  }
+  assert.equal(installedClaudeCodeVersion({ env: { PATH: directories.join(path.delimiter) } }), "2.1.330");
 });

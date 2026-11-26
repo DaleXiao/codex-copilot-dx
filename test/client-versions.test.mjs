@@ -90,10 +90,13 @@ test("a damaged observation file is preserved and failed or stuck checks cannot 
   await blocked.refresh();assert.equal(calls, 1);release([]);blocked.close();
 });
 
-test("Windows uses only a recognized registered Codex version and leaves Claude unknown", async () => {
-  const codex = await inspectInstalledClientVersions({ platform: "win32", env: {}, windowsCodexVersion: async () => "26.1103.32239.0" });
+test("Windows observes registered Codex and Claude versions without launching either app", async () => {
+  const codex = await inspectInstalledClientVersions({ platform: "win32", env: {}, windowsCodexVersion: async () => "26.1103.32239.0",
+    windowsClaudeVersion: async () => ({ version: "5.4.2.0" }), windowsAntigravityVersion: async () => null });
   assert.equal(codex[0].id, "codex_windows_codex");assert.equal(codex[0].version, "26.1103.32239.0");
-  assert.deepEqual(await inspectInstalledClientVersions({ platform: "win32", env: {}, windowsCodexVersion: async () => null }), []);
+  assert.equal(codex[1].id, "claude_windows_claude");assert.equal(codex[1].version, "5.4.2.0");
+  assert.deepEqual(await inspectInstalledClientVersions({ platform: "win32", env: {}, windowsCodexVersion: async () => null,
+    windowsClaudeVersion: async () => ({ status: "multiple" }), windowsAntigravityVersion: async () => null }), []);
 });
 
 test("Antigravity uses the same installed-version observation and preserves old version records",async t=>{

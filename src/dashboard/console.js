@@ -70,12 +70,49 @@
     el("main-content").focus({ preventScroll: true });
     if (settingsViews.includes(next)) void loadSettings();
     if (next === "models") { void refreshCatalog();void dashboardRefresh.refresh("auth"); }
-    if (next === "usage") { void dashboardRefresh.refresh("usage");usageView.revealChart(); } else usageView.stopMotion();
+    if (next === "usage") void usageView.loadView().then(ready => {
+      if (!ready || current !== next) return;
+      usageView.setChartVisible(usageChartVisible);
+      const loaded = dashboardRefresh.state("usage").value;
+      if (loaded && !usageView.data) applyUsage(loaded, { changed: true });
+      void dashboardRefresh.refresh("usage");usageView.revealChart();
+    });
+    else usageView.stopMotion();
     globalThis.ccdxContextView?.routeChanged();
-    if (next === "requests") renderContext();
-    if (next === "system") { void dashboardRefresh.refresh("animation");void dashboardRefresh.refresh("updates"); }
+    if (next === "requests") {
+      renderContext();
+      void Promise.all(["flow", "tool-activity"].map(globalThis.ccdxViewBoundary.load)).then(() => {
+        if (current !== next) return;
+        const cached = dashboardRefresh.state(statusResourceKey()).value;
+        if (cached) { render(cached);restoreLive(cached); }
+      }).catch(() => label(el("page-settings-note"), "view_unavailable"));
+    }
+    if (next === "usage") void globalThis.ccdxViewBoundary.load("context").then(() => {
+      if (current === next) globalThis.ccdxContextView?.routeChanged();
+    }).catch(() => label(el("page-settings-note"), "view_unavailable"));
+    if (next === "system") {
+      void animationView.loadView().then(ready => { if (ready && current === next) { void dashboardRefresh.refresh("animation");syncAnimationPreview(); } });
+      void updateView.loadView().then(ready => { if (ready && current === next) void dashboardRefresh.refresh("updates"); });
+      loadOptional("privacy");
+      loadOptional("bark", () => {
+        bark ||= globalThis.ccdxBarkSettings.create({ element: el, api });
+        if (settings) bark.sync(settings.bark);
+      });
+    }
+    if (next === "codex" || next === "system") loadOptional("features", () => {
+      features ||= globalThis.ccdxDashboardFeatures.create({ element: el, api, apply: applySettings, change, localize: label });
+      if (settings) features.render(settings);
+    });
+    if (next === "models" || next === "gemini") loadOptional("gemini");
+    if (next === "models" || next === "checks") loadOptional("tools");
     preferences?.render();
     syncAnimationPreview();
+  }
+  function loadOptional(name, ready) {
+    const view = current;
+    void globalThis.ccdxViewBoundary.load(name).then(() => { if (current === view) ready?.(); }).catch(() => {
+      if (current === view) label(el("page-settings-note"), "view_unavailable");
+    });
   }
   async function api(body) {
     const response = await fetch("/_ccdx/ui/settings", { method: body ? "POST" : "GET", cache: "no-store",
@@ -87,8 +124,7 @@
     selectAnimation: theme => animationView.select(theme),
     refreshAnimation() { dashboardRefresh.invalidate("animation");if (current === "system") void dashboardRefresh.refresh("animation", { force: true }); } });
   globalThis.ccdxSettingsPreferences = preferences;
-  const bark = globalThis.ccdxBarkSettings?.create({ element: el, api });
-  const features = globalThis.ccdxDashboardFeatures?.create({ element: el, api, apply: applySettings, change, localize: label });
+  let bark, features;
   const applications = globalThis.ccdxApplications?.create({ element: el, change, localize: label,
     isBusy: () => settingsPending, isMutating: () => settingsPending && !settingsReadPending });
   globalThis.ccdxApplicationControls = applications;

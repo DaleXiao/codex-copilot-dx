@@ -416,7 +416,7 @@ async function archiveReadStamp(file) {
   } catch { /* The full reader retains its normal error handling. */ }
 }
 
-async function summarizeUsageLogFiles(filePath, { warn = console.error, onRecord, onRecordTotals, recordFilter, archiveSelection, provider = "" } = {}) {
+async function summarizeUsageLogFiles(filePath, { warn = console.error, onRecord, onRecordTotals, recordFilter, archiveSelection, provider = "", signal } = {}) {
   const summary = summarizeUsage([], { provider });
   const archive = await usageArchiveFiles(filePath);
   let archivedBackup = false;
@@ -425,6 +425,7 @@ async function summarizeUsageLogFiles(filePath, { warn = console.error, onRecord
     catch (error) { if (error.code !== "ENOENT") throw error; }
   }
   for (const candidate of [...archive, ...(archivedBackup ? [] : [rotatedFilePath(filePath)]), filePath]) {
+    signal?.throwIfAborted();
     const compressed = archive.includes(candidate);
     const stamp = compressed && archiveSelection && await archiveReadStamp(candidate);
     const indexed = stamp && archiveReadIndex.get(candidate);
@@ -437,6 +438,7 @@ async function summarizeUsageLogFiles(filePath, { warn = console.error, onRecord
     let index = stamp && indexed?.stamp !== stamp ? { stamp, first: Infinity, last: -Infinity, models: new Map() } : null;
     try {
       for await (const record of iterateUsageRecords(candidate, { compressed, warn(message) { index = null;warn(message); } })) {
+        signal?.throwIfAborted();
         const source = usageProvider(record);
         if (index) {
           const time = typeof record.ts === "string" ? Date.parse(record.ts) : NaN;
@@ -465,6 +467,7 @@ async function summarizeUsageLogFiles(filePath, { warn = console.error, onRecord
         archiveReadIndex.set(candidate, index);
       }
     } catch (error) {
+      signal?.throwIfAborted();
       if (!compressed) throw error;
       summary.archive_read_failures = (summary.archive_read_failures || 0) + 1;
       warn("A usage archive could not be read. Its totals may be incomplete.");
@@ -512,15 +515,15 @@ export async function usageSummaryVersion(filePath, { settled = true } = {}) {
 export async function summarizeUsageLogs(filePath = usageLogPath(), { warn = console.error, onRecord, onRecordTotals, recordFilter, archiveSelection, provider = "", signal } = {}) {
   if (provider && !isProviderId(provider)) throw new Error("Usage provider must be a valid provider ID");
   if (onRecord || onRecordTotals || recordFilter || archiveSelection || warn !== console.error)
-    return summarizeUsageLogFiles(filePath, { warn, onRecord, onRecordTotals, recordFilter, archiveSelection, provider });
+    return summarizeUsageLogFiles(filePath, { warn, onRecord, onRecordTotals, recordFilter, archiveSelection, provider, signal });
   const fileVersion = await usageSummaryVersion(filePath);
   const version = fileVersion === null ? null : `${fileVersion}\0${provider}`;
   if (version === null) {
     cachedSummary = null;
     const activeVersion = await usageSummaryVersion(filePath, { settled: false });
-    if (!activeVersion) return summarizeUsageLogFiles(filePath, { warn, provider });
+    if (!activeVersion) return summarizeUsageLogFiles(filePath, { warn, provider, signal });
     return structuredClone(await activeSummaries.run(`${activeVersion}\0${provider}`,
-      () => summarizeUsageLogFiles(filePath, { warn, provider }), { signal }));
+      sharedSignal => summarizeUsageLogFiles(filePath, { warn, provider, signal: sharedSignal }), { signal }));
   }
   if (cachedSummary?.version === version) return structuredClone(await cachedSummary.promise);
   const entry = { version, promise: null };

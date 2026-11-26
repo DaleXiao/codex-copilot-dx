@@ -2,19 +2,16 @@
 
 Use your model services in **Codex App, Claude App, Claude Code and Antigravity App** through one local gateway.
 
-Antigravity can use compatible Copilot Gemini models with their advertised reasoning levels. Ordinary Gemini chat keeps Google. See [setup and connection checks](docs/REFERENCE.md#antigravity-in-gemini-app).
+Releases cover Apple Silicon Macs and Windows x64/ARM64. Connect GitHub Copilot, Microsoft 365 or a custom API, then choose which apps and models can use the source.
 
-| Antigravity client | Integration |
-| --- | --- |
-| macOS Antigravity App or Gemini App | Integrated App detection, model routing and launch |
-| Windows x64/ARM64 Antigravity App | Discovers official installations and verifies their files against an automatically refreshed compatibility catalog. |
-| Antigravity standalone IDE or CLI | Separate clients outside this integration |
+| Client | macOS | Windows |
+| --- | --- | --- |
+| Codex App | App and model routing | Registered App and model routing |
+| Claude App | Desktop discovery and capability checks | MSIX or standalone discovery. Native capability checks require a registered package. |
+| Claude Code | PATH and npm package detection | PATH, native executable and npm shim detection |
+| Antigravity App | Antigravity and Gemini App bundles | Official installer verification with a cached compatibility catalog |
 
-Connect GitHub Copilot, Microsoft 365 or your own API. Choose which apps can use each source, then select their models. CI and prebuilt releases cover **macOS on Apple Silicon** and **Windows on x64/ARM64**. Intel Mac code remains available, without CI coverage or new prebuilt assets.
-
-Claude App keeps its native reasoning menu when it can represent the source's levels exactly. Otherwise, choose a declared fallback level in CCDX. It applies only when the App omits a level; model names and existing client choices stay unchanged.
-
-Optional local masking is off by default. Enable it in Settings → Local masking to download the model and component. Checks run locally and may add delay or mistake ordinary text; an unfinished check holds the request back. See [local masking](docs/REFERENCE.md#local-masking).
+Native feature status depends on the detected client and available evidence. See [client setup and verification](docs/REFERENCE.md#client-setup-and-verification).
 
 ## Install and start
 
@@ -75,24 +72,14 @@ Model availability depends on your account and service. Microsoft 365 also requi
 
 Use `ccdx help` or `ccdx <command> --help` for options. The CLI uses English; the Web UI supports English and Chinese.
 
-**CCDX uses one command tree.** Old command names and the `codex-copilot-dx` executable have been removed. This changes command entrypoints, not saved accounts, model selections or chats. See the [command reference](docs/REFERENCE.md#commands).
-
 ## Features and maintenance
 
-Open Codex from its Web UI page to use native image tools, then use a new chat. Automatic opening when CCDX starts is off by default. If image access is missing, use the Web UI image checks or `ccdx app codex image check`, `repair` and `open`. Running Apps are never forcibly restarted.
+- [Input suggestions](docs/REFERENCE.md#optional-native-predictions) and [native image tools](docs/REFERENCE.md#native-image-generation) have their own checks on the Codex page.
+- [Local masking](docs/REFERENCE.md#local-masking) runs on this computer and is off by default.
+- [Updates](docs/REFERENCE.md#installation-and-updates) are in Settings. For terminal updates, run `ccdx update github`.
+- Use **Checks & repairs** or `ccdx doctor` for local diagnostics. **Ctrl+C** stops the foreground service.
 
-Use the Web UI for accounts, APIs, models, client access, input suggestions, native images, local masking, appearance, diagnostics and updates. CLI commands remain available for automation and recovery. See the [control reference](docs/REFERENCE.md#webui-and-cli-controls).
-
-- **Input suggestions:** new integrations attempt setup by default when Codex is closed. Saved off choices are retained. The Web UI can enable, disable, finish setup, open Codex and repair the bridge. Setup synchronizes Show predictions, adds App-profile trust and locally decrypts the prediction hosts' HTTPS traffic. App/thread eligibility still applies. [Details](docs/REFERENCE.md#optional-native-predictions).
-- **Images:** Codex native host tools use the selected GitHub image model, with GPT Image 2.5 Flare as the default. Images start enabled; saved off choices are retained. On macOS with Codex 0.166+, fully quit a running App that lacks the host, start Codex through CCDX, and use a new chat. ChatGPT sign-in and Apps are retained. The Web UI provides model selection without an extra API key, MCP or CCDX image skill. [Details](docs/REFERENCE.md#native-image-generation).
-- **Updates:** Settings → Install update downloads and verifies a stable release, then switches the installed service when idle. Busy work postpones the switch. Unmanaged launches require the installer or an installed command. [Details](docs/REFERENCE.md#installation-and-updates).
-- **App updates:** Checks & repairs and `ccdx doctor` show observed installed Codex, Claude and Antigravity versions. A version change does not by itself verify the running App or its integrations. [Details](docs/REFERENCE.md#checks-and-troubleshooting).
-
-The foreground terminal stops with **Ctrl+C**. Client configuration marked **Unchanged** means CCDX kept the existing settings. Configuration and successful model access are separate checks.
-
-If models are missing, check the selected source and app models first. After a client update or configuration change, fully quit and reopen that app. Use **Checks & repairs** or `ccdx doctor` for local diagnostics.
-
-Keep the gateway on loopback. Account keys stay separate from the local credentials given to clients. Prompts are not included in routine diagnostics. See the [reference](docs/REFERENCE.md) for access, history, troubleshooting and settings, and [architecture](docs/ARCHITECTURE.md) for engineering boundaries.
+[Command reference](docs/REFERENCE.md) · [Architecture](docs/ARCHITECTURE.md)
 
 ## License
 

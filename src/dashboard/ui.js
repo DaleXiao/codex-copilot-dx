@@ -1,4 +1,7 @@
 const element = (id) => document.getElementById(id);
+document.querySelector?.(".skip-link")?.addEventListener("click", event => {
+  event.preventDefault();element("main-content").focus();
+});
 globalThis.ccdxConfirmAction = (title, detail) => {
   const dialog = element("action-confirm");
   if (!dialog?.showModal) return Promise.resolve(window.confirm(globalThis.ccdxLanguage?.format(detail) || english(detail)));
@@ -34,7 +37,7 @@ const viewHelpers = { time, element, phrase, localize, text, finite, number, mib
   usageChanged: () => { dashboardRefresh.invalidate("usage");return dashboardRefresh.refresh("usage", { force: true }); },
   motionAllowed: () => !reducedMotion.matches && document.visibilityState === "visible" && element("usage-analytics").open && !element("usage-analytics").closest("[hidden]") };
 const { render, renderActivity, renderProviders, renderFailures, renderContext } = globalThis.ccdxViewBoundary.create("client-features", () => globalThis.ccdxDashboardStatus.create(viewHelpers), ["render", "renderActivity", "renderProviders", "renderFailures", "renderContext"]);
-const usageView = globalThis.ccdxViewBoundary.create("usage-analytics", () => globalThis.ccdxDashboardUsage.create(viewHelpers), ["applyUsage", "renderUsageState", "renderAnalytics", "renderUsageTable", "selectUsageDay", "usageValues", "setChartVisible", "revealChart", "stopMotion", "refreshModelLabels"]);
+const usageView = globalThis.ccdxViewBoundary.create("usage-analytics", () => globalThis.ccdxDashboardUsage.create(viewHelpers), ["applyUsage", "renderUsageState", "renderAnalytics", "renderUsageTable", "selectUsageDay", "usageValues", "setChartVisible", "revealChart", "stopMotion", "refreshModelLabels"], "usage");
 const { applyUsage, renderUsageState, renderAnalytics, renderUsageTable, selectUsageDay } = usageView;
 const loadAuth = () => dashboardRefresh.refresh("auth", { force: true });
 
@@ -128,11 +131,12 @@ globalThis.addEventListener?.("storage", event => {
 
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 const animationView = globalThis.ccdxViewBoundary.create("animation-settings", () => globalThis.ccdxDashboardAnimation.create({ element, phrase, localize, text, reducedMotion,
-  getRefresh: () => dashboardRefresh, document }), ["apply", "load", "save", "sync", "stop", "select"]);
+  getRefresh: () => dashboardRefresh, document }), ["apply", "load", "save", "sync", "stop", "select"], "animation");
 const { apply: applyAnimation, load: loadAnimation, save: saveAnimation, sync: syncAnimationPreview, stop: stopAnimationPreview } = animationView;
 reducedMotion.addEventListener("change", () => { if (reducedMotion.matches) usageView.stopMotion(); });
 document.addEventListener("visibilitychange", () => { if (document.visibilityState !== "visible") usageView.stopMotion(); });
-new IntersectionObserver(([entry]) => usageView.setChartVisible(entry.isIntersecting)).observe(element("daily-bars"));
+let usageChartVisible = false;
+new IntersectionObserver(([entry]) => { usageChartVisible = entry.isIntersecting;usageView.setChartVisible(usageChartVisible); }).observe(element("daily-bars"));
 
 function emptyTable(bodyId, columns, message) {
   const body = element(bodyId);
@@ -158,6 +162,16 @@ function tableRow(values, { total = false, labels = [] } = {}) {
 }
 
 let providerEntries = [];
+let antigravitySummary;
+async function loadAntigravitySummary() {
+  try {
+    const data = await readDashboard('/_ccdx/ui/gemini?scope=summary', { signal: new AbortController().signal, timeout: 5000, source: 'gemini_antigravity' });
+    if (globalThis.ccdxGeminiStatus) return;
+    antigravitySummary = data;
+    const auth = dashboardRefresh.state('auth').value;
+    if (auth) renderProviders({ ...auth, gemini: data });
+  } catch { /* The dedicated app page can retry independently. */ }
+}
 let usageProviders = {};
 let selectedProvider = "";
 function usageModelLabel(value) {
@@ -194,7 +208,7 @@ function chooseProvider(id) {
   const previous = modelSnapshots.get(id);
   if (previous) applyModels(previous, { changed: true });
   else { emptyTable("live-models-body", 3, "reading_provider_catalog");text("models-note", "reading_provider_catalog"); }
-  element("live-models-body").setAttribute("aria-labelledby", `model-provider-${id}`);
+  element("source-account-panel").setAttribute("aria-labelledby", `model-provider-${id}`);
   window.dispatchEvent(new CustomEvent("ccdx:source-view"));
   if (!element("upstream-models").closest("[hidden]")) void loadModels();
 }
@@ -225,7 +239,7 @@ function applyProviders(data, { changed }) {
       if (provider.id === selectedProvider) { reloadModels = true;dashboardRefresh.invalidate("models", { clear: true });emptyTable("live-models-body", 3, "reading_provider_catalog"); }
     }
   }
-  if (changed || dashboardRefresh.state("auth").error) renderProviders(data);
+  if (changed || dashboardRefresh.state("auth").error) renderProviders({ ...data, gemini: globalThis.ccdxGeminiStatus || data.gemini || antigravitySummary });
   syncUsageProviders();
   if (sourceChoicesChanged) usageView.refreshModelLabels();
   const available = providerEntries.some(provider => provider.id === selectedProvider);
@@ -250,7 +264,7 @@ function applyProviders(data, { changed }) {
     }
     button.textContent = provider.name;button.setAttribute("aria-selected", String(provider.id === selectedProvider));button.tabIndex = provider.id === selectedProvider ? 0 : -1;
   }
-  element("live-models-body").setAttribute("aria-labelledby", `model-provider-${selectedProvider}`);
+  element("source-account-panel").setAttribute("aria-labelledby", `model-provider-${selectedProvider}`);
   if (sourceChoicesChanged) window.dispatchEvent(new CustomEvent("ccdx:providers"));
   if (!providerEntries.length) { text("models-state", "api_no_enabled_sources");emptyTable("live-models-body", 3, "api_no_enabled_sources");return; }
   if ((!wasInitialized || reloadModels || selectedProvider !== previousSelection) && !element("upstream-models").closest("[hidden]")) { dashboardRefresh.invalidate("models", { clear: true });void loadModels(); }
@@ -350,7 +364,7 @@ for (const [key, ids] of [["auth", ["account-authorization", "client-features", 
   }));
 }
 
-const updateView = globalThis.ccdxDashboardUpdates.create(viewHelpers);
+const updateView = globalThis.ccdxViewBoundary.create("version-updates", () => globalThis.ccdxDashboardUpdates.create(viewHelpers), ["render", "state"], "updates");
 function statusState(state) {
   if (!liveActivity.current && (state.error || !state.value)) globalThis.ccdxDashboardActivity?.unavailable();
   if (!liveActivity.current && (state.error || !state.value) && statusResourceKey() === "status") { globalThis.ccdxDashboardFlow?.unavailable();globalThis.ccdxToolActivity?.unavailable(); }
@@ -602,9 +616,9 @@ for (const link of document.querySelectorAll("[data-source-link]")) link.addEven
   if (providerEntries.some(provider => provider.id === id)) chooseProvider(id);
 });
 window.addEventListener("ccdx:context-view", () => { if (globalThis.ccdxContextView?.visible()) void dashboardRefresh.refresh("context"); });
-loadAnimation();
 refresh();
 loadAuth();
+void loadAntigravitySummary();
 animateLogo();
 
 element("usage-purpose")?.addEventListener("change", () => { dashboardRefresh.invalidate("usage");dashboardRefresh.refresh("usage", { force: true }); });

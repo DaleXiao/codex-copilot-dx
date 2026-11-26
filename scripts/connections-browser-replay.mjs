@@ -343,7 +343,7 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter
           await page.locator("#codex-auto-launch").uncheck();await page.waitForFunction(() => !document.getElementById("codex-auto-launch").disabled);
           await page.locator('[data-route="claude"]').click();await page.locator('[data-claude-client="claude_app"]').click();
           await page.waitForFunction(() => document.getElementById("application-open-label").textContent === "打开应用");
-          await page.locator("#application-open").click();await page.waitForFunction(() => document.getElementById("application-state").textContent === "接入待确认");
+          await page.locator("#application-open").click();await page.waitForFunction(() => document.getElementById("application-state").textContent === "应用已打开，等待它发出首个请求。");
           assert.equal(appCalls.filter(([id, action]) => id === "claude_app" && action === "open").length, 1);
           await page.locator('[data-claude-client="claude_code"]').click();assert.equal(await page.locator("#application-launch").isVisible(), false);
           const inspected = page.waitForResponse(response => response.url().includes("settings?application=antigravity"));
@@ -355,11 +355,11 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter
           assert.ok(confirmation.y >= heading.y + heading.height - 1, "Reopen confirmation stays below the application header");
           await page.locator("#application-reopen-cancel").click();assert.equal(appCalls.length, before);
           await page.locator("#application-open").click();await page.locator("#application-reopen-apply").click();
-          await page.waitForFunction(() => document.getElementById("application-state").textContent === "接入待确认");
+          await page.waitForFunction(() => document.getElementById("application-state").textContent === "应用已打开，等待它发出首个请求。");
           assert.deepEqual(appCalls.slice(before), [["antigravity", "quit"], ["antigravity", "open"]]);
           appStates.antigravity="stopped";await page.locator("#refresh").click();await page.waitForFunction(()=>document.getElementById("application-open-label").textContent==="打开应用"&&!document.getElementById("application-open").disabled);
           assert.equal(await page.locator("#gemini-open").isVisible(),false,"The application header is the only visible launch control");
-          const open=appCalls.length;await page.locator("#application-open").click();await page.waitForFunction(()=>document.getElementById("application-state").textContent==="接入待确认");
+          const open=appCalls.length;await page.locator("#application-open").click();await page.waitForFunction(()=>document.getElementById("application-state").textContent==="应用已打开，等待它发出首个请求。");
           assert.deepEqual(appCalls.slice(open),[["antigravity","open"]]);
           await page.setViewportSize({width:320,height:1000});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),true);
         }

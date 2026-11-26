@@ -2,6 +2,19 @@
   "schema": 1,
   "releases": [
     {
+      "arm64": [
+        "987275d0a32d05bfa590ee22d5f7b93ceb8c9c219ea972fae009218c26e51e27",
+        "99ff7f6cf1219f46c8437df65ca866e384836b5230adba8efd91b3152f823e15",
+        "3c1723f945f96c5aa2414918d61b6a23f38b94f666dc4af2e5ead0aa6f1eab92"
+      ],
+      "x64": [
+        "422531806d9a2f773b27d789dfe46c5411c1a58ab0f4dbd0462abdece8f4761a",
+        "99ff7f6cf1219f46c8437df65ca866e384836b5230adba8efd91b3152f823e15",
+        "593d9477adad560159ea3f17d94572ec5b6e8d9d9848d633d2ff0b51dd184d61"
+      ],
+      "version": "2.35.0"
+    },
+    {
       "x64": [
         "fdf8a0a6af474d54301740bdf0144d95a30be3105d96a2cb39bb8086278513ac",
         "9f0aad7274795d7fbde04931d96b348dcfc5f3d81d7373e6b70aeb09307442df",

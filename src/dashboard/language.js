@@ -449,6 +449,7 @@
     "application_reopen_warning": ["Reopening may interrupt current tasks.", "重新打开可能中断当前任务。"],
     "application_action_failed": ["Could not open the app. Check its state and retry.", "未能打开应用，请检查状态后重试。"],
     "application_action_open_failed": ["Could not open the app.", "未能打开应用。"],
+    "application_action_unverified_build": ["CCDX could not verify this Antigravity installation yet.", "CCDX 暂未验证此 Antigravity 安装。"],
     "application_action_focus_unavailable": ["Could not switch to the running app.", "无法切换到运行中的应用。"],
     "application_action_quit_refused": ["The app did not accept the quit request.", "应用未接受退出请求。"],
     "application_action_quit_timeout": ["Finish tasks and quit the app manually, then open it here.", "请完成任务并手动退出应用，再从这里打开。"],

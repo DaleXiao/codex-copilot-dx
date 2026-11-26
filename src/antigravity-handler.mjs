@@ -57,7 +57,7 @@ function geminiFinish(candidates) {
 export function createAntigravityHandler({client,models=()=>[],selectedModels=()=>null,defaultModel=()=>null,enabled=()=>false,privacy,searchFn,imageFn,guardSource,acquireRequest=async()=>()=>{},sourceAdmission,applicationEvidence,
   nativeModels=()=>[],resolveNativeModel=()=>null,
   compaction,compactionProfile=()=>"github",prepareConversationBinding=()=>{},resolveCompactionSource=()=>null,recordUsageFn=recordUsage,fetchGoogle=fetch,googleOrigin=GOOGLE_ORIGIN,requestBodyTimeoutMs=120000,upstreamTimeoutMs=180000,copilotTimeoutMs,streamIdleTimeoutMs=60000,
-  requestSettings,generationSettings=()=>({ selection:selectedModels(), copilotTimeoutMs, preferred:defaultModel() })}={}) {
+  requestSettings,groupCapable=()=>false,generationSettings=()=>({ selection:selectedModels(), copilotTimeoutMs, preferred:defaultModel() })}={}) {
   if(![GOOGLE_ORIGIN,"https://cloudcode-pa.googleapis.com"].includes(googleOrigin))throw new Error("Unrecognized Google control origin");
   const acquireControl=createRequestAdmission({maxBytes:4*CONTROL_BODY_BYTES,maxQueued:8});
   const opaqueReasoning=createAntigravityOpaqueReasoning();
@@ -153,7 +153,7 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
         if(method==="fetchAvailableModels"&&upstream.ok){
           const value=JSON.parse(await readBoundedResponseText(upstream,{maxBytes:8*1024*1024,signal:abort.signal,label:"Google model catalog"}));
           nativeWindows.clear();for(const[id,entry]of Object.entries(value.models||{}).slice(0,256))if(Number.isSafeInteger(entry?.maxTokens)&&entry.maxTokens>0){nativeWindows.set(id,entry.maxTokens);if(typeof entry.model==="string")nativeWindows.set(entry.model,entry.maxTokens)}
-          const merged=mergeAntigravityModels(value,models(config),selectedModels(config),defaultModel(config),nativeModels(config));
+          const merged=mergeAntigravityModels(value,models(config),selectedModels(config),defaultModel(config),nativeModels(config),groupCapable(req.headers["user-agent"]));
           catalogGroups.clear();
           for(const [id,group] of Object.entries(merged.groupedModels||{})){
             if(!id.startsWith(ANTIGRAVITY_MODEL_PREFIX)||Object.hasOwn(value.groupedModels??{},id))continue;
@@ -455,7 +455,8 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
   };
   handler.snapshot=(config)=>{
     const queue=acquireControl.diagnostics();
-    return {enabled:enabled(config),observed,catalog_models:catalogModels,catalog_default_supported:catalogDefaultSupported,catalog_default_model:catalogDefaultModel,active,...counts,
+    return {enabled:enabled(config),observed,catalog_models:catalogModels,catalog_group_count:catalogModels===null?null:catalogGroups.size,
+      catalog_default_supported:catalogDefaultSupported,catalog_default_model:catalogDefaultModel,active,...counts,
       short_control_queue:{active:queue.activeRequests,waiting:queue.queued,queued_total:queue.queuedTotal,rejected:queue.rejected,timed_out:queue.timedOut,wait_ms_max:queue.waitMsMax}};
   };
   return handler;

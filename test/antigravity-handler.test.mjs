@@ -494,12 +494,13 @@ test("an Antigravity default changes only a compatible agent catalog, not explic
 test("native grouped choices route and pin the exact selected alias in a conversation",async()=>{
   const parent="ccdx-copilot-gemini-4-carbon",level=parent+"-medium",pins=[];
   const native={models:{native:{model:"NATIVE"},"native-low":{model:"NATIVE_LOW"},"native-high":{model:"NATIVE_HIGH"}},
-    groupedModels:{native:{displayName:"Native",defaultThinkingSuffix:"-low",
-      supportedThinkingLevels:[{thinkingSuffix:"-low",thinkingDisplayName:"Low"},{thinkingSuffix:"-high",thinkingDisplayName:"High"}]}},
+    groupedModels:{native:{displayName:"Native",defaultThinkingSuffix:"low",
+      supportedThinkingLevels:[{thinkingSuffix:"low",thinkingDisplayName:"Low"},{thinkingSuffix:"high",thinkingDisplayName:"High"}]}},
     defaultAgentModelId:"native",agentModelSorts:[{groups:[{modelIds:["native"]}]}]};
   const f=fixture({defaultModel:()=>level,prepareConversationBinding:body=>{pins.push(body.model);},fetchGoogle:async()=>Response.json(native)});
   assert.equal((await invoke(f.handler,{}, {url:"/antigravity/v1internal:fetchAvailableModels"}).done).status,200);
   assert.ok(!f.handler.snapshot().catalog_models.includes(parent));
+  assert.equal(f.handler.snapshot().catalog_group_count,2);
   assert.equal((await invoke(f.handler,body(parent)).done).status,200);
   const groupedHigh=body(parent);
   groupedHigh.request.generationConfig.thinkingConfig.thinkingLevel="HIGH";

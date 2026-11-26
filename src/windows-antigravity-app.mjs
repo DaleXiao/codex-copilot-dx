@@ -2,8 +2,10 @@ import path from "node:path";
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { windowsPowerShellEnvironment } from "./windows-process.mjs";
+import { createWindowsAntigravityManifest } from "./windows-antigravity-compat.mjs";
 
 const execute = promisify(execFile);
+const publishedBundles = createWindowsAntigravityManifest();
 // Extracted from Google's Authenticode-bearing Antigravity App installers, not the IDE.
 // Windows App payload identity is verified against all three routing components.
 // https://antigravity.google/download
@@ -16,6 +18,14 @@ const officialBundles = new Map([
     "9f0aad7274795d7fbde04931d96b348dcfc5f3d81d7373e6b70aeb09307442df",
     "3ab260e0e1bed6e2c86eab13f385200f62e26c33f27174f485ddae21933c4f74",
   ]],
+  ["baa56cfeb0f0934782b60fba2733313822cff5f48606d47c5a463a276f2ed138", [
+    "e057115571cf5085406d20f2427a5afac272b712ec84332c7157da0113d4b2d0",
+    "fcdf7454007c6edc8162e601628c28cc1e6f575be849f329bb864c41ba6e6b02",
+  ]],
+  ["9693f0cb3c142fd629d9468275fd33e9d36b64df36d2e9899e7c62726f09e677", [
+    "e057115571cf5085406d20f2427a5afac272b712ec84332c7157da0113d4b2d0",
+    "aeb57eb01da844a6bce41f2bc8b8d20d7bc0e1154f57e6ee61a9da6782f6325d",
+  ]],
 ]);
 
 const inventory = String.raw`
@@ -26,6 +36,11 @@ if($env:CCDX_AGY_INSPECT_APP){$paths=@($env:CCDX_AGY_INSPECT_APP)}
 else{
   if($env:LOCALAPPDATA){$paths+=Join-Path $env:LOCALAPPDATA 'Programs\Antigravity\Antigravity.exe'}
   if($env:ProgramFiles){$paths+=Join-Path $env:ProgramFiles 'Antigravity\Antigravity.exe'}
+  $guid='121a0be4-63bd-531e-acf8-fc3924c7e984'
+  foreach($key in @("HKCU:\Software\$guid", "HKLM:\Software\$guid", "HKLM:\Software\WOW6432Node\$guid")){
+    $dir=(Get-ItemProperty -LiteralPath $key -ErrorAction SilentlyContinue).InstallLocation
+    if($dir){$paths+=Join-Path $dir.Trim().Trim('"') 'Antigravity.exe'}
+  }
   $keys=@('HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*',
     'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*',
     'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*')
@@ -33,6 +48,9 @@ else{
     if($entry.DisplayName -ne 'Antigravity' -or $entry.Publisher -notin @('Google','Google LLC')){continue}
     if($entry.InstallLocation){$paths+=Join-Path $entry.InstallLocation 'Antigravity.exe'}
     if($entry.DisplayIcon -match '^\s*"?([a-z]:\\[^"]*\\Antigravity\.exe)"?(?:,\d+)?\s*$'){$paths+=$Matches[1]}
+    if($entry.UninstallString -match '^\s*"?([a-z]:\\[^"]*\\)Uninstall Antigravity\.exe(?:"|\s|$)'){
+      $paths+=Join-Path $Matches[1] 'Antigravity.exe'
+    }
   }
 }
 $rows=@(foreach($p in ($paths|Sort-Object -Unique)){
@@ -69,7 +87,7 @@ ConvertTo-Json -InputObject @($rows) -Depth 4 -Compress
 export const windowsAntigravityPath = value => typeof value === "string" && /^[a-z]:\\/i.test(value)
   && path.win32.normalize(value) === value && path.win32.basename(value).toLowerCase() === "antigravity.exe";
 
-export async function inspectWindowsAntigravity({ env = process.env, exec = execute, app } = {}) {
+export async function inspectWindowsAntigravity({ env = process.env, exec = execute, app, readBundles = publishedBundles } = {}) {
   if (app !== undefined && !windowsAntigravityPath(app)) throw new Error("Unrecognized Antigravity App location");
   const command = path.win32.join(env.SystemRoot || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
   const childEnv = windowsPowerShellEnvironment({ ...env, CCDX_AGY_INSPECT_APP: app || "" });
@@ -87,7 +105,12 @@ export async function inspectWindowsAntigravity({ env = process.env, exec = exec
   if (!app) return result;
   const hashes = Array.isArray(row.hashes) && row.hashes.length === 3 ? row.hashes.map(value => String(value).toLowerCase()) : [];
   const expected = officialBundles.get(hashes[0]);
-  if (!expected || expected.some((value, i) => hashes[i+1] !== value)) return { ...result, status: "unknown" };
+  const known = expected?.every((value, i) => hashes[i + 1] === value);
+  if (!known) {
+    const installed = hashes.length === 3 && !/^2\.35\.[12](?:\.0)?$/.test(row.version)
+      ? await readBundles(row.version, { env }) : [];
+    if (!installed.some(files => files.every((hash, i) => hashes[i] === hash))) return { ...result, status: "unverified_build" };
+  }
   const pids = Array.isArray(row.pids) ? row.pids.filter(pid => Number.isSafeInteger(pid) && pid > 0) : [];
   return { ...result, status: pids.length ? "running" : "stopped", pids, wsl: row.wsl === true };
 }

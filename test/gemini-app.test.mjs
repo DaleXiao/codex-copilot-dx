@@ -82,5 +82,5 @@ test("Windows trusts known official routing payloads and starts a detached local
   assert.equal(planGeminiAppLaunch(verified,{platform:"win32",cloudCodeUrl:route,env:{Cloud_Code_Url:"https://work.example"}}).status,"route_conflict");
   assert.equal(planGeminiAppLaunch({...verified,wsl:true},{platform:"win32",cloudCodeUrl:route,env:{}}).status,"route_conflict");
   hashes[1]="0".repeat(64);
-  assert.equal((await inspectGeminiApp({platform:"win32",app,env,exec})).status,"unknown");
+  assert.equal((await inspectGeminiApp({platform:"win32",app,env,exec})).status,"unverified_build");
 });

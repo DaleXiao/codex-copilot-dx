@@ -29,6 +29,17 @@ test("a closed App can be opened through the native binary's process-local route
   const opened=await f.runtime.action({action:"open"},"http://127.0.0.1:2026");assert.equal(opened.last_operation.status,"opened");assert.equal(opened.app.status,"starting");
   assert.equal(f.calls[0][0],"/usr/bin/open");assert.deepEqual(f.calls[0][1],["-a","/Applications/Gemini.app","--env","CLOUD_CODE_URL=http://127.0.0.1:2026/antigravity"]);
 });
+test("the 2.35.2 Windows client gets one Copilot group from a flat Google catalog",async t=>{
+  const f=fixture(t);await f.runtime.action({action:"enable",accept_background_copilot:true},"http://127.0.0.1:2026");
+  const response=await invokeAdapter({env:{},dashboardOptions:{home:f.home},codexModelRegistry:{models:catalog},
+    antigravityOptions:{platform:"win32",googleFetch:async()=>Response.json({models:{native:{model:"NATIVE"}}})}},
+    {url:"/antigravity/v1internal:fetchAvailableModels",headers:{host:"127.0.0.1:2026","user-agent":"antigravity/hub/2.35.2.0"},body:{}});
+  assert.equal(response.status,200);
+  const merged=JSON.parse(response.text),parent="ccdx-copilot-gemini-4-carbon";
+  assert.deepEqual(merged.agentModelSorts[0].groups[0].modelIds,[parent]);
+  assert.ok(merged.models[parent]);
+  assert.deepEqual(merged.groupedModels[parent].supportedThinkingLevels.map(level=>level.thinkingSuffix),["low","medium","high"]);
+});
 test("pause retains a safe configured bridge and removes Copilot model access",async t=>{
   const f=fixture(t);await f.runtime.action({action:"enable",accept_background_copilot:true},"http://127.0.0.1:2026");
   await f.runtime.action({action:"open"},"http://127.0.0.1:2026");

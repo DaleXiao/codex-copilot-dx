@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {antigravityCopilotModels,groupedAntigravityRoutes,mergeAntigravityModels} from "../src/antigravity-models.mjs";
+import {antigravityCopilotModels,antigravityGroupingClient,groupedAntigravityRoutes,mergeAntigravityModels} from "../src/antigravity-models.mjs";
 import {antigravityToChat} from "../src/antigravity-chat-bridge.mjs";
 
 const model=(id,levels=["low","medium","high","xhigh"])=>({id,name:id.split("-").map(s=>s[0].toUpperCase()+s.slice(1)).join(" "),model_picker_enabled:true,
@@ -29,21 +29,40 @@ test("models without efforts keep a plain alias and native Google entries remain
 });
 test("native menu groups retain selected variant ids and the preferred default effort",()=>{
   const base="ccdx-copilot-gemini-4-hydrogen",preferred=base+"-xhigh";
-  for(const dash of ["","-"]){
+  for(const hasNativeGroup of [false,true]){
     const native={models:{google:{model:"GOOGLE"},"google-low":{model:"GOOGLE_LOW"},"google-high":{model:"GOOGLE_HIGH"}},
       defaultAgentModelId:"google",agentModelSorts:[{displayName:"Recommended",groups:[{modelIds:["google"]}]}],
-      groupedModels:{google:{displayName:"Google",defaultThinkingSuffix:dash+"low",
-        supportedThinkingLevels:[{thinkingSuffix:dash+"low",thinkingDisplayName:"Low"},{thinkingSuffix:dash+"high",thinkingDisplayName:"High"}]}}};
-    const before=structuredClone(native),merged=mergeAntigravityModels(native,[model("gemini-4-hydrogen")],[base+"-low",preferred],preferred);
+      ...(hasNativeGroup?{groupedModels:{google:{displayName:"Google",defaultThinkingSuffix:"low",
+        supportedThinkingLevels:[{thinkingSuffix:"low",thinkingDisplayName:"Low"},{thinkingSuffix:"high",thinkingDisplayName:"High"}]}}}:{})};
+    const before=structuredClone(native),merged=mergeAntigravityModels(native,[model("gemini-4-hydrogen")],[base+"-low",preferred],preferred,[],!hasNativeGroup);
     assert.deepEqual(native,before);
-    assert.deepEqual(merged.groupedModels.google,native.groupedModels.google);
+    assert.deepEqual(merged.groupedModels.google,native.groupedModels?.google);
     assert.deepEqual(merged.agentModelSorts[0].groups[0].modelIds,["google",base]);
-    assert.deepEqual(merged.groupedModels[base].supportedThinkingLevels.map(level=>level.thinkingSuffix),[dash+"low",dash+"xhigh"]);
-    assert.equal(merged.groupedModels[base].defaultThinkingSuffix,dash+"xhigh");
+    assert.deepEqual(merged.groupedModels[base].supportedThinkingLevels.map(level=>level.thinkingSuffix),["low","xhigh"]);
+    assert.equal(merged.groupedModels[base].defaultThinkingSuffix,"xhigh");
     assert.equal(groupedAntigravityRoutes(base,merged.groupedModels[base],merged.models).defaultAlias,preferred);
     assert.equal(merged.defaultAgentModelId,preferred);
-    assert.ok(merged.models[base+"-low"]&&merged.models[preferred]);
+    // The Windows language server keeps sort IDs that exist in models and
+    // filters levels by looking up parent + '-' + thinkingSuffix.
+    assert.ok(Object.hasOwn(merged.models,base));
+    assert.ok(merged.groupedModels[base].supportedThinkingLevels.every(level=>Object.hasOwn(merged.models,base+"-"+level.thinkingSuffix)));
     assert.equal(Object.hasOwn(merged.models,base+"-medium"),false);
     assert.equal(new Set(Object.values(merged.models).map(item=>item.model)).size,Object.keys(merged.models).length);
   }
+});
+test("verified Antigravity versions can group a flat Google catalog and old clients keep their flat entries",()=>{
+  for(const version of ["2.35.1","2.35.2.0","2.40.0.0"]) assert.equal(antigravityGroupingClient(version),true);
+  for(const version of [undefined,"2.34.9","3.0.0","2.35"]) assert.equal(antigravityGroupingClient(version),false);
+  const native={models:{google:{model:"GOOGLE"}}};
+  const copilot=[model("gemini-4-neon")];
+  const base="ccdx-copilot-gemini-4-neon";
+  assert.equal(mergeAntigravityModels(native,copilot).agentModelSorts[0].groups[0].modelIds.length,4);
+  assert.deepEqual(mergeAntigravityModels(native,copilot,null,null,[],true).agentModelSorts[0].groups[0].modelIds,[base]);
+});
+test("published aliases without explicit effort form a native group when their identifiers match",()=>{
+  const modelId="gemini-4-neon",base="ccdx-copilot-"+modelId;
+  const variants=["low","high"].map(effort=>({...model(modelId+"-"+effort,[]),base_model_id:modelId,reasoning_effort:effort}));
+  const merged=mergeAntigravityModels({models:{}},variants,null,null,[],true);
+  assert.deepEqual(merged.agentModelSorts[0].groups[0].modelIds,[base]);
+  assert.deepEqual([...groupedAntigravityRoutes(base,merged.groupedModels[base],merged.models).aliases.values()],[base+"-low",base+"-high"]);
 });

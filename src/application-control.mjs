@@ -59,6 +59,7 @@ export function createApplicationControl({ providerRuntime, clientIntegration, i
     if (state.status === "starting") return { status: "opening", app: state };
     if (platform === "win32" && id === "antigravity" && state.status === "running") {
       const verified = await inspectGemini({ ...options, app: app.app });
+      if (verified.status === "unverified_build") return { status: verified.status, app: state };
       if (verified.status !== "running" || !verified.pids.includes(app.pid)) return { status: "app_changed", app: state };
     }
     if (state.status === "running" && operation !== "restart") {

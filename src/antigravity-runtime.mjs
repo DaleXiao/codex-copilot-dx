@@ -19,7 +19,7 @@ import {withFileLockSync} from "./lock.mjs";
 import {httpError} from "./http-errors.mjs";
 import {createAntigravityBindings, validModel} from "./antigravity-bindings.mjs";
 import {parseTimerMs} from "./runtime-config.mjs";
-import {antigravityCopilotModels,groupAntigravityModels,ANTIGRAVITY_MODEL_PREFIX,ANTIGRAVITY_NATIVE_PREFIX} from "./antigravity-models.mjs";
+import {antigravityCopilotModels,antigravityGroupingClient,groupAntigravityModels,ANTIGRAVITY_MODEL_PREFIX,ANTIGRAVITY_NATIVE_PREFIX} from "./antigravity-models.mjs";
 
 const execute=promisify(execFile),key="gemini_antigravity_enabled",modelKey="gemini_antigravity_models",defaultKey="gemini_antigravity_default_model";
 const timeoutKey="gemini_antigravity_copilot_timeout_seconds";
@@ -76,6 +76,10 @@ export function createAntigravityRuntime({client,models=()=>[],refreshModels,pri
   const handler=createAntigravityHandler({client,models:available,selectedModels:(saved=settings())=>saved.selected_models,
     defaultModel:(saved=settings())=>saved.default_model,enabled:(saved=settings())=>saved.configured||saved.native_source!==null,
     requestSettings:settings,privacy,searchFn:searchFn||web.search,
+    groupCapable(userAgent){
+      const advertised=typeof userAgent==="string"?/\bantigravity\/hub\/(\d+(?:\.\d+){2,3})(?=\s|$|[;)])/i.exec(userAgent)?.[1]:null;
+      return antigravityGroupingClient(advertised??applicationControl?.snapshot().antigravity?.version??app.version);
+    },
     nativeModels:(saved=settings())=>nativeModels(saved.native_source),
     resolveNativeModel(id,saved=settings()){
       const model=nativeModels(saved.native_source).find(entry=>entry.id===id);if(!model)return null;

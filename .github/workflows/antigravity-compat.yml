@@ -1,0 +1,31 @@
+name: Windows Antigravity compatibility
+
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/antigravity-compat.yml', 'scripts/windows-antigravity-compat.ps1']
+  schedule:
+    - cron: '26 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-antigravity-compatibility
+  cancel-in-progress: false
+
+jobs:
+  verify-and-publish:
+    if: github.ref == 'refs/heads/main' && github.repository == 'DaleXiao/codex-copilot-dx'
+    runs-on: windows-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Verify the official installer signatures and publish the file digests
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/windows-antigravity-compat.ps1 -Publish

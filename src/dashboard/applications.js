@@ -53,7 +53,7 @@
         } }, delay);
         if (result && !["opened", "opening", "focused", "checked"].includes(result.status)) {
           const direct = { unknown: "application_unknown", app_check_failed: "application_unknown", not_installed: "application_not_installed", multiple: "application_multiple", multiple_apps: "application_multiple", unsupported: "application_unsupported", app_not_running: "application_stopped", app_route_conflict: "application_action_route_conflict" };
-          note = direct[result.status] || (["open_failed", "focus_unavailable", "quit_refused", "quit_timeout", "app_changed", "needs_app_relaunch", "route_conflict"].includes(result.status) ? "application_action_" + result.status : "application_action_failed");
+          note = direct[result.status] || (["open_failed", "focus_unavailable", "quit_refused", "quit_timeout", "app_changed", "needs_app_relaunch", "route_conflict", "unverified_build"].includes(result.status) ? "application_action_" + result.status : "application_action_failed");
         }
       } finally { pending = false;render(); }
     }

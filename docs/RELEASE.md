@@ -1,7 +1,7 @@
-# CCDX 1.4.24
+# CCDX 1.4.25
 
-- Group Copilot reasoning levels in the native Antigravity model picker when the catalog supports grouping. Saved aliases and existing conversation routes still work.
-- Detect the verified standalone Antigravity App on macOS alongside the Gemini App.
-- Show the actual thinking level and output limit sent to custom Gemini sources in request diagnostics.
+- Open verified Antigravity 2.35.2 installations on Windows x64 and ARM64, including custom locations recorded by the official installer.
+- Recognize newly verified official Windows builds through a refreshed compatibility catalog.
+- Group supported Copilot reasoning levels into one row in the native Antigravity picker and retain existing model aliases.
 
 Unverified: Windows App model-picker rendering and signed-in native inference.

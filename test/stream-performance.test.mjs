@@ -86,6 +86,23 @@ test("output speed excludes missing usage, zero duration and invalid counts with
   });
 });
 
+test("output speed excludes failed, incomplete and cancelled streams even when they report usage", () => {
+  let time = 0;
+  const metrics = createStreamPerformanceMetrics({ now: () => time });
+  for (const [outcome, options] of [["completed", {statusCode:200}], ["incomplete", {statusCode:200}],
+    ["failed", {statusCode:200}], [null, {aborted:true}], [null, {statusCode:500}]]) {
+    const request = metrics.begin("responses");
+    request.upstreamStarted(); request.firstOutput(); request.setOutputTokens(outcome === "completed" ? 11 : 101);
+    time += 100;
+    if (outcome) request.terminal(outcome);
+    request.finish(options);
+  }
+  const route = metrics.snapshot().by_route.responses;
+  assert.equal(route.output_tokens_per_second.samples, 1);
+  assert.equal(route.output_tokens_per_second.avg, 100);
+  assert.equal(route.tpot_us.samples, 5);
+});
+
 test("attempt timing retains the first and last two attempts as isolated technical metadata", () => {
   let time = 0;
   const metrics = createStreamPerformanceMetrics({ now: () => time });

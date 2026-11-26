@@ -471,7 +471,7 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
           if (outputTokens !== null && outputTokens >= 2) {
             observe(route.tpot, Math.max(0, ((finishedAt - firstOutputAt) * 1_000) / (outputTokens - 1)));
             const milliseconds = finishedAt - firstOutputAt;
-            if (Number.isSafeInteger(outputTokens) && milliseconds > 0) {
+            if (!failed && !aborted && statusCode < 400 && Number.isSafeInteger(outputTokens) && milliseconds > 0) {
               route.outputRate.intervals += outputTokens - 1;
               route.outputRate.milliseconds += milliseconds;
               route.outputRate.samples += 1;

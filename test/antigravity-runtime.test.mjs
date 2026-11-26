@@ -36,7 +36,7 @@ test("the 2.35.2 Windows client gets one Copilot group from a flat Google catalo
     {url:"/antigravity/v1internal:fetchAvailableModels",headers:{host:"127.0.0.1:2026","user-agent":"antigravity/hub/2.35.2.0"},body:{}});
   assert.equal(response.status,200);
   const merged=JSON.parse(response.text),parent="ccdx-copilot-gemini-4-carbon";
-  assert.deepEqual(merged.agentModelSorts[0].groups[0].modelIds,[parent]);
+  assert.deepEqual(merged.agentModelSorts[0].groups[0].modelIds,["low","medium","high"].map(effort=>parent+"-"+effort));
   assert.ok(merged.models[parent]);
   assert.deepEqual(merged.groupedModels[parent].supportedThinkingLevels.map(level=>level.thinkingSuffix),["low","medium","high"]);
 });

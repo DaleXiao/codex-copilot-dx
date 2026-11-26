@@ -102,7 +102,9 @@ export function mergeAntigravityModels(googleCatalog,copilotCatalog,selection=nu
   // Gemini App reads only the first group in the Recommended sort.
   const sort=sorts.find(item=>item.displayName?.toLowerCase()==="recommended")||sorts[0];
   sort.groups??=[];sort.groups[0]??={modelIds:[]};
-  const parents=new Map();
+  // The language server builds the picker options from the sort. The picker
+  // needs every selectable variant here to build and deduplicate its submenu.
+  sort.groups[0].modelIds=[...(sort.groups[0].modelIds||[]),...entries.map(entry=>entry.id)];
   let groupedModels;
   if(groupCapable||nativeGrouping(googleCatalog)){
     const copilot=entries.filter(row=>row.id.startsWith(ANTIGRAVITY_MODEL_PREFIX));
@@ -113,16 +115,14 @@ export function mergeAntigravityModels(googleCatalog,copilotCatalog,selection=nu
       if(rows.length<2||Object.hasOwn(models,parent)||Object.hasOwn(groupedModels,parent))continue;
       const chosen=rows.find(row=>row.id===defaultModel)||rows.find(row=>row.effort==="medium")||rows[0];
       const displayName=models[chosen.id].displayName.split(" · Copilot")[0]+" · Copilot";
-      // The app filters sort entries against models and looks up each variant as parent + '-' + suffix.
-      const model=modelId();if(!model)continue;
-      models[parent]={...models[chosen.id],model,displayName};
+      // Retain the former parent's enum for sessions that selected it in 1.4.25.
+      const model=modelId();
+      if(model)models[parent]={...models[chosen.id],model,displayName};
       groupedModels[parent]={displayName,defaultThinkingSuffix:chosen.effort,supportedThinkingLevels:rows.map(row=>({
         thinkingSuffix:row.effort,thinkingDisplayName:row.effort==="xhigh"?"XHigh":row.effort[0].toUpperCase()+row.effort.slice(1),
       }))};
-      for(const row of rows)parents.set(row.id,parent);
     }
   }
-  sort.groups[0].modelIds=[...(sort.groups[0].modelIds||[]),...new Set(entries.map(entry=>parents.get(entry.id)||entry.id))];
   return {...googleCatalog,models,agentModelSorts:sorts,...(groupedModels?{groupedModels}:{}),
     ...(hasAntigravityAgentDefault(googleCatalog)&&entries.some(entry=>entry.id===defaultModel)?{defaultAgentModelId:defaultModel}:{})};
 }

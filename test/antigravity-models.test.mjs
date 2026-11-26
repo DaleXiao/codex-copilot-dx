@@ -37,15 +37,15 @@ test("native menu groups retain selected variant ids and the preferred default e
     const before=structuredClone(native),merged=mergeAntigravityModels(native,[model("gemini-4-hydrogen")],[base+"-low",preferred],preferred,[],!hasNativeGroup);
     assert.deepEqual(native,before);
     assert.deepEqual(merged.groupedModels.google,native.groupedModels?.google);
-    assert.deepEqual(merged.agentModelSorts[0].groups[0].modelIds,["google",base]);
+    assert.deepEqual(merged.agentModelSorts[0].groups[0].modelIds,["google",base+"-low",preferred]);
     assert.deepEqual(merged.groupedModels[base].supportedThinkingLevels.map(level=>level.thinkingSuffix),["low","xhigh"]);
     assert.equal(merged.groupedModels[base].defaultThinkingSuffix,"xhigh");
     assert.equal(groupedAntigravityRoutes(base,merged.groupedModels[base],merged.models).defaultAlias,preferred);
     assert.equal(merged.defaultAgentModelId,preferred);
-    // The Windows language server keeps sort IDs that exist in models and
-    // filters levels by looking up parent + '-' + thinkingSuffix.
+    // The picker can only group variants that become client options via a sort.
+    const selectable=new Set(merged.agentModelSorts[0].groups[0].modelIds);
     assert.ok(Object.hasOwn(merged.models,base));
-    assert.ok(merged.groupedModels[base].supportedThinkingLevels.every(level=>Object.hasOwn(merged.models,base+"-"+level.thinkingSuffix)));
+    assert.ok(merged.groupedModels[base].supportedThinkingLevels.every(level=>selectable.has(base+"-"+level.thinkingSuffix)));
     assert.equal(Object.hasOwn(merged.models,base+"-medium"),false);
     assert.equal(new Set(Object.values(merged.models).map(item=>item.model)).size,Object.keys(merged.models).length);
   }
@@ -56,13 +56,17 @@ test("verified Antigravity versions can group a flat Google catalog and old clie
   const native={models:{google:{model:"GOOGLE"}}};
   const copilot=[model("gemini-4-neon")];
   const base="ccdx-copilot-gemini-4-neon";
-  assert.equal(mergeAntigravityModels(native,copilot).agentModelSorts[0].groups[0].modelIds.length,4);
-  assert.deepEqual(mergeAntigravityModels(native,copilot,null,null,[],true).agentModelSorts[0].groups[0].modelIds,[base]);
+  const legacy=mergeAntigravityModels(native,copilot),supported=mergeAntigravityModels(native,copilot,null,null,[],true);
+  const variants=["low","medium","high","xhigh"].map(effort=>base+"-"+effort);
+  assert.equal(legacy.groupedModels,undefined);
+  assert.deepEqual(legacy.agentModelSorts[0].groups[0].modelIds,variants);
+  assert.deepEqual(supported.agentModelSorts[0].groups[0].modelIds,variants);
+  assert.deepEqual([...groupedAntigravityRoutes(base,supported.groupedModels[base],supported.models).aliases.values()],variants);
 });
 test("published aliases without explicit effort form a native group when their identifiers match",()=>{
   const modelId="gemini-4-neon",base="ccdx-copilot-"+modelId;
   const variants=["low","high"].map(effort=>({...model(modelId+"-"+effort,[]),base_model_id:modelId,reasoning_effort:effort}));
   const merged=mergeAntigravityModels({models:{}},variants,null,null,[],true);
-  assert.deepEqual(merged.agentModelSorts[0].groups[0].modelIds,[base]);
+  assert.deepEqual(merged.agentModelSorts[0].groups[0].modelIds,[base+"-low",base+"-high"]);
   assert.deepEqual([...groupedAntigravityRoutes(base,merged.groupedModels[base],merged.models).aliases.values()],[base+"-low",base+"-high"]);
 });

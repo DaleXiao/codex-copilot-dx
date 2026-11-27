@@ -5,4 +5,4 @@
 - Keep Chat-converted reasoning items separate from official Responses history.
 - Choose Inter, System Sans or Mono in Web appearance.
 
-Unverified: Google Cloud sign-in routing to non-Google model sources and the Windows Gemini App's embedded Antigravity surface.
+Unverified: ordinary Google sign-in on physical macOS and Windows clients, gateway mode in the physical Windows App, and existing Google Cloud conversations after switching modes.

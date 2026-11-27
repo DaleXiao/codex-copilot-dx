@@ -43,6 +43,8 @@ h1 { margin: 0; font-size: clamp(20px, 3vw, 27px); font-weight: 650; letter-spac
 .intro.has-application-launch #page-settings-note:empty { display:none; }
 #application-launch { display:flex; flex-direction:column; align-items:flex-end; gap:5px; margin-left:auto; }
 #application-open { min-width:116px; display:inline-flex; align-items:center; justify-content:center; gap:8px; }
+#application-launch-options { inline-size:min(16rem, 50vw); }
+#application-launch-options > .section-actions { justify-content:flex-end; }
 #application-state { margin:0; min-height:18px; }
 #application-reopen-confirm { justify-content:flex-end; flex-wrap:wrap; margin:0 0 18px; }
 #application-reopen-confirm > span { flex:1 1 200px; }

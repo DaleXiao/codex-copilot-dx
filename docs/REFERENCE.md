@@ -133,13 +133,15 @@ If CCDX returns an internal model identifier error, reopen the app from CCDX and
 
 ### Standalone App without a Google sign-in
 
-Select a Copilot model and its effort, or a custom Gemini source, in CCDX. In the standalone Antigravity App, sign out of Google and quit the App. Run:
+Select a Copilot model and its effort, or a custom Gemini source, in CCDX. In the standalone Antigravity App, sign out of Google and quit the App. On the CCDX Antigravity page, choose **CCDX gateway** under **Open with**. CCDX remembers the choice for the next launch. To switch, choose **Google sign-in**. The main button focuses a running App. Reopening asks for confirmation and may interrupt work. When the desktop sign-in state is unavailable, CCDX lets you choose the mode.
+
+From a terminal, use:
 
 ```sh
 ccdx app antigravity gateway-open
 ```
 
-On macOS and Windows, this command starts the verified standalone App in its official [Enterprise Gateway mode](https://docs.cloud.google.com/gemini/enterprise/docs/ai-developer-tools/connect-enterprise-gateway). When prompted, choose a model from the configured list. Some App versions display the route IDs in the picker. A selected Copilot ID includes its thinking level. Check the response and its provider in **Requests**. In app status JSON, the listener is reported as `enterprise_gateway_running` and `activity.gateway_generation` counts authenticated generation requests reaching the shared handler.
+On macOS and Windows, the gateway launches the verified standalone App in its official Enterprise Gateway mode. The newer native picker reads model names and groups reasoning levels. CCDX keeps the default model and whole groups within the picker limit, and the WebUI reports omitted entries. Older builds can still use the explicit ID list. Check the response and its provider in **Requests**. In app status JSON, `enterprise_gateway_running` reports a listening gateway, `activity.gateway_generation` counts authenticated generation requests, and `catalog_reload` reports the two modes separately. [Google gateway documentation](https://docs.cloud.google.com/gemini/enterprise/docs/ai-developer-tools/connect-enterprise-gateway)
 
 The App authenticates to a loopback HTTPS listener with a key scoped to that launch. CCDX uses its existing credentials for the selected model source. Google Cloud seat usage applies in the Google sign-in mode. Existing administrator gateways take precedence and CCDX reports a route conflict. To return to ordinary Google sign-in, quit the App, run `ccdx app antigravity open --standalone` and sign in. The Gemini App on macOS continues to use its regular Google sign-in.
 

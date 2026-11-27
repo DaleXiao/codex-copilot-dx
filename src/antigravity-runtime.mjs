@@ -22,11 +22,13 @@ import {sendJsonError} from "./http-transport.mjs";
 import {ANTIGRAVITY_GATEWAY_PREFIX,antigravityGatewayRoute,startAntigravityGateway} from "./antigravity-gateway.mjs";
 import {createAntigravityBindings, validModel} from "./antigravity-bindings.mjs";
 import {parseTimerMs} from "./runtime-config.mjs";
-import {antigravityCopilotModels,antigravityGroupingClient,groupAntigravityModels,ANTIGRAVITY_MODEL_PREFIX,ANTIGRAVITY_NATIVE_PREFIX} from "./antigravity-models.mjs";
+import {antigravityCopilotModels,antigravityGroupingClient,groupAntigravityModels,planAntigravityGatewayMenu,ANTIGRAVITY_MODEL_PREFIX,ANTIGRAVITY_NATIVE_PREFIX} from "./antigravity-models.mjs";
 
 const execute=promisify(execFile),key="gemini_antigravity_enabled",modelKey="gemini_antigravity_models",defaultKey="gemini_antigravity_default_model";
 const timeoutKey="gemini_antigravity_copilot_timeout_seconds";
 const nativeSourceKey="gemini_antigravity_native_source";
+const launchModeKey="gemini_antigravity_launch_mode";
+const validLaunchMode=value=>value==="google"||value==="gateway";
 const validTimeout=value=>Number.isSafeInteger(value)&&value>=1&&value<=600;
 const validAlias=id=>typeof id==="string"&&/^ccdx-copilot-[a-z0-9._-]{1,140}$/.test(id);
 const gatewayNativeAlias=row=>ANTIGRAVITY_NATIVE_PREFIX+createHash("sha256").update(JSON.stringify([row.source,row.model])).digest("hex").slice(0,32);
@@ -36,7 +38,7 @@ export function createAntigravityRuntime({client,models=()=>[],refreshModels,pri
   upstreamTimeoutMs=180000,copilotTimeoutMs,nativeSources=()=>[],getSource=()=>null,handleGatewayRequest,startGateway=startAntigravityGateway,...timeouts}={}) {
   const options={home,env},guard=createConversationSourceGuard(options);
   const web=searchFn?null:createCopilotWeb({client,readToken});
-  let app={status:"unknown"},route=null,lastOperation=null,gateway;
+  let app={status:"unknown"},route=null,lastOperation=null,gateway,gatewayRevision,gatewayDiscoversCatalog=false;
   const bindings=createAntigravityBindings(options,guard);
   const settingsFile=userSettingsPath(options);
   let settingsVersion, settingsSnapshot;
@@ -52,7 +54,8 @@ export function createAntigravityRuntime({client,models=()=>[],refreshModels,pri
     if(saved[modelKey]!==undefined&&(!Array.isArray(saved[modelKey])||saved[modelKey].length>100||new Set(saved[modelKey]).size!==saved[modelKey].length||saved[modelKey].some(id=>!validAlias(id))))throw httpError("Invalid Antigravity model selection",409);
     if(saved[defaultKey]!==undefined&&!validAlias(saved[defaultKey]))throw httpError("Invalid Antigravity default model",409);
     const snapshot={configured:Object.hasOwn(saved,key),enabled:saved[key]===true,selected_models:saved[modelKey]??null,default_model:saved[defaultKey]??null,
-      copilot_timeout_seconds:validTimeout(saved[timeoutKey])?saved[timeoutKey]:null,native_source:typeof saved[nativeSourceKey]==="string"?saved[nativeSourceKey]:null};
+      copilot_timeout_seconds:validTimeout(saved[timeoutKey])?saved[timeoutKey]:null,native_source:typeof saved[nativeSourceKey]==="string"?saved[nativeSourceKey]:null,
+      launch_preference:validLaunchMode(saved[launchModeKey])?saved[launchModeKey]:null};
     settingsVersion=version;settingsSnapshot=snapshot;
     return snapshot;
   };
@@ -70,6 +73,30 @@ export function createAntigravityRuntime({client,models=()=>[],refreshModels,pri
   function gatewayModels(saved=settings()){
     const variants=antigravityCopilotModels(available(saved)).filter(row=>saved.selected_models===null||saved.selected_models.includes(row.id));
     return [...variants,...nativeModels(saved.native_source).map(row=>({...row,id:gatewayNativeAlias(row)}))];
+  }
+  const gatewayCatalog=(saved=settings(),limit=gatewayDiscoversCatalog?32:Infinity)=>
+    planAntigravityGatewayMenu(gatewayModels(saved),saved.default_model,limit);
+  const catalogRevision=rows=>JSON.stringify(rows.map(row=>[row.id,row.displayName,row.maxTokens,row.maxOutputTokens,row.supportsImages,row.effort]));
+  async function prepareGateway(verified){
+    const discovery=antigravityGroupingClient(verified?.version);
+    const {menu}=gatewayCatalog(settings(),discovery?32:Infinity);
+    if(!menu.length)throw httpError("Select an available Copilot or custom Gemini model before opening the gateway",409);
+    const listener=await startGateway({handle:handleGatewayRequest||handle,models:discovery?undefined:menu.map(row=>row.id)});
+    gateway?.close();
+    gateway=listener;
+    gatewayDiscoversCatalog=discovery;
+    gatewayRevision=discovery?null:catalogRevision(menu);
+    return gateway;
+  }
+  function saveLaunchPreference(mode){
+    const file=userSettingsPath(options);
+    fs.mkdirSync(path.dirname(file),{recursive:true,mode:0o700});
+    withFileLockSync(file+".lock",()=>{
+      const saved=readUserSettings({...options,strict:true});
+      if(saved[launchModeKey]===mode)return;
+      saved[launchModeKey]=mode;
+      atomicWriteFileIfChangedSync(file,JSON.stringify(saved,null,2)+"\n",{mode:0o600});
+    });
   }
   const profileFor=source=>source==="github"?"codex:"+githubTokenFingerprint(readToken()||"")
     :source==="google"?"google:gemini-native":getSource(source)?.profileId("gemini");
@@ -124,10 +151,12 @@ export function createAntigravityRuntime({client,models=()=>[],refreshModels,pri
     const wire=antigravityGatewayRoute(pathname);
     if(!wire)return sendJsonError(res,httpError("Unknown Antigravity gateway endpoint",404));
     if(wire.method==="catalog"&&req.method==="GET"){
-      const entries=gatewayModels();
-      const models=entries.map(row=>({name:"models/"+row.id,displayName:row.displayName,inputTokenLimit:row.maxTokens,
+      const {menu:entries}=gatewayCatalog();
+      const models=entries.map(row=>({name:"models/"+row.id,displayName:row.displayName.replace(/ \(Xhigh\)$/," (XHigh)"),inputTokenLimit:row.maxTokens,
         outputTokenLimit:row.maxOutputTokens,supportedGenerationMethods:["generateContent","streamGenerateContent",
           ...(row.source?["countTokens"]:[])]}));
+      if(gatewayDiscoversCatalog)gatewayRevision=catalogRevision(entries);
+      gateway.observe?.("catalog");
       res.writeHead(200,{"Content-Type":"application/json","Cache-Control":"no-store"});res.end(JSON.stringify({models}));return;
     }
     if(wire.method==="metrics"&&req.method==="POST"){
@@ -139,6 +168,8 @@ export function createAntigravityRuntime({client,models=()=>[],refreshModels,pri
       if(!native)return sendJsonError(res,httpError("The selected Antigravity gateway model is unavailable",503));
       wire.model=native.id;
     }
+    const listener=gateway;
+    if(wire.method!=="countTokens")res.once("finish",()=>{if(res.statusCode>=200&&res.statusCode<300)listener.observe?.("inference");});
     return handler(req,res,wire);
   }
   function snapshot(){
@@ -149,43 +180,48 @@ export function createAntigravityRuntime({client,models=()=>[],refreshModels,pri
     const groups=groupAntigravityModels(listed,catalog);
     const expected=[...(config.enabled&&sourceEnabled?listed.filter(model=>model.selected).map(model=>model.id):[]),...nativeModels(config.native_source).map(model=>model.id)].sort();
     const desiredDefault=expected.includes(config.default_model)?config.default_model:null;
-    const reload=config.enabled&&sourceEnabled||config.native_source?(activity.catalog_models===null?null:JSON.stringify([...activity.catalog_models].sort())!==JSON.stringify(expected)
+    const googleReload=config.enabled&&sourceEnabled||config.native_source?(activity.catalog_models===null?null:JSON.stringify([...activity.catalog_models].sort())!==JSON.stringify(expected)
       ||activity.catalog_default_supported===true&&activity.catalog_default_model!==desiredDefault):false;
     const defaultUnavailable=config.default_model!==null&&(!desiredDefault||activity.catalog_default_supported===false);
     const current=applicationControl?.snapshot().antigravity;
+    const gatewayActive=gateway?.active()===true;
+    const gatewayMenu=gatewayActive?gatewayCatalog(config):null;
+    const gatewayReload=gatewayMenu?(gatewayRevision===null?null:gatewayRevision!==catalogRevision(gatewayMenu.menu)):false;
+    const reload=current?.launch_mode==="gateway"||(!current?.launch_mode&&gatewayActive)?gatewayReload:googleReload;
     const visibleApp=current?{status:current.status,version:current.version||null,pids:current.pid?[current.pid]:[]}:app;
     return {source:"gemini_antigravity",...config,native_sources:sources.map(({id,name})=>({id,name})),copilot_timeout:{effective_ms:effectiveCopilotTimeoutMs(config),default_ms:defaultCopilotTimeoutMs,locked:copilotTimeoutMs!==undefined},
       source_enabled:sourceEnabled,default_model_unavailable:defaultUnavailable,models_reload_required:reload,app:visibleApp,application:current||null,route_observed:activity.observed,
-      enterprise_gateway_running:gateway?.active()===true,
+      enterprise_gateway_running:gatewayActive,gateway_models_omitted:gatewayMenu?.omitted||0,catalog_reload:{google:googleReload,gateway:gatewayReload},
       model_source:["Google",...(config.enabled&&sourceEnabled?["GitHub Copilot"]:[]),...(selectedNative?[selectedNative.name]:[])].join(" + "),background_source:"GitHub Copilot",ordinary_chat_source:"Google (unchanged)",
       compaction_source:"Observed conversation source; existing background policy when unassigned",
       models:listed,model_groups:groups,activity,last_operation:lastOperation};
   }
   async function action(input={},baseUrl){
-    if(input&&Object.keys(input).some(name=>!["action","accept_background_copilot","models","default_model","copilot_timeout_seconds","native_source"].includes(name)))throw httpError("Invalid Gemini operation",400);
+    if(input&&Object.keys(input).some(name=>!["action","accept_background_copilot","models","default_model","copilot_timeout_seconds","native_source","launch_mode","confirmed","expected_pid","expected_started"].includes(name)))throw httpError("Invalid Gemini operation",400);
     const operation=input.action||"status";
     const timeout=input.copilot_timeout_seconds;
     const nativeSource=input.native_source;
-    if(!["status","summary","refresh","models","enable","disable","open","preview","standalone-open","gateway-open"].includes(operation))throw httpError("Unknown Gemini operation",400);
+    if(!["status","summary","refresh","models","enable","disable","open","preview","standalone-open","gateway-open","web-open","web-restart"].includes(operation))throw httpError("Unknown Gemini operation",400);
     if((input.models!==undefined||input.default_model!==undefined)&&operation!=="models")throw httpError("Models require the models operation",400);
     if(nativeSource!==undefined&&(operation!=="models"||nativeSource!==null&&!nativeSources().some(source=>source.id===nativeSource)))throw httpError("Choose an available Gemini source",400);
     if(timeout!==undefined){
       if(operation!=="models"||timeout!==null&&!validTimeout(timeout))throw httpError("Choose a Copilot timeout from 1 to 600 seconds, or use the default",400);
       if(copilotTimeoutMs!==undefined)throw httpError("Copilot timeout is controlled by the startup environment",409);
     }
+    if(operation==="web-open"||operation==="web-restart"){
+      const mode=input.launch_mode;
+      if(mode!==undefined&&!validLaunchMode(mode))throw httpError("Choose a valid Antigravity launch mode",400);
+      if(!applicationControl?.openAntigravityFromWeb)throw httpError("Antigravity launch is unavailable",503);
+      const result=await applicationControl.openAntigravityFromWeb({operation:operation==="web-open"?"open":"restart",confirmed:input.confirmed,
+        expected_pid:input.expected_pid,expected_started:input.expected_started},
+      {mode,preference:settings().launch_preference,available:()=>gatewayModels().length>0,prepare:prepareGateway});
+      if(result.status==="opened"&&mode)saveLaunchPreference(mode);
+      lastOperation={action:operation,...result};
+      return snapshot();
+    }
     if(operation==="gateway-open"||operation==="standalone-open"){
       if(!applicationControl?.openStandaloneAntigravity)throw httpError("Standalone Antigravity launch is unavailable",503);
-      const result=await applicationControl.openStandaloneAntigravity(operation==="gateway-open"?async()=>{
-        const saved=settings(),entries=gatewayModels(saved);
-        if(!entries.length)throw httpError("Select an available Copilot or custom Gemini model before opening the gateway",409);
-        const ids=entries.map(row=>row.id);
-        const preferred=saved.default_model;
-        const index=ids.indexOf(preferred);
-        if(index>0)ids.unshift(...ids.splice(index,1));
-        gateway?.close();
-        gateway=await startGateway({handle:handleGatewayRequest||handle,models:ids});
-        return gateway;
-      }:undefined);
+      const result=await applicationControl.openStandaloneAntigravity(operation==="gateway-open"?prepareGateway:undefined);
       lastOperation={action:operation,...result};
       return snapshot();
     }

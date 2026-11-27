@@ -27,14 +27,28 @@ test("the standalone Antigravity gateway serves the Gemini protocol over authent
   const runtime=createAntigravityRuntime({...f.options,
     client:{chatCompletions:async(body,options)=>{
       calls.push(body);options.onUpstreamStart();
+      if(body.messages.at(-1)?.content==="parallel fixture"){
+        const slices=[
+          {choices:[{delta:{tool_calls:[{index:0,id:"tool-one",function:{name:"lookup",arguments:'{"key":'}},{index:1,id:"tool-two",function:{name:"lookup",arguments:'{"key":'}}]}}]},
+          {choices:[{delta:{tool_calls:[{index:1,function:{arguments:"2}"}},{index:0,function:{arguments:"1}"}}]},finish_reason:"tool_calls"}]},
+        ];
+        return new Response(slices.map(row=>"data: "+JSON.stringify(row)+"\n\n").join("")+"data: [DONE]\n\n");
+      }
+      if(body.messages.at(-1)?.content==="partial fixture"){
+        return new Response('data: {"choices":[{"delta":{"content":"partial text"}}]}\n\ndata: {"error":{"code":"unavailable"}}\n\n');
+      }
       return options.signal&&!body.stream
         ?Response.json({choices:[{message:{content:"copilot reply"},finish_reason:"stop"}]})
         :new Response('data: {"choices":[{"delta":{"content":"copilot stream"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n');
     }},
-    applicationControl:{snapshot:()=>({}),check:async()=>{},openStandaloneAntigravity:async prepare=>{gateway=await prepare();return{status:"opened"}}},
+    applicationControl:{snapshot:()=>({}),check:async()=>{},openStandaloneAntigravity:async prepare=>{gateway=await prepare({version:"2.35.2"});return{status:"opened"}}},
     nativeSources:()=>[{id:source,name:"Configured",models:[{id:model}]}],
     getSource:id=>id===source?{client:{gemini:async(body,{countTokens,onUpstreamStart})=>{
-      native.push(body);onUpstreamStart();return Response.json(countTokens?{totalTokens:42}:{candidates:[{content:{role:"model",parts:[{text:"custom reply"}]},finishReason:"STOP"}]});
+      native.push(body);onUpstreamStart();
+      if(body.request.contents?.at(-1)?.parts?.[0]?.text==="malformed fixture")return Response.json({
+        candidates:[{finishReason:"MALFORMED_FUNCTION_CALL"}],usageMetadata:{promptTokenCount:3,candidatesTokenCount:2,totalTokenCount:5},
+      });
+      return Response.json(countTokens?{totalTokens:42}:{candidates:[{content:{role:"model",parts:[{text:"custom reply"}]},finishReason:"STOP"}]});
     }}}:null,
     googleFetch:()=>assert.fail("standalone gateway must never call Google"),
   });
@@ -45,8 +59,8 @@ test("the standalone Antigravity gateway serves the Gemini protocol over authent
   assert.equal(opened.enterprise_gateway_running,true);
   const launch=gateway.environment,{AGY_LLM_GATEWAY_URL:url,AGY_LLM_GATEWAY_API_KEY:key,AGY_LLM_GATEWAY_CA_CERT:certificate}=launch;
   assert.equal(launch.AGY_LLM_GATEWAY_WIRE_PROTOCOL,"genai");
-  const custom=launch.AGY_LLM_GATEWAY_MODELS.split(",").find(id=>id.startsWith("ccdx-gemini-"));
-  assert.match(custom,/^ccdx-gemini-[0-9a-f]{32}$/);
+  assert.equal(launch.AGY_LLM_GATEWAY_MODELS,undefined);
+  assert.equal(opened.catalog_reload.gateway,null);
   assert.equal(JSON.stringify(opened).includes(key),false);
   assert.equal(JSON.stringify(opened).includes(certificate),false);
   assert.match(fs.readFileSync(certificate,"utf8"),/^-----BEGIN CERTIFICATE-----/);
@@ -62,7 +76,11 @@ test("the standalone Antigravity gateway serves the Gemini protocol over authent
   assert.equal((await request("/v1beta/models",{authorization:"Bearer wrong"})).status,403);
   assert.equal((await request("/v1beta/models",{headers:{origin:"https://example.test"}})).status,403);
   const list=JSON.parse((await request("/v1beta/models")).text);
-  assert.ok(list.models.some(row=>row.name==="models/"+alias));
+  const custom=list.models.find(row=>row.name.startsWith("models/ccdx-gemini-")).name.slice(7);
+  assert.match(custom,/^ccdx-gemini-[0-9a-f]{32}$/);
+  assert.match(list.models.find(row=>row.name==="models/"+alias).displayName,/\(High\)$/);
+  assert.equal(runtime.snapshot().catalog_reload.gateway,false);
+  assert.equal(gateway.observation().scope,"catalog");
   assert.equal((await request("/v1beta/models/google-native:generateContent",{value:input})).status,404);
   const copilot=await request("/v1beta/models/"+alias+":generateContent",{value:input});
   assert.equal(copilot.status,200);
@@ -70,20 +88,65 @@ test("the standalone Antigravity gateway serves the Gemini protocol over authent
   const streamed=await request("/v1beta1/projects/fixture/locations/global/publishers/google/models/"+alias+":streamGenerateContent?alt=sse",{value:input});
   assert.equal(streamed.status,200);
   assert.equal(JSON.parse(streamed.text.split("\n")[0].slice(6)).candidates[0].content.parts[0].text,"copilot stream");
+  assert.doesNotMatch(streamed.text,/\[DONE\]/);
+  assert.equal(gateway.observation().scope,"inference");
   assert.ok(calls.every(body=>body.model==="gemini-4-carbon"&&body.reasoning_effort==="high"));
   assert.ok(calls.every(body=>!JSON.stringify(body).includes(key)));
+  const parallel=await request("/v1beta/models/"+alias+":streamGenerateContent?alt=sse",{value:{
+    contents:[{role:"user",parts:[{text:"parallel fixture"}]}],
+    tools:[{functionDeclarations:[{name:"lookup",parameters:{type:"object",properties:{key:{type:"integer"}}}}]}],
+  }});
+  const observedCalls=parallel.text.split("\n").filter(line=>line.startsWith("data: ")).flatMap(line=>
+    JSON.parse(line.slice(6)).candidates?.flatMap(candidate=>candidate.content?.parts||[])||[]).flatMap(part=>part.functionCall?[part.functionCall]:[]);
+  assert.equal(observedCalls.length,2);
+  assert.notEqual(observedCalls[0].id,observedCalls[1].id);
+  assert.deepEqual(observedCalls.map(call=>[call.name,call.args.key]).sort(),[["lookup",1],["lookup",2]]);
+  const partial=await request("/v1beta/models/"+alias+":streamGenerateContent?alt=sse",{value:{
+    contents:[{role:"user",parts:[{text:"partial fixture"}]}],
+  }});
+  assert.match(partial.text,/partial text/);assert.match(partial.text,/"error"/);
+  assert.doesNotMatch(partial.text,/"finishReason":"STOP"|\[DONE\]/);
   const configured=await request("/v1beta/models/"+custom+":generateContent",{value:input});
   assert.equal(configured.status,200);
   assert.equal(JSON.parse(configured.text).candidates[0].content.parts[0].text,"custom reply");
   assert.deepEqual(native,[{model,request:input}]);
+  const followup={contents:[...input.contents,
+    {role:"model",parts:[{functionCall:{id:"native-call",name:"lookup",args:{key:1}},thoughtSignature:"c3ludGhldGlj"}]},
+    {role:"user",parts:[{functionResponse:{id:"native-call",name:"lookup",response:{result:"ok"}}}]},
+  ]};
+  assert.equal((await request("/v1beta/models/"+custom+":generateContent",{value:followup})).status,200);
+  assert.deepEqual(native.at(-1).request,followup);
+  const malformed=await request("/v1beta/models/"+custom+":generateContent",{value:{contents:[{role:"user",parts:[{text:"malformed fixture"}]}]}});
+  const malformedReply=JSON.parse(malformed.text);
+  assert.equal(malformedReply.candidates?.[0]?.finishReason,"MALFORMED_FUNCTION_CALL");
+  assert.equal(malformedReply.usageMetadata.totalTokenCount,5);
   assert.deepEqual(JSON.parse((await request("/v1beta/models/"+custom+":countTokens",{value:{generateContentRequest:input}})).text),{totalTokens:42});
   assert.deepEqual(JSON.parse((await request("/v1beta:reportMetrics",{value:{}})).text),{});
   await runtime.action({action:"models",models:["ccdx-copilot-gemini-4-carbon-low"]});
+  assert.equal(runtime.snapshot().catalog_reload.gateway,true);
+  assert.equal(runtime.snapshot().catalog_reload.google,null);
   assert.equal((await request("/v1beta/models/"+alias+":generateContent",{value:input})).status,503);
-  assert.equal(calls.length,2);
+  assert.equal(calls.length,4);
   runtime.close();
   assert.equal(fs.existsSync(certificate),false);
   assert.equal(runtime.snapshot().enterprise_gateway_running,false);
+});
+
+test("WebUI launch preferences are explicit, persisted after launch, and separate from the observed mode",async t=>{
+  const f=fixture(t,"stopped");
+  const calls=[];
+  const runtime=createAntigravityRuntime({...f.options,applicationControl:{snapshot:()=>({}),check:async()=>{},
+    openAntigravityFromWeb:async(input,launch)=>{
+      calls.push([input.operation,launch.mode,launch.preference]);
+      return launch.mode||launch.preference?{status:"opened",mode:launch.mode||launch.preference}:{status:"launch_choice_required"};
+    }}});
+  t.after(()=>runtime.close());
+  assert.equal((await runtime.action({action:"web-open"})).last_operation.status,"launch_choice_required");
+  assert.equal((await runtime.action({action:"web-open",launch_mode:"gateway"})).launch_preference,"gateway");
+  assert.equal((await runtime.action({action:"web-open"})).last_operation.mode,"gateway");
+  assert.deepEqual(calls,[["open",undefined,null],["open","gateway",null],["open",undefined,"gateway"]]);
+  assert.equal(JSON.parse(fs.readFileSync(f.file,"utf8")).future,"keep");
+  await assert.rejects(runtime.action({action:"web-open",launch_mode:"invalid"}),{statusCode:400});
 });
 test("enable is explicit, edits only CCDX settings, and never restarts a running App",async t=>{
   const f=fixture(t);assert.equal(f.runtime.snapshot().configured,false);

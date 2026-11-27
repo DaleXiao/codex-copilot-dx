@@ -63,6 +63,25 @@ export function copilotPickerGroups(variants, catalog) {
   });
 }
 
+// The native 2.35 catalog consumes at most 32 model IDs, including variants.
+// Keep a model's offered levels together so a boundary does not hide High.
+export function planAntigravityGatewayMenu(rows, preferred, limit = Infinity) {
+  const groups = new Map();
+  let preferredGroup;
+  for (const row of rows) {
+    const key = row.source ? row.id : row.model;
+    const group = groups.get(key) || [];
+    if (!groups.has(key)) groups.set(key, group);
+    if (row.id === preferred) { group.unshift(row);preferredGroup = group; }
+    else group.push(row);
+  }
+  const menu = preferredGroup ? preferredGroup.slice(0,limit) : [];
+  for (const group of groups.values()) {
+    if (group !== preferredGroup && menu.length + group.length <= limit) menu.push(...group);
+  }
+  return { menu, omitted: rows.length - menu.length };
+}
+
 // Use the upstream's existing agent-default field only when it names a model
 // in the same catalog. Do not invent a default contract for an unknown catalog.
 export function hasAntigravityAgentDefault(catalog) {

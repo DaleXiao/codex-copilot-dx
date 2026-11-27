@@ -47,6 +47,13 @@
           <p id="page-settings-note" class="hint" role="status"></p>
           <div id="application-launch" hidden>
             <button type="button" id="application-open"><span aria-hidden="true">↗</span><span id="application-open-label" data-i18n="application_open">Open app</span></button>
+            <details id="application-launch-options" hidden>
+              <summary data-i18n="antigravity_launch_options">Open with</summary>
+              <div class="section-actions">
+                <button type="button" id="antigravity-open-google" data-i18n="antigravity_google_mode">Google sign-in</button>
+                <button type="button" id="antigravity-open-gateway" data-i18n="antigravity_gateway_mode">CCDX gateway</button>
+              </div>
+            </details>
             <span id="application-state" class="hint" role="status" aria-live="polite"></span>
           </div>
           <div id="preferences-status" class="preferences-status" role="status" aria-live="polite" hidden></div>
@@ -191,6 +198,7 @@
               <div class="section-actions"><button id="gemini-save" type="submit" data-i18n="api_save" disabled>Save</button><button id="gemini-cancel" type="button" data-i18n="cap_discard_changes" disabled>Discard changes</button><button id="gemini-use-app-default" type="button" data-i18n="gemini_use_app_default" hidden>Use app default</button></div>
             </form>
             <p id="gemini-default-note" class="hint" role="status" hidden></p>
+            <p id="gemini-gateway-limit" class="hint" role="status" hidden></p>
             <p id="gemini-note" class="hint" role="status" aria-live="polite"></p>
           </section>
           <details class="panel dashboard-section" open>

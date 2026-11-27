@@ -1,10 +1,18 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {antigravityCopilotModels,antigravityGroupingClient,groupedAntigravityRoutes,mergeAntigravityModels} from "../src/antigravity-models.mjs";
+import {antigravityCopilotModels,antigravityGroupingClient,groupedAntigravityRoutes,mergeAntigravityModels,planAntigravityGatewayMenu} from "../src/antigravity-models.mjs";
 import {antigravityToChat} from "../src/antigravity-chat-bridge.mjs";
 
 const model=(id,levels=["low","medium","high","xhigh"])=>({id,name:id.split("-").map(s=>s[0].toUpperCase()+s.slice(1)).join(" "),model_picker_enabled:true,
   supported_endpoints:["/chat/completions"],capabilities:{type:"chat",supports:{tool_calls:true,streaming:true,vision:true,reasoning_effort:levels},limits:{max_context_window_tokens:1048576,max_output_tokens:65536}}});
+test("the native gateway menu keeps the default and whole groups within its capacity",()=>{
+  const rows=antigravityCopilotModels({data:Array.from({length:12},(_,i)=>model("gemini-fixture"+i))});
+  const preferred=rows.at(-1).id;
+  const {menu,omitted}=planAntigravityGatewayMenu(rows,preferred,32);
+  assert.equal(menu.length,32);assert.equal(omitted,16);assert.equal(menu[0].id,preferred);
+  for(const name of new Set(menu.map(row=>row.model)))assert.equal(menu.filter(row=>row.model===name).length,4);
+  assert.equal(planAntigravityGatewayMenu(rows,preferred).omitted,0);
+});
 test("Antigravity discovers compatible Gemini families and each model's advertised efforts",()=>{
   const catalog={data:[model("gemini-4-hydrogen"),model("gemini-3.8-flash",["low","high"]),model("gemini-5-future",["high","turbo"])]},before=structuredClone(catalog);
   const result=antigravityCopilotModels(catalog);

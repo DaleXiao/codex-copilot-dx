@@ -9,6 +9,8 @@
     function render() {
       const id = route(), state = data?.applications?.[id];
       el("application-launch").hidden = !id;
+      el("application-launch-options").hidden = id !== "antigravity";
+      for (const option of ["antigravity-open-google", "antigravity-open-gateway"]) el(option).disabled = pending || isBusy();
       el("page-title").closest(".intro").classList.toggle("has-application-launch", Boolean(id));
       el("application-reopen-confirm").hidden = !confirmation || confirmation.id !== id;
       el("application-reopen-apply").disabled = pending || isBusy();
@@ -16,7 +18,9 @@
       label("application-open-label", buttonKey(state));
       el("application-open").disabled = pending || isBusy() || ["starting", "unsupported", "not_installed", "multiple"].includes(state?.status);
       el("application-open").setAttribute("aria-busy", String(pending || isBusy() || state?.status === "starting"));
-      label("application-state", note || (state?.status === "running" ? needsReload(state) ? id === "antigravity" ? "gemini_settings_saved" : "application_reload_pending" : state.connection === "observed" ? "application_connected" : "application_pending"
+      label("application-state", note || (state?.status === "running" ? needsReload(state) ? id === "antigravity" ? "gemini_settings_saved" : "application_reload_pending" :
+        state.launch_mode === "gateway" ? state.connection === "observed" ? "antigravity_gateway_connected" : "antigravity_gateway_pending" :
+        state.connection === "observed" ? "application_connected" : "application_pending"
         : state?.status === "stopped" ? "application_stopped" : state?.status === "starting" ? "application_opening" : "application_" + (state?.status || "unknown")));
       if (!pending) {
         el("codex-auto-launch").checked = data?.effective?.codex_auto_launch?.value === true;
@@ -40,22 +44,36 @@
         note = null;sync({ ...data, applications: next.applications });
       } catch { if (version === sequence) { note = "application_unknown";render(); } }
     }
-    async function act(operation, expected) {
+    async function act(operation, expected, mode) {
       const id = route();if (!id || pending) return;
       pending = true;confirmation = null;note = null;sequence++;render();
       try {
-        const next = await change({ action: "application", id, operation,
-          ...(operation === "restart" ? { confirmed: true, expected_pid: expected.pid, expected_started: expected.started } : {}) }, el("application-open"), { quiet: true });
-        if (!next) { note = "application_action_failed";return; }
-        data = next;const result = next.last_operation?.feature === "application" ? next.last_operation.result : null;
+        const restart = operation === "restart" ? { confirmed: true, expected_pid: expected.pid, expected_started: expected.started } : {};
+        let result;
+        if (id === "antigravity" && (operation === "open" || operation === "restart")) {
+          const response = await fetch("/_ccdx/ui/gemini", { method: "POST", headers: { "Content-Type": "application/json", "X-CCDX-Dashboard": "1" },
+            body: JSON.stringify({ action: "web-" + operation, ...(mode ? { launch_mode: mode } : {}), ...restart }), signal: AbortSignal.timeout(55000) });
+          if (!response.ok) throw Error("Antigravity launch failed");
+          result = (await response.json()).last_operation;
+          if (result?.app) data = { ...data, applications: { ...data?.applications, antigravity: result.app } };
+          if (result?.status === "launch_choice_required") el("application-launch-options").open = true;
+          else if (["opened", "focused"].includes(result?.status)) el("application-launch-options").open = false;
+        } else {
+          const next = await change({ action: "application", id, operation, ...restart }, el("application-open"), { quiet: true });
+          if (!next) { note = "application_action_failed";return; }
+          data = next;
+          result = next.last_operation?.feature === "application" ? next.last_operation.result : null;
+        }
         if (["opened", "opening"].includes(result?.status)) for (const delay of [1000, 10500]) setTimeout(() => { if (route() === id && document.visibilityState === "visible") {
           void check(true);if (id === "antigravity") void globalThis.ccdxAntigravity?.refreshStatus();
         } }, delay);
         if (result && !["opened", "opening", "focused", "checked"].includes(result.status)) {
-          const direct = { unknown: "application_unknown", app_check_failed: "application_unknown", not_installed: "application_not_installed", multiple: "application_multiple", multiple_apps: "application_multiple", unsupported: "application_unsupported", app_not_running: "application_stopped", app_route_conflict: "application_action_route_conflict" };
+          const direct = { unknown: "application_unknown", app_check_failed: "application_unknown", not_installed: "application_not_installed", multiple: "application_multiple", multiple_apps: "application_multiple", unsupported: "application_unsupported", app_not_running: "application_stopped", app_route_conflict: "application_action_route_conflict",
+            launch_choice_required: "antigravity_launch_choice", gateway_models_required: "antigravity_gateway_models_required" };
           note = direct[result.status] || (["open_failed", "focus_unavailable", "quit_refused", "quit_timeout", "app_changed", "needs_app_relaunch", "route_conflict", "unverified_build"].includes(result.status) ? "application_action_" + result.status : "application_action_failed");
         }
-      } finally { pending = false;render(); }
+      } catch { note = "application_action_failed"; }
+      finally { pending = false;render(); }
     }
     function openCurrent() {
       const id = route(), state = data?.applications?.[id];
@@ -66,7 +84,14 @@
     }
     el("application-open").addEventListener("click", openCurrent);
     el("application-reopen-cancel").addEventListener("click", () => { confirmation = null;render();el("application-open").focus(); });
-    el("application-reopen-apply").addEventListener("click", () => { if (confirmation?.id === route()) void act("restart", confirmation); });
+    el("application-reopen-apply").addEventListener("click", () => { if (confirmation?.id === route()) void act("restart", confirmation, confirmation.mode); });
+    for (const mode of ["google", "gateway"]) el("antigravity-open-" + mode).addEventListener("click", () => {
+      if (route() !== "antigravity") return;
+      const state = data?.applications?.antigravity;
+      if (state?.status === "running" && state.launch_mode !== mode) {
+        confirmation = { id: "antigravity", pid: state.pid, started: state.started, mode };render();
+      } else void act(state?.status === "running" ? "focus" : "open", null, mode);
+    });
     el("codex-auto-launch").addEventListener("change", async event => {
       const value = event.target.checked;if (pending) return;
       pending = true;sequence++;event.target.disabled = true;

@@ -140,3 +140,44 @@ test("an active Antigravity administrator gateway stops a CCDX launch before ope
   app.status = "running";
   assert.equal((await controller.action({ id: "antigravity", operation: "restart", confirmed: true })).status, "route_conflict");
 });
+
+test("WebUI opens the standalone gateway from an explicit choice and observes only that launch",async()=>{
+  const path=process.platform==="win32"?"C:\\Antigravity\\Antigravity.exe":"/Applications/Antigravity.app";
+  const app={status:"stopped",app:path,pid:81};
+  const calls=[];let observed=null;
+  const controller=createApplicationControl({platform:process.platform,env:{},
+    inspect:async()=>({apps:{antigravity:{...app}},processes:[]}),
+    inspectGemini:async()=>({...app,wsl:false,pids:app.status==="running"?[app.pid]:[]}),
+    configuration:()=>({state:"native",revision:"fixture"}),connections:async()=>[],
+    managedGeminiGateway:async()=>false,
+    control:async(_app,action)=>{calls.push(action);return"sent";},
+    launchGatewayApp:async()=>{calls.push("gateway");app.status="running";return 81;},
+  });
+  const launch={available:()=>true,prepare:async()=>({observation:()=>observed})};
+  assert.equal((await controller.openAntigravityFromWeb({operation:"open"},launch)).status,"launch_choice_required");
+  assert.equal((await controller.openAntigravityFromWeb({operation:"open"},{...launch,mode:"gateway",available:()=>false})).status,"gateway_models_required");
+  assert.deepEqual(calls,[]);
+  assert.equal((await controller.openAntigravityFromWeb({operation:"open"},{...launch,mode:"gateway"})).mode,"gateway");
+  assert.equal((await controller.check("antigravity",true)).connection,"pending");
+  observed={scope:"catalog",at:new Date().toISOString()};
+  const state=await controller.check("antigravity",true);
+  assert.equal(state.launch_mode,"gateway");assert.equal(state.scope,"catalog");assert.equal(state.connection,"observed");
+  assert.equal((await controller.openAntigravityFromWeb({operation:"open"},{...launch,preference:"google"})).status,"focused");
+  assert.deepEqual(calls,["gateway","focus"]);
+  app.pid=82;
+  assert.equal((await controller.check("antigravity",true)).launch_mode,undefined);
+});
+
+test("a saved gateway preference still opens standalone when Gemini is the default macOS bundle",async()=>{
+  const gemini="/Applications/Gemini.app",standalone="/Applications/Antigravity.app";
+  const controller=createApplicationControl({platform:"darwin",env:{},
+    inspect:async()=>({apps:{antigravity:{status:"stopped",app:gemini}},processes:[]}),
+    configuration:()=>({state:"native",revision:"fixture"}),
+    managedGeminiGateway:async()=>false,
+    inspectGemini:async({standalone:target})=>{assert.equal(target,true);return{status:"stopped",app:standalone};},
+    launchGatewayApp:async(verified)=>{assert.equal(verified.app,standalone);return 81;},
+  });
+  const result=await controller.openAntigravityFromWeb({operation:"open"},
+    {preference:"gateway",available:()=>true,prepare:async()=>({})});
+  assert.equal(result.mode,"gateway");
+});

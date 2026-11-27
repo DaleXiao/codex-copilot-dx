@@ -60,6 +60,9 @@
     el('gemini-use-app-default').hidden=currentDefault()===null;
     el('gemini-default-note').hidden=!state.default_model_unavailable||currentDefault()!==savedDefault();
     if(!el('gemini-default-note').hidden)words('gemini-default-note','gemini_default_unavailable');
+    const omitted=state.gateway_models_omitted||0;
+    el('gemini-gateway-limit').hidden=!omitted;
+    if(omitted)el('gemini-gateway-limit').textContent=language.format('gemini_gateway_limit',{count:omitted});
     const fallback=!globalThis.ccdxApplicationControls;
     const sourceDisabled=state.enabled&&state.source_enabled===false;
     el('gemini-route-state').hidden=!sourceDisabled;

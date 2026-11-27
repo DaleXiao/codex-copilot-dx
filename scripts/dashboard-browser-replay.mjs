@@ -1299,6 +1299,24 @@ try {
         await page.locator('#gemini-use-app-default').click();await page.locator('#gemini-save').click();
         await page.waitForFunction(()=>document.getElementById('gemini-save').disabled&&!document.getElementById('gemini-refresh').disabled);
         assert.equal((await (await nativeCatalog()).json()).defaultAgentModelId,'native');
+        if(language==="zh"&&theme==="dark"&&width===1280){
+          const launches=[];
+          const match="**/_ccdx/ui/gemini";
+          const routeLaunch=async route=>{
+            if(route.request().method()!=="POST")return route.continue();
+            const input=route.request().postDataJSON();
+            if(input?.action!=="web-open")return route.continue();
+            launches.push(input);
+            await route.fulfill({json:{last_operation:{status:input.launch_mode?"opened":"launch_choice_required"}}});
+          };
+          await page.route(match,routeLaunch);
+          await page.locator("#application-open").click();
+          await page.locator("#antigravity-open-gateway").waitFor({state:"visible"});
+          await page.locator("#antigravity-open-gateway").click();
+          await page.locator("#antigravity-open-gateway").waitFor({state:"hidden"});
+          assert.deepEqual(launches,[{action:"web-open"},{action:"web-open",launch_mode:"gateway"}]);
+          await page.unroute(match,routeLaunch);
+        }
         await page.locator('[data-route="models"]').click();
         await page.locator("#model-provider-github").click();
         await page.locator('[data-route="overview"]').click();

@@ -58,7 +58,7 @@ export function launchAntigravityGatewayApp(verified, gateway, { platform=proces
     const child=spawnImpl(executable,[],{cwd:directory,env:{...inherited,...gateway.environment},detached:true,stdio:"ignore",shell:false});
     child.once("error",reject);
     child.once("exit",gateway.close);
-    child.once("spawn",()=>{child.unref();resolve();});
+    child.once("spawn",()=>{child.unref();resolve(child.pid);});
   });
 }
 

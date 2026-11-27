@@ -4,6 +4,13 @@ import path from "node:path";
 import { prepareResponsesChatPayload } from "../src/responses-chat-payload.mjs";
 import { forwardToChat, responsesToChat } from "../src/responses-bridge.mjs";
 
+test("Gemini Chat tool parameters retain typed enums accepted by the existing Copilot route",()=>{
+  const parameters={type:"object",properties:{enabled:{type:"boolean",enum:[true]},level:{type:"integer",enum:[1,2]}}};
+  const body={model:"gemini-4-carbon",input:"fixture",tools:[{type:"function",name:"choose",parameters}]};
+  const wire=responsesToChat(body);
+  assert.deepEqual(wire.tools[0].function.parameters,parameters);
+});
+
 test("truncated Chat DONE is incomplete once, and ignores a late transport reset", async () => {
   const events = []; let reads = 0, cancelled = false;
   const source = new ReadableStream({ pull(controller) {

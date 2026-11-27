@@ -56,6 +56,7 @@ export async function startAntigravityGateway({ handle, models }) {
   const environment = { AGY_LLM_GATEWAY_API_KEY: randomBytes(32).toString("hex") };
   const expected = Buffer.from("Bearer " + environment.AGY_LLM_GATEWAY_API_KEY);
   const requests = new WeakSet();
+  let seen;
   const server = createServer({ ...credentials, minVersion: "TLSv1.2", headersTimeout: 10_000, requestTimeout: 120_000 }, (req, res) => {
     const auth = Buffer.from(typeof req.headers.authorization === "string" ? req.headers.authorization : "");
     if (auth.length !== expected.length || !timingSafeEqual(auth, expected) || !isLoopbackAddress(req.socket.remoteAddress)
@@ -102,11 +103,15 @@ export async function startAntigravityGateway({ handle, models }) {
     return {
       owns: req => !closed && requests.has(req),
       active: () => !closed,
+      observation: () => closed ? null : seen,
+      observe(scope) {
+        if (!closed && (!seen || scope === "inference" && seen.scope !== "inference")) seen = { scope, at: new Date().toISOString() };
+      },
       environment: Object.assign(environment, {
         AGY_LLM_GATEWAY_URL: "https://127.0.0.1:" + server.address().port,
         AGY_LLM_GATEWAY_CA_CERT: ca,
         AGY_LLM_GATEWAY_WIRE_PROTOCOL: "genai",
-        AGY_LLM_GATEWAY_MODELS: models.join(","),
+        ...(models?.length ? { AGY_LLM_GATEWAY_MODELS: models.join(",") } : {}),
       }),
       close,
     };

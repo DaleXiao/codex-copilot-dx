@@ -51,7 +51,7 @@ test("standalone inspection chooses the Antigravity bundle when Gemini is also i
   const input=options({CFBundleIdentifier:"com.google.antigravity",CFBundleExecutable:"Antigravity",CFBundleShortVersionString:"2.35.2"});
   const state=await inspectGeminiApp({...input,standalone:true});
   assert.equal(state.app,"/Applications/Antigravity.app");
-  assert.equal(state.executable,"/Applications/Antigravity.app/Contents/MacOS/Antigravity");
+  assert.equal(state.executable,path.join(state.app,"Contents","MacOS","Antigravity"));
 });
 
 test("gateway launch sends its credential via an isolated child environment on both platforms",async()=>{

@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import {execFile} from "node:child_process";
+import {execFile,spawn} from "node:child_process";
 import {promisify} from "node:util";
 import { inspectWindowsAntigravity, windowsAntigravityEnvironment, windowsAntigravityPath } from "./windows-antigravity-app.mjs";
 import { googleMacTeam, macAntigravityBundles, macAntigravityBundlePaths } from "./macos-antigravity-app.mjs";
@@ -24,13 +24,13 @@ export async function hasManagedAntigravityGateway({platform=process.platform,en
   }
 }
 
-export async function inspectGeminiApp({platform=process.platform,app,home=os.homedir(),env=process.env,exec=execute,exists=fs.existsSync}={}) {
+export async function inspectGeminiApp({platform=process.platform,app,standalone=false,home=os.homedir(),env=process.env,exec=execute,exists=fs.existsSync}={}) {
   if(platform==="win32"){
     const state=await inspectWindowsAntigravity({env,exec,app});
     return !app&&state.app?inspectWindowsAntigravity({env,exec,app:state.app}):state;
   }
   if(platform!=="darwin")return {status:"unsupported"};
-  app??=macAntigravityBundlePaths(home).find(candidate=>exists(path.join(candidate,"Contents/Info.plist")));
+  app??=macAntigravityBundlePaths(home).find(candidate=>(!standalone||path.basename(candidate)==="Antigravity.app")&&exists(path.join(candidate,"Contents/Info.plist")));
   if(!app)return {status:"not_installed"};
   const bundle=macAntigravityBundles[path.basename(app)];
   if(!bundle)throw new Error("Unrecognized Antigravity App identity");
@@ -47,6 +47,19 @@ export async function inspectGeminiApp({platform=process.platform,app,home=os.ho
   const processes=await exec("/bin/ps",["-axo","pid=,comm="],{encoding:"utf8",timeout:3000,maxBuffer:4*1024*1024});
   const pids=String(processes.stdout??processes).split("\n").flatMap(line=>{const match=/^\s*(\d+)\s+(.+?)\s*$/.exec(line);return match?.[2]===executable?[Number(match[1])]:[]});
   return {status:pids.length>1?"multiple":pids.length?"running":"stopped",app,executable,helper,version:info.CFBundleShortVersionString,pids};
+}
+
+export function launchAntigravityGatewayApp(verified, gateway, { platform=process.platform,env=process.env,spawnImpl=spawn }={}) {
+  const executable=verified.executable;
+  const directory=platform==="win32"?path.win32.dirname(executable):path.dirname(executable);
+  const inherited=platform==="win32"?windowsAntigravityEnvironment(env):
+    Object.fromEntries(Object.entries(env).filter(([name])=>/^(PATH|HOME|USER|LOGNAME|SHELL|TMPDIR|LANG|LC_.*|TZ|(?:HTTP|HTTPS|ALL|NO)_PROXY)$/i.test(name)));
+  return new Promise((resolve,reject)=>{
+    const child=spawnImpl(executable,[],{cwd:directory,env:{...inherited,...gateway.environment},detached:true,stdio:"ignore",shell:false});
+    child.once("error",reject);
+    child.once("exit",gateway.close);
+    child.once("spawn",()=>{child.unref();resolve();});
+  });
 }
 
 // A launch plan is reviewable without changing files, credentials, or running apps.

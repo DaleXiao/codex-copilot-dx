@@ -131,6 +131,18 @@ To verify a selected model, compare `ccdx app antigravity status --format json` 
 
 If CCDX returns an internal model identifier error, reopen the app from CCDX and reselect the model. CCDX requires a named model ID and rejects ambiguous picker identifiers before sending the request upstream.
 
+### Standalone App without a Google sign-in
+
+Select a Copilot model and its effort, or a custom Gemini source, in CCDX. In the standalone Antigravity App, sign out of Google and quit the App. Run:
+
+```sh
+ccdx app antigravity gateway-open
+```
+
+On macOS and Windows, this command starts the verified standalone App in its official [Enterprise Gateway mode](https://docs.cloud.google.com/gemini/enterprise/docs/ai-developer-tools/connect-enterprise-gateway). When prompted, choose a model from the configured list. Some App versions display the route IDs in the picker. A selected Copilot ID includes its thinking level. Check the response and its provider in **Requests**. In app status JSON, the listener is reported as `enterprise_gateway_running` and `activity.gateway_generation` counts authenticated generation requests reaching the shared handler.
+
+The App authenticates to a loopback HTTPS listener with a key scoped to that launch. CCDX uses its existing credentials for the selected model source. Google Cloud seat usage applies in the Google sign-in mode. Existing administrator gateways take precedence and CCDX reports a route conflict. To return to ordinary Google sign-in, quit the App, run `ccdx app antigravity open --standalone` and sign in. The Gemini App on macOS continues to use its regular Google sign-in.
+
 `disable` removes Copilot model access and refuses later Copilot/background
 requests without sending them to Google. Quit and reopen Gemini through CCDX
 after disabling to restore its native endpoint. This integration is separate

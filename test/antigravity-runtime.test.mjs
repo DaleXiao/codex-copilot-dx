@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import {request as httpsRequest} from "node:https";
 import {Readable} from "node:stream";
 import {createAntigravityRuntime} from "../src/antigravity-runtime.mjs";
 import {userSettingsPath} from "../src/user-settings.mjs";
@@ -16,6 +17,74 @@ function fixture(t,state="running"){
   const calls=[],options={home,env,client:{},models:()=>catalog,platform:"darwin",inspect:async()=>({status:state,app:"/Applications/Gemini.app",version:"1.135.1.1291",pids:state==="running"?[38378]:[]}),exec:async(...args)=>{calls.push(args)},guardSource:()=>{}};
   const runtime=createAntigravityRuntime(options);t.after(()=>{runtime.close();fs.rmSync(home,{recursive:true,force:true})});return {runtime,options,calls,file,home};
 }
+
+test("the standalone Antigravity gateway serves the Gemini protocol over authenticated loopback TLS",async t=>{
+  const f=fixture(t,"stopped");
+  await f.runtime.action({action:"enable",accept_background_copilot:true},"http://127.0.0.1:2026");
+  const calls=[], native=[], source="api_configured", model="publisher/gemini-fixture";
+  const alias="ccdx-copilot-gemini-4-carbon-high";
+  let gateway;
+  const runtime=createAntigravityRuntime({...f.options,
+    client:{chatCompletions:async(body,options)=>{
+      calls.push(body);options.onUpstreamStart();
+      return options.signal&&!body.stream
+        ?Response.json({choices:[{message:{content:"copilot reply"},finish_reason:"stop"}]})
+        :new Response('data: {"choices":[{"delta":{"content":"copilot stream"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n');
+    }},
+    applicationControl:{snapshot:()=>({}),check:async()=>{},openStandaloneAntigravity:async prepare=>{gateway=await prepare();return{status:"opened"}}},
+    nativeSources:()=>[{id:source,name:"Configured",models:[{id:model}]}],
+    getSource:id=>id===source?{client:{gemini:async(body,{countTokens,onUpstreamStart})=>{
+      native.push(body);onUpstreamStart();return Response.json(countTokens?{totalTokens:42}:{candidates:[{content:{role:"model",parts:[{text:"custom reply"}]},finishReason:"STOP"}]});
+    }}}:null,
+    googleFetch:()=>assert.fail("standalone gateway must never call Google"),
+  });
+  t.after(()=>runtime.close());
+  await runtime.action({action:"models",native_source:source});
+  const opened=await runtime.action({action:"gateway-open"});
+  assert.equal(opened.last_operation.status,"opened");
+  assert.equal(opened.enterprise_gateway_running,true);
+  const launch=gateway.environment,{AGY_LLM_GATEWAY_URL:url,AGY_LLM_GATEWAY_API_KEY:key,AGY_LLM_GATEWAY_CA_CERT:certificate}=launch;
+  assert.equal(launch.AGY_LLM_GATEWAY_WIRE_PROTOCOL,"genai");
+  const custom=launch.AGY_LLM_GATEWAY_MODELS.split(",").find(id=>id.startsWith("ccdx-gemini-"));
+  assert.match(custom,/^ccdx-gemini-[0-9a-f]{32}$/);
+  assert.equal(JSON.stringify(opened).includes(key),false);
+  assert.equal(JSON.stringify(opened).includes(certificate),false);
+  assert.match(fs.readFileSync(certificate,"utf8"),/^-----BEGIN CERTIFICATE-----/);
+  const ca=fs.readFileSync(certificate);
+  const request=(route,{value,authorization="Bearer "+key,headers={}}={})=>new Promise((resolve,reject)=>{
+    const req=httpsRequest(new URL(route,url),{ca,agent:false,method:value===undefined?"GET":"POST",
+      headers:{authorization,...(value===undefined?{}:{"content-type":"application/json"}),...headers}},reply=>{
+      let text="";reply.setEncoding("utf8");reply.on("data",data=>{text+=data});
+      reply.on("end",()=>resolve({status:reply.statusCode,text}));
+    });req.on("error",reject);req.end(value===undefined?undefined:JSON.stringify(value));
+  });
+  const input={contents:[{role:"user",parts:[{text:"fixture"}]}]};
+  assert.equal((await request("/v1beta/models",{authorization:"Bearer wrong"})).status,403);
+  assert.equal((await request("/v1beta/models",{headers:{origin:"https://example.test"}})).status,403);
+  const list=JSON.parse((await request("/v1beta/models")).text);
+  assert.ok(list.models.some(row=>row.name==="models/"+alias));
+  assert.equal((await request("/v1beta/models/google-native:generateContent",{value:input})).status,404);
+  const copilot=await request("/v1beta/models/"+alias+":generateContent",{value:input});
+  assert.equal(copilot.status,200);
+  assert.equal(JSON.parse(copilot.text).candidates[0].content.parts[0].text,"copilot reply");
+  const streamed=await request("/v1beta1/projects/fixture/locations/global/publishers/google/models/"+alias+":streamGenerateContent?alt=sse",{value:input});
+  assert.equal(streamed.status,200);
+  assert.equal(JSON.parse(streamed.text.split("\n")[0].slice(6)).candidates[0].content.parts[0].text,"copilot stream");
+  assert.ok(calls.every(body=>body.model==="gemini-4-carbon"&&body.reasoning_effort==="high"));
+  assert.ok(calls.every(body=>!JSON.stringify(body).includes(key)));
+  const configured=await request("/v1beta/models/"+custom+":generateContent",{value:input});
+  assert.equal(configured.status,200);
+  assert.equal(JSON.parse(configured.text).candidates[0].content.parts[0].text,"custom reply");
+  assert.deepEqual(native,[{model,request:input}]);
+  assert.deepEqual(JSON.parse((await request("/v1beta/models/"+custom+":countTokens",{value:{generateContentRequest:input}})).text),{totalTokens:42});
+  assert.deepEqual(JSON.parse((await request("/v1beta:reportMetrics",{value:{}})).text),{});
+  await runtime.action({action:"models",models:["ccdx-copilot-gemini-4-carbon-low"]});
+  assert.equal((await request("/v1beta/models/"+alias+":generateContent",{value:input})).status,503);
+  assert.equal(calls.length,2);
+  runtime.close();
+  assert.equal(fs.existsSync(certificate),false);
+  assert.equal(runtime.snapshot().enterprise_gateway_running,false);
+});
 test("enable is explicit, edits only CCDX settings, and never restarts a running App",async t=>{
   const f=fixture(t);assert.equal(f.runtime.snapshot().configured,false);
   await assert.rejects(f.runtime.action({action:"enable"},"http://127.0.0.1:2026"),/accept/);
@@ -218,6 +287,16 @@ test("Antigravity CLI refresh uses the same explicit catalog operation",async()=
   const command=parseManagedCommand(["app","antigravity","models","--refresh","--format","json"]),calls=[];
   await runManagementCommand(command,{request:async input=>{calls.push(input);return{models:[]}},output:{isTTY:false,write(){}}});
   assert.deepEqual(calls,[{path:"gemini",body:{action:"refresh"},timeoutMs:20000}]);
+});
+
+test("Antigravity CLI opts into the standalone mode without changing the ordinary open action",async()=>{
+  for(const [args,action] of [[["gateway-open"],"gateway-open"],[["open","--standalone"],"standalone-open"]]){
+    const calls=[],command=parseManagedCommand(["app","antigravity",...args,"--format","json"]);
+    await runManagementCommand(command,{request:async input=>{
+      calls.push(input);return {last_operation:{action,status:"opened"}};
+    },output:{isTTY:false,write(){}}});
+    assert.deepEqual(calls,[{path:"gemini",body:{action},timeoutMs:65000}]);
+  }
 });
 
 test("dashboard refresh uses the existing GitHub catalog runtime and leaves settings unchanged",async t=>{

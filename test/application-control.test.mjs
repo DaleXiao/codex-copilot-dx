@@ -136,6 +136,7 @@ test("an active Antigravity administrator gateway stops a CCDX launch before ope
   });
   assert.equal((await controller.previewAntigravity()).status, "route_conflict");
   assert.equal((await controller.action({ id: "antigravity", operation: "open" })).status, "route_conflict");
+  assert.equal((await controller.openStandaloneAntigravity(()=>assert.fail("did not prepare a second gateway"))).status, "route_conflict");
   app.status = "running";
   assert.equal((await controller.action({ id: "antigravity", operation: "restart", confirmed: true })).status, "route_conflict");
 });

@@ -46,7 +46,7 @@ For a custom API, enter its HTTPS address and key, then choose **Save & read mod
 
 Model availability depends on your account and service. Microsoft 365 also requires a supported company environment. Existing account, model and client settings are retained during upgrades. No repeat setup or model selection is needed for an unchanged working configuration.
 
-Antigravity's Google Cloud sign-in may send model generation directly to Vertex AI. See [how to verify where a request goes](docs/REFERENCE.md#antigravity-in-gemini-app).
+The standalone Antigravity App can use CCDX without a Google sign-in on macOS and Windows. Choose your models, sign out and quit the app, then run `ccdx app antigravity gateway-open`. See [Antigravity setup and routing](docs/REFERENCE.md#antigravity-in-gemini-app).
 
 Choose Inter, System Sans or Mono in **Settings → Web appearance**. The choice is saved in this browser.
 

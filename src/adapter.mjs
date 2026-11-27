@@ -130,6 +130,7 @@ export function createAdapterHandler(options = {}) {
     if (!antigravityLoading) antigravityLoading = (async () => {
       const { createAntigravityRuntime } = await import("./antigravity-runtime.mjs");
       antigravity = createAntigravityRuntime({ client: codexClient, models: () => codexModelRegistry?.models || [], privacy, compaction, acquireRequest,
+        handleGatewayRequest: (req,res) => handler(req,res),
         applicationControl: options.dashboardOptions?.serviceControl?.applicationControl,
         sourceAdmission: options.providerRuntime?.sourceAdmission,
         nativeSources: () => options.providerRuntime?.antigravitySources?.() || [],

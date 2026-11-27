@@ -6,6 +6,11 @@ import { deploymentModelId } from "./model-capabilities.mjs";
 export async function runAppCommand({ path, ids, flags, output, request, readStatus, ask, print, confirm,
   choose, connection, requireManagement, save, getClient, clientBody, readFile }) {
   const action = path.at(-1);
+  if(path[1]==="antigravity"&&(action==="gateway-open"||action==="open"&&flags.standalone)){
+    if(flags.preview)return print({action:"standalone-open",performed:false});
+    const state=await request({path:"gemini",body:{action:action==="gateway-open"?action:"standalone-open"},timeoutMs:65000});
+    return print(state.last_operation);
+  }
   if (path.length === 3 && ["open", "focus", "restart", "check"].includes(action)) {
     const id = ["antigravity", "gemini"].includes(path[1]) ? "antigravity" : CLI_CLIENTS[ids.app || path[1]];
     if (!["codex", "claude_app", "antigravity"].includes(id)) throw new Error("This command opens desktop apps. Run Claude Code in your terminal.");

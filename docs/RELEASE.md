@@ -1,8 +1,8 @@
-# CCDX 1.5.0
+# CCDX 1.5.1
 
-- Read Windows Claude App versions and recognize native or npm-installed Claude Code from PATH.
-- Keep verified Windows Antigravity compatibility records available after a CCDX restart.
-- Load WebUI tools and larger panels when opened. Clarify setup, connection and recovery messages in English and Chinese.
-- Reduce terminal redraw work and stop cancelled usage queries when their last reader leaves.
+- Open the standalone Antigravity App on macOS and Windows through CCDX without Google sign-in.
+- Keep Copilot model and reasoning choices consistent when multiple clients read different model catalogs. Reject unavailable routes before sending them upstream.
+- Keep Chat-converted reasoning items separate from official Responses history.
+- Choose Inter, System Sans or Mono in Web appearance.
 
-Unverified: signed-in physical Windows/macOS coverage for every client feature and first-use usability with new users.
+Unverified: Google Cloud sign-in routing to non-Google model sources and the Windows Gemini App's embedded Antigravity surface.

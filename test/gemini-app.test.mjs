@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import { EventEmitter } from "node:events";
-import {hasManagedAntigravityGateway,inspectGeminiApp,planGeminiAppLaunch} from "../src/gemini-app.mjs";
+import {hasManagedAntigravityGateway,inspectGeminiApp,launchAntigravityGatewayApp,planGeminiAppLaunch} from "../src/gemini-app.mjs";
 import {launchWindowsAntigravity} from "../src/windows-antigravity-app.mjs";
 
 const info={CFBundleIdentifier:"com.google.GeminiMacOS",CFBundleExecutable:"Gemini",CFBundleShortVersionString:"1.135.1.1291"};
@@ -45,6 +45,36 @@ test("the standalone macOS App is found, signed by Google and routed through its
   assert.deepEqual(plan.args,["-a",app,"--env","CLOUD_CODE_URL=http://127.0.0.1:2026/antigravity"]);
   const ide=options({CFBundleIdentifier:"com.google.antigravity",CFBundleExecutable:"Electron"});
   await assert.rejects(inspectGeminiApp({...ide,app}),/identity/);
+});
+
+test("standalone inspection chooses the Antigravity bundle when Gemini is also installed",async()=>{
+  const input=options({CFBundleIdentifier:"com.google.antigravity",CFBundleExecutable:"Antigravity",CFBundleShortVersionString:"2.35.2"});
+  const state=await inspectGeminiApp({...input,standalone:true});
+  assert.equal(state.app,"/Applications/Antigravity.app");
+  assert.equal(state.executable,"/Applications/Antigravity.app/Contents/MacOS/Antigravity");
+});
+
+test("gateway launch sends its credential via an isolated child environment on both platforms",async()=>{
+  for(const [platform,executable,cwd] of [
+    ["darwin","/Applications/Antigravity.app/Contents/MacOS/Antigravity","/Applications/Antigravity.app/Contents/MacOS"],
+    ["win32",String.raw`C:\Program Files\Antigravity\Antigravity.exe`,String.raw`C:\Program Files\Antigravity`],
+  ]){
+    const env={HTTPS_PROXY:"fixture",GITHUB_TOKEN:"unrelated"};
+    let closed=0,unreferenced=false;
+    const child=new EventEmitter();child.unref=()=>{unreferenced=true};
+    await launchAntigravityGatewayApp({executable},{environment:{AGY_LLM_GATEWAY_API_KEY:"launch-fixture"},close:()=>closed++},
+      {platform,env,spawnImpl(command,args,options){
+        assert.equal(command,executable);
+        assert.deepEqual(args,[]);
+        assert.equal(options.cwd,cwd);
+        assert.deepEqual(options.env,{HTTPS_PROXY:"fixture",AGY_LLM_GATEWAY_API_KEY:"launch-fixture"});
+        assert.equal(options.shell,false);
+        queueMicrotask(()=>child.emit("spawn"));return child;
+      }});
+    assert.equal(unreferenced,true);
+    child.emit("exit");
+    assert.equal(closed,1);
+  }
 });
 test("a running native app requires a separate relaunch decision",()=>{
   const plan=planGeminiAppLaunch({status:"running",pids:[38378]},{platform:"darwin",cloudCodeUrl:"http://127.0.0.1:18080/antigravity/",env:{}});

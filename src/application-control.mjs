@@ -4,7 +4,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { inspectApplicationProcesses, processFamily, applicationConnections, controlApplicationProcess } from "./application-process.mjs";
 import { inspectApplicationConfiguration } from "./application-configuration.mjs";
 import { createApplicationEvidence } from "./application-evidence.mjs";
-import { hasManagedAntigravityGateway, planGeminiAppLaunch, inspectGeminiApp } from "./gemini-app.mjs";
+import { hasManagedAntigravityGateway, launchAntigravityGatewayApp, planGeminiAppLaunch, inspectGeminiApp } from "./gemini-app.mjs";
 import { readUserSettings } from "./user-settings.mjs";
 import { launchWindowsAntigravity } from "./windows-antigravity-app.mjs";
 
@@ -13,6 +13,7 @@ export function createApplicationControl({ providerRuntime, clientIntegration, i
   platform = process.platform, port = 2026, host = "127.0.0.1", now = Date.now, exec = execute, wait = sleep,
   inspect = inspectApplicationProcesses, connections = applicationConnections, control = controlApplicationProcess,
   inspectGemini = inspectGeminiApp, launchWindowsGemini = launchWindowsAntigravity, managedGeminiGateway = hasManagedAntigravityGateway,
+  launchGatewayApp = launchAntigravityGatewayApp,
   configuration = inspectApplicationConfiguration, openCodexApp, evidence = providerRuntime?.applicationEvidence || createApplicationEvidence({ now }) } = {}) {
   const options = { env, home, platform, exec };
   const states = Object.fromEntries(ids.map(id => [id, { status: "unknown", connection: "pending" }]));
@@ -118,11 +119,41 @@ export function createApplicationControl({ providerRuntime, clientIntegration, i
     if (verified.status !== "stopped") return { status: verified.status === "running" ? "app_changed" : verified.status };
     return planGeminiAppLaunch(verified, { cloudCodeUrl: enabled ? `http://${host}:${port}/antigravity` : undefined, env, home, platform });
   }
+  function serialize(operation) {
+    operations++;
+    const result = serial.then(operation).finally(() => { operations--; });
+    serial = result.catch(() => {});
+    return result;
+  }
   return { snapshot, evidence, check, busy: () => operations > 0,
     async previewAntigravity() {
       const state = await check("antigravity", true);
       if (state.status !== "stopped") return { status: state.status === "running" ? "needs_app_relaunch" : state.status };
       return antigravityPlan(cached.apps.antigravity);
     },
-    action(input) { operations++;const result = serial.then(() => action(input)).finally(() => { operations--; });serial = result.catch(() => {});return result; } };
+    openStandaloneAntigravity(prepareGateway) {
+      return serialize(async () => {
+        if(prepareGateway){
+          const existing=Object.entries(env).some(([name,value])=>value&&/^(AGY_LLM_GATEWAY_|CLOUD_CODE_URL$|ANTIGRAVITY_WSL_DISTRO$)/i.test(name));
+          if(existing||await managedGeminiGateway(options))return {status:"route_conflict"};
+        }
+        const verified=await inspectGemini({ ...options, standalone:true });
+        if(verified.status!=="stopped")return {status:verified.status==="running"?"needs_app_relaunch":verified.status};
+        if(!prepareGateway){
+          const enabled=antigravityBridgeEnabled();
+          const plan=planGeminiAppLaunch(verified,{cloudCodeUrl:enabled?"http://"+host+":"+port+"/antigravity":undefined,
+            env,home,platform,managedGateway:enabled&&await managedGeminiGateway(options)});
+          if(plan.status!=="prepared")return {status:plan.status};
+          if(platform==="win32")await launchWindowsGemini(plan);
+          else await exec(plan.command,plan.args,{encoding:"utf8",timeout:5000,maxBuffer:4096});
+          return {status:"opened",mode:"google"};
+        }
+        if(verified.wsl)return {status:"route_conflict"};
+        const gateway=await prepareGateway();
+        try { await launchGatewayApp(verified,gateway,options); }
+        catch(error) { gateway.close();throw error; }
+        return {status:"opened",mode:"gateway"};
+      });
+    },
+    action(input) { return serialize(() => action(input)); } };
 }

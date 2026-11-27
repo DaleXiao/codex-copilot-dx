@@ -131,6 +131,8 @@ test("Antigravity generation metrics recognize both service path forms", () => {
     }
     assert.equal(classifyAdapterRoute("POST", "/antigravity/v1internal" + separator + "fetchAvailableModels"), "antigravity_control");
   }
+  assert.equal(classifyAdapterRoute("POST","/antigravity/gateway/v1beta/models/ccdx-gemini-test:generateContent"),"antigravity");
+  assert.equal(classifyAdapterRoute("GET","/antigravity/gateway/v1beta/models"),"antigravity_control");
 });
 
 test("native image status reports local zero counters without an upstream request", async () => {

@@ -383,10 +383,10 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
       const conversation=request.labels?.root_cascade_id||request.labels?.cascade_id;
       const canIdentifyToolTurn=body.requestType==="agent"&&typeof conversation==="string"&&conversation.length>0&&conversation.length<=160;
       let proofProfile;
-      const acceptSignedToolTurn=canIdentifyToolTurn&&sourceProfile?parts=>{
+      const acceptSignedToolTurn=canIdentifyToolTurn&&sourceProfile&&opaqueReasoning.hasToolTurns()?parts=>{
         proofProfile??=sourceProfile("github");
-        return Boolean(proofProfile&&opaqueReasoning.matchesToolTurn([proofProfile,target.model,conversation],
-          parts.flatMap(part=>part?.functionCall?[part.functionCall]:[])));
+        return proofProfile&&opaqueReasoning.recoverToolTurn([proofProfile,target.model,conversation],
+          parts.flatMap(part=>part?.functionCall?[part.functionCall]:[]));
       }:undefined;
       converted=antigravityToChat(request,{model:target.model,effort:target.effort,reasoningEfforts:target.effort?[target.effort]:[],stream,acceptSignedToolTurn});
       const profile=body.requestType==="agent"&&(!gateway||hasConversation)||compactBinding?.source==="github"

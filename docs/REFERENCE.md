@@ -133,6 +133,8 @@ If CCDX returns an internal model identifier error, reopen the app from CCDX and
 
 If a Copilot conversation reports a Gemini thought signature, continue the affected history with its original Gemini model or start a new Copilot conversation. CCDX can continue a signed tool replay when it still has a matching record of the complete call group it sent for the same account, model and conversation. The error includes the message and part numbers without including their content.
 
+When Antigravity omits tool IDs, CCDX can recover the original IDs if there is one exact call group for that account, model and conversation. Parallel results with the same tool name require an unambiguous match. If the record expired or the result is ambiguous, start a new conversation to resume work.
+
 ### Standalone App without a Google sign-in
 
 Select a Copilot model and its effort, or a custom Gemini source, in CCDX. In the standalone Antigravity App, sign out of Google and quit the App. On the CCDX Antigravity page, choose **CCDX gateway** under **Open with**. CCDX remembers the choice for the next launch. To switch, choose **Google sign-in**. The main button focuses a running App. Reopening asks for confirmation and may interrupt work. When the desktop sign-in state is unavailable, CCDX lets you choose the mode.

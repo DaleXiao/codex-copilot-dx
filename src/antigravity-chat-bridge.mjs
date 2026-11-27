@@ -14,6 +14,8 @@ const schemaChildren = new Set(["items", "additionalProperties", "not", "if", "t
 const schemaMaps = new Set(["properties", "patternProperties", "$defs", "definitions", "dependentSchemas"]);
 const schemaLists = new Set(["allOf", "anyOf", "oneOf", "prefixItems"]);
 const chatPartFields = new Set(["text", "thought", "inlineData", "inline_data", "functionCall", "functionResponse"]);
+const signedFunctionPart = part => part?.functionCall && (part.thoughtSignature || part.thought_signature);
+const hasSignedFunction = parts => parts.length === 1 ? signedFunctionPart(parts[0]) : parts.some(signedFunctionPart);
 
 function invalid(message, statusCode = 400, code = "ccdx_antigravity_protocol") {
   return Object.assign(new Error(message), { code, statusCode });
@@ -105,6 +107,7 @@ export function antigravityToChat(request, { model, effort, stream = true, reaso
   if (!Object.hasOwn(choices, mode)) throw invalid("Unsupported Gemini function calling mode");
   if (mode === "ANY" && !tools.length) throw invalid("Required Gemini functions are unavailable");
   const messages = [], pending = new Map(), queues = new Map();
+  let recoveredPending;
   if (request.systemInstruction) {
     const parts = request.systemInstruction.parts;
     if (!Array.isArray(parts) || parts.some(part => !object(part) || typeof part.text !== "string" || Object.keys(part).some(key => key !== "text")))
@@ -114,7 +117,11 @@ export function antigravityToChat(request, { model, effort, stream = true, reaso
   for (let i = 0; i < request.contents.length; i++) {
     const item = request.contents[i], role = item?.role === "model" ? "assistant" : item?.role === "user" ? "user" : null;
     if (!role || !Array.isArray(item.parts)) throw invalid("Invalid Gemini message");
-    let content = [], calls = [], reasoning = "", trustedToolTurn;
+    let content = [], calls = [], reasoning = "";
+    const trustedToolTurn = role === "assistant" && acceptSignedToolTurn
+      && hasSignedFunction(item.parts)
+      ? acceptSignedToolTurn(item.parts) : null;
+    const recovered = trustedToolTurn && trustedToolTurn !== true ? trustedToolTurn : null;
     const flush = () => {
       if (!content.length && !calls.length && !reasoning) return;
       messages.push({ role, content: contentValue(content), ...(reasoning ? { reasoning_content: reasoning } : {}), ...(calls.length ? { tool_calls: calls } : {}) });
@@ -123,33 +130,44 @@ export function antigravityToChat(request, { model, effort, stream = true, reaso
     for (let j = 0; j < item.parts.length; j++) {
       const part = item.parts[j];
       if (!object(part)) throw unsupportedPart(part, i, j);
+      const fields = Object.keys(part);
+      if (fields.length === 1 && fields[0] === "text" && typeof part.text === "string" && Object.getPrototypeOf(part) === Object.prototype) {
+        content.push({ type: "text", text: part.text });
+        continue;
+      }
       const signatureField = part.thoughtSignature !== undefined ? "thoughtSignature"
         : part.thought_signature !== undefined ? "thought_signature" : null;
       if (signatureField) {
         if (role !== "assistant" || !part.functionCall || typeof part[signatureField] !== "string" || !part[signatureField]
           || part[signatureField].length > MAX_OPAQUE_LENGTH
-          || !(trustedToolTurn ??= acceptSignedToolTurn?.(item.parts) === true)) throw unsupportedPart(part, i, j);
+          || !trustedToolTurn) throw unsupportedPart(part, i, j);
       }
       const textPart = typeof part.text === "string", inline = part.inlineData || part.inline_data;
       const count = Number(textPart) + Number(Boolean(inline)) + Number(Boolean(part.functionCall)) + Number(Boolean(part.functionResponse));
-      if (count !== 1 || Object.keys(part).some(key => !chatPartFields.has(key) && key !== signatureField))
-        throw unsupportedPart(part, i, j);
+      if (count !== 1) throw unsupportedPart(part, i, j);
+      for (const key of fields) {
+        if (!chatPartFields.has(key) && key !== signatureField) throw unsupportedPart(part, i, j);
+      }
       if (textPart) {
         if (part.thought) { if (role !== "assistant") throw invalid("Invalid Gemini thought");reasoning += part.text; }
         else content.push({ type: "text", text: part.text });
       } else if (inline) content.push(imagePart(part));
       else if (part.functionCall) {
         if (role !== "assistant" || !object(part.functionCall) || !object(part.functionCall.args)) throw invalid("Invalid Gemini function call");
-        const call = part.functionCall, alias = modelToolName(call.name), id = call.id || "call_" + createHash("sha256").update(`${i}\0${j}\0${call.name}`).digest("hex").slice(0, 24);
+        const call = part.functionCall, alias = modelToolName(call.name), id = call.id || recovered?.get(call) || "call_" + createHash("sha256").update(`${i}\0${j}\0${call.name}`).digest("hex").slice(0, 24);
         if (typeof id !== "string" || !id || pending.has(id)) throw invalid("Invalid Gemini function call ID");
+        if (recovered) (recoveredPending ||= new Set()).add(id);
         pending.set(id, call.name);const queue = queues.get(call.name) || [];queue.push(id);queues.set(call.name, queue);
         calls.push({ id, type: "function", function: { name: alias, arguments: JSON.stringify(call.args) } });
       } else if (part.functionResponse) {
         flush();const response = part.functionResponse;
         if (!object(response) || typeof response.name !== "string" || !object(response.response)) throw invalid("Invalid Gemini function response");
-        const queue = queues.get(response.name) || [], id = response.id || queue[0];
+        const queue = queues.get(response.name) || [];
+        if (recoveredPending && !response.id && queue.length > 1 && queue.some(id => recoveredPending.has(id)))
+          throw invalid("Ambiguous Gemini tool results without call IDs", 400, "ccdx_antigravity_ambiguous_tool_result");
+        const id = response.id || queue[0];
         if (!id || pending.get(id) !== response.name) throw invalid("Gemini function response has no matching call");
-        pending.delete(id);const at = queue.indexOf(id);if (at >= 0) queue.splice(at, 1);
+        pending.delete(id);recoveredPending?.delete(id);const at = queue.indexOf(id);if (at >= 0) queue.splice(at, 1);
         messages.push({ role: "tool", tool_call_id: id, content: JSON.stringify(response.response) });
       } else throw unsupportedPart(part, i, j);
     }

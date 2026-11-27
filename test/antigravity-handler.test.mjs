@@ -162,27 +162,31 @@ test("Copilot tool reasoning returns to its own account, model and complete tool
     assert.doesNotMatch(reply.text, /reasoning_opaque|fixture-sealed|fixture-earlier/);
     if (mode === "truncated") assert.match(reply.text, /ended before completion/);
     else assert.equal(reply.status, 200);
-    const replay = async ({ model = initial.model, conversation = "fixture-conversation", tools = calls, signed = false, rejected = false, changed = false } = {}) => {
+    const replay = async ({ model = initial.model, conversation = "fixture-conversation", tools = calls, signed = false, rejected = false, changed = false,
+      omitCallIds = false, omitResultIds = false, ambiguous = false } = {}) => {
       const request = structuredClone(initial);
       request.model = model;
       request.request.labels.root_cascade_id = conversation;
       request.request.contents.push(
         { role: "model", parts: tools.map((call,index) => ({
-          functionCall: { id: call.id, name: call.function.name, args: { index: Number(call.id.at(-1)), path: changed ? "changed" : "fixture" } },
+          functionCall: { ...(omitCallIds?{}:{id:call.id}), name: call.function.name, args: { index: Number(call.id.at(-1)), path: changed ? "changed" : "fixture" } },
           ...(signed&&index===0?{thought_signature:"fixture-signature"}:{}),
         })) },
-        { role: "user", parts: tools.map(call => ({ functionResponse: { id: call.id, name: call.function.name, response: {} } })) });
+        { role: "user", parts: tools.map(call => ({ functionResponse: { ...(omitResultIds?{}:{id:call.id}), name: call.function.name, response: {} } })) });
       const before=sent.length,result=await invoke(f.handler, request).done;
       if(rejected){
-        assert.equal(result.status,400);assert.match(result.text,/Gemini thought signature/);
+        assert.equal(result.status,400);assert.match(result.text,ambiguous?/Ambiguous Gemini tool results/:/Gemini thought signature/);
         assert.equal(sent.length,before);return;
       }
       assert.equal(result.status, 200);
       assert.doesNotMatch(JSON.stringify(sent.at(-1)),/thoughtSignature|thought_signature|fixture-signature/);
+      if(omitCallIds)assert.deepEqual(sent.at(-1).messages.find(message=>message.role==="assistant").tool_calls.map(call=>call.id),tools.map(call=>call.id));
       return sent.at(-1).messages.find(message => message.role === "assistant").reasoning_opaque;
     };
     assert.equal(await replay(), mode === "truncated" ? undefined : "fixture-sealed");
     assert.equal(await replay({signed:true,rejected:mode==="truncated"}), mode === "truncated" ? undefined : "fixture-sealed");
+    assert.equal(await replay({signed:true,omitCallIds:true,rejected:mode==="truncated"}),mode==="truncated"?undefined:"fixture-sealed");
+    await replay({signed:true,omitCallIds:true,omitResultIds:true,rejected:true,ambiguous:mode!=="truncated"});
     await replay({signed:true,rejected:true,changed:true});
     await replay({signed:true,rejected:true,tools:calls.slice(0,1)});
     await replay({signed:true,rejected:true,conversation:"different-conversation"});

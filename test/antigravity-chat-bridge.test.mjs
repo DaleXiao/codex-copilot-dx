@@ -132,6 +132,45 @@ test("tool-turn provenance expires and cannot be recovered from a new empty cach
   assert.equal(cache.matchesToolTurn(scope,calls),false);
 });
 
+test("missing tool IDs recover only from one complete, scoped tool-turn record",()=>{
+  let time=0;
+  const cache=createAntigravityOpaqueReasoning({now:()=>time});
+  const scope=["fixture-account","fixture-model","fixture-conversation"];
+  const first={id:"issued-one",name:"lookup",args:{path:"first",limit:1}};
+  const second={id:"issued-two",name:"lookup",args:{path:"second",limit:1}};
+  const idless={name:"lookup",args:{limit:1,path:"second"}};
+  cache.remember(scope,[first,second]);
+  const recovered=cache.recoverToolTurn(scope,[idless,first]);
+  assert.equal(recovered.get(idless),second.id);
+  assert.equal(cache.recoverToolTurn(scope,[idless]),null);
+  assert.equal(cache.recoverToolTurn(scope,[idless,{...first,id:"made-up"}]),null);
+  assert.equal(cache.recoverToolTurn(scope,[{...idless,args:{path:"changed",limit:1}},first]),null);
+  for(const i of [0,1,2])assert.equal(cache.recoverToolTurn(scope.map((part,index)=>i===index?"other":part),[idless,first]),null);
+  cache.remember(scope,[first,{...second,id:"issued-three"}]);
+  assert.equal(cache.recoverToolTurn(scope,[idless,first]),null);
+  time=60*60*1000;
+  assert.equal(cache.recoverToolTurn(scope,[idless,first]),null);
+});
+
+test("a signed tool pair without IDs recovers the original IDs in the outbound copy",()=>{
+  const cache=createAntigravityOpaqueReasoning();
+  const scope=["fixture-account","fixture-model","fixture-conversation"];
+  const issued={id:"issued-call",name:"lookup",args:{path:"fixture"}};
+  cache.remember(scope,[issued]);
+  const request={contents:[
+    {role:"user",parts:[{text:"fixture"}]},
+    {role:"model",parts:[{functionCall:{name:issued.name,args:issued.args},thoughtSignature:"fixture-signature"}]},
+    {role:"user",parts:[{functionResponse:{name:issued.name,response:{result:"fixture"}}}]},
+  ]};
+  const before=structuredClone(request);
+  const {chat}=antigravityToChat(request,{model:"fixture-model",
+    acceptSignedToolTurn:parts=>cache.recoverToolTurn(scope,parts.map(part=>part.functionCall))});
+  assert.equal(chat.messages[1].tool_calls[0].id,issued.id);
+  assert.equal(chat.messages[2].tool_call_id,issued.id);
+  assert.doesNotMatch(JSON.stringify(chat),/fixture-signature/);
+  assert.deepEqual(request,before);
+});
+
 test("stream emits text promptly and reconstructs split tool arguments without losing integers", async () => {
   const { originalNames } = antigravityToChat({ contents: [{ role: "user", parts: [{ text: "hi" }] }], tools: [{ functionDeclarations: [declaration] }] }, { model: "fixture" });
   const events = [

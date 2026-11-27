@@ -71,7 +71,7 @@ function contentValue(parts) {
   return parts.length === 1 && parts[0].type === "text" ? parts[0].text : parts;
 }
 
-export function antigravityToChat(request, { model, effort, stream = true, reasoningEfforts = ["none","minimal","low","medium","high","xhigh","max"] } = {}) {
+export function antigravityToChat(request, { model, effort, stream = true, reasoningEfforts = ["none","minimal","low","medium","high","xhigh","max"], acceptSignedToolTurn } = {}) {
   if (!object(request) || !Array.isArray(request.contents) || typeof model !== "string" || !model)
     throw invalid("Invalid Gemini generation request");
   if (Object.keys(request).some(key => !["contents", "systemInstruction", "tools", "toolConfig", "generationConfig", "labels", "sessionId"].includes(key))
@@ -114,7 +114,7 @@ export function antigravityToChat(request, { model, effort, stream = true, reaso
   for (let i = 0; i < request.contents.length; i++) {
     const item = request.contents[i], role = item?.role === "model" ? "assistant" : item?.role === "user" ? "user" : null;
     if (!role || !Array.isArray(item.parts)) throw invalid("Invalid Gemini message");
-    let content = [], calls = [], reasoning = "";
+    let content = [], calls = [], reasoning = "", trustedToolTurn;
     const flush = () => {
       if (!content.length && !calls.length && !reasoning) return;
       messages.push({ role, content: contentValue(content), ...(reasoning ? { reasoning_content: reasoning } : {}), ...(calls.length ? { tool_calls: calls } : {}) });
@@ -122,14 +122,22 @@ export function antigravityToChat(request, { model, effort, stream = true, reaso
     };
     for (let j = 0; j < item.parts.length; j++) {
       const part = item.parts[j];
-      if (!object(part) || part.thoughtSignature || part.thought_signature) throw unsupportedPart(part, i, j);
-      const count = [typeof part.text === "string", Boolean(part.inlineData || part.inline_data), Boolean(part.functionCall), Boolean(part.functionResponse)].filter(Boolean).length;
-      if (count !== 1 || Object.keys(part).some(key => !chatPartFields.has(key)))
+      if (!object(part)) throw unsupportedPart(part, i, j);
+      const signatureField = part.thoughtSignature !== undefined ? "thoughtSignature"
+        : part.thought_signature !== undefined ? "thought_signature" : null;
+      if (signatureField) {
+        if (role !== "assistant" || !part.functionCall || typeof part[signatureField] !== "string" || !part[signatureField]
+          || part[signatureField].length > MAX_OPAQUE_LENGTH
+          || !(trustedToolTurn ??= acceptSignedToolTurn?.(item.parts) === true)) throw unsupportedPart(part, i, j);
+      }
+      const textPart = typeof part.text === "string", inline = part.inlineData || part.inline_data;
+      const count = Number(textPart) + Number(Boolean(inline)) + Number(Boolean(part.functionCall)) + Number(Boolean(part.functionResponse));
+      if (count !== 1 || Object.keys(part).some(key => !chatPartFields.has(key) && key !== signatureField))
         throw unsupportedPart(part, i, j);
-      if (typeof part.text === "string") {
+      if (textPart) {
         if (part.thought) { if (role !== "assistant") throw invalid("Invalid Gemini thought");reasoning += part.text; }
         else content.push({ type: "text", text: part.text });
-      } else if (part.inlineData || part.inline_data) content.push(imagePart(part));
+      } else if (inline) content.push(imagePart(part));
       else if (part.functionCall) {
         if (role !== "assistant" || !object(part.functionCall) || !object(part.functionCall.args)) throw invalid("Invalid Gemini function call");
         const call = part.functionCall, alias = modelToolName(call.name), id = call.id || "call_" + createHash("sha256").update(`${i}\0${j}\0${call.name}`).digest("hex").slice(0, 24);

@@ -120,7 +120,7 @@ export function createAntigravityRuntime({client,models=()=>[],refreshModels,pri
       const model=nativeModels(saved.native_source).find(entry=>entry.id===id);if(!model)return null;
       const source=getSource(model.source);return source?.client?.gemini?{...model,transport:source}:null;
     },
-    imageFn:imageFn||createAntigravityImages({client,models:available,privacy}),guardSource:sourceGuard,compactionProfile:()=>githubTokenFingerprint(readToken()||""),
+    imageFn:imageFn||createAntigravityImages({client,models:available,privacy}),guardSource:sourceGuard,sourceProfile:profileFor,compactionProfile:()=>githubTokenFingerprint(readToken()||""),
     prepareConversationBinding(body,source,profile,startedAt){
       return bindings.prepare(body,profile||profileFor(source),startedAt);
     },

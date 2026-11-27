@@ -131,6 +131,8 @@ To verify a selected model, compare `ccdx app antigravity status --format json` 
 
 If CCDX returns an internal model identifier error, reopen the app from CCDX and reselect the model. CCDX requires a named model ID and rejects ambiguous picker identifiers before sending the request upstream.
 
+If a Copilot conversation reports a Gemini thought signature, continue the affected history with its original Gemini model or start a new Copilot conversation. CCDX can continue a signed tool replay when it still has a matching record of the complete call group it sent for the same account, model and conversation. The error includes the message and part numbers without including their content.
+
 ### Standalone App without a Google sign-in
 
 Select a Copilot model and its effort, or a custom Gemini source, in CCDX. In the standalone Antigravity App, sign out of Google and quit the App. On the CCDX Antigravity page, choose **CCDX gateway** under **Open with**. CCDX remembers the choice for the next launch. To switch, choose **Google sign-in**. The main button focuses a running App. Reopening asks for confirmation and may interrupt work. When the desktop sign-in state is unavailable, CCDX lets you choose the mode.

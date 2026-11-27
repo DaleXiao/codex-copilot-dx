@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { antigravityToChat, chatStreamToAntigravity, chatToAntigravity, parseAntigravityJSON } from "../src/antigravity-chat-bridge.mjs";
+import { createAntigravityOpaqueReasoning } from "../src/antigravity-opaque-reasoning.mjs";
 
 test("chunked Chat content projects thinking and visible text in order", async () => {
   const content = [{ type: "thinking", thinking: [{ type: "text", text: "fixture thought" }] },
@@ -117,6 +118,18 @@ test("unsupported Gemini parts identify the form and position without echoing pa
       return true;
     });
   }
+});
+
+test("tool-turn provenance expires and cannot be recovered from a new empty cache",()=>{
+  let time=0;
+  const cache=createAntigravityOpaqueReasoning({now:()=>time});
+  const scope=["fixture-account","fixture-model","fixture-conversation"];
+  const calls=[{id:"fixture-call",name:"lookup",args:{key:42}}];
+  cache.remember(scope,calls);
+  assert.equal(cache.matchesToolTurn(scope,calls),true);
+  assert.equal(createAntigravityOpaqueReasoning().matchesToolTurn(scope,calls),false);
+  time=60*60*1000;
+  assert.equal(cache.matchesToolTurn(scope,calls),false);
 });
 
 test("stream emits text promptly and reconstructs split tool arguments without losing integers", async () => {

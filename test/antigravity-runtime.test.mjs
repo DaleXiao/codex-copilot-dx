@@ -156,6 +156,28 @@ test("enable is explicit, edits only CCDX settings, and never restarts a running
   const open=await f.runtime.action({action:"open"},"http://127.0.0.1:2026");assert.equal(open.last_operation.status,"needs_app_relaunch");assert.equal(f.calls.length,0);
   assert.equal(fs.existsSync(path.join(f.home,".gemini")),false);
 });
+test("a rejected first Copilot request cannot claim a Gemini conversation",async t=>{
+  const f=fixture(t,"stopped");
+  let copilot=0,google=0;
+  const runtime=createAntigravityRuntime({...f.options,guardSource:undefined,readToken:()=>"fixture-provider",
+    client:{chatCompletions:async()=>{copilot++;throw Error("Rejected request must not be sent");}},
+    googleFetch:async()=>{google++;return Response.json({native:true});}});
+  t.after(()=>runtime.close());
+  await runtime.action({action:"enable",accept_background_copilot:true},"http://127.0.0.1:2026");
+  const user={role:"user",parts:[{text:"fixture"}]};
+  const invoke=(model,contents)=>{
+    const req=Readable.from([Buffer.from(JSON.stringify({model,requestType:"agent",request:{labels:{root_cascade_id:"rejected-first-fixture"},contents}}))]);
+    req.method="POST";req.url="/antigravity/v1internal:generateContent";
+    req.headers={host:"127.0.0.1:2026","content-type":"application/json"};req.socket={remoteAddress:"127.0.0.1"};
+    return invokeAdapterRequest({},req,runtime.handle);
+  };
+  const rejected=await invoke("ccdx-copilot-gemini-4-carbon-high",[user,{role:"model",parts:[{text:"old reply",thoughtSignature:"fixture"}]}]);
+  assert.equal(rejected.status,400);assert.equal(copilot+google,0);
+  assert.equal((await invoke("gemini-native",[user])).status,200);
+  assert.equal(copilot,0);assert.equal(google,1);
+  assert.equal((await invoke("ccdx-copilot-gemini-4-carbon-high",[user])).status,409);
+  assert.equal(copilot,0);
+});
 test("a closed App can be opened through the native binary's process-local route",async t=>{
   const f=fixture(t,"stopped");await f.runtime.action({action:"enable",accept_background_copilot:true},"http://127.0.0.1:2026");
   const opened=await f.runtime.action({action:"open"},"http://127.0.0.1:2026");assert.equal(opened.last_operation.status,"opened");assert.equal(opened.app.status,"starting");

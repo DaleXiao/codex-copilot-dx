@@ -56,7 +56,7 @@ function geminiFinish(candidates) {
   return candidates.find(candidate => candidate.finishReason && candidate.finishReason !== "STOP")?.finishReason || candidates.find(candidate => candidate.finishReason)?.finishReason;
 }
 
-export function createAntigravityHandler({client,models=()=>[],selectedModels=()=>null,defaultModel=()=>null,enabled=()=>false,privacy,searchFn,imageFn,guardSource,acquireRequest=async()=>()=>{},sourceAdmission,applicationEvidence,
+export function createAntigravityHandler({client,models=()=>[],selectedModels=()=>null,defaultModel=()=>null,enabled=()=>false,privacy,searchFn,imageFn,guardSource,sourceProfile,acquireRequest=async()=>()=>{},sourceAdmission,applicationEvidence,
   nativeModels=()=>[],resolveNativeModel=()=>null,
   compaction,compactionProfile=()=>"github",prepareConversationBinding=()=>{},resolveCompactionSource=()=>null,recordUsageFn=recordUsage,fetchGoogle=fetch,googleOrigin=GOOGLE_ORIGIN,requestBodyTimeoutMs=120000,upstreamTimeoutMs=180000,copilotTimeoutMs,streamIdleTimeoutMs=60000,
   requestSettings,groupCapable=()=>false,generationSettings=()=>({ selection:selectedModels(), copilotTimeoutMs, preferred:defaultModel() })}={}) {
@@ -346,8 +346,6 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
         if(body.requestType==="agent")commitBinding=prepareConversationBinding(body,"google",profile,startedAt);
         return await native();
       }
-      const profile=body.requestType==="agent"&&(!gateway||hasConversation)||compactBinding?.source==="github"
-        ?await guardSource?.(body,"github",abort.signal):undefined;
       if(!copilotModels.length)throw httpError("Copilot access for Antigravity is paused or unavailable",503);
       observed=true;counts.copilot++;
       if(context){context.provider="github";context.streamPerformance?.setProvider?.("github")}
@@ -381,17 +379,25 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
         }
       }
       if(!target)throw httpError(bound?"The conversation model is unavailable for Antigravity":"No eligible Copilot model is available for Antigravity background tasks",503);
-      if(body.requestType==="agent"&&(!gateway||hasConversation))commitBinding=prepareConversationBinding(
-        body.model===target.id?body:{...body,model:target.id},"github",profile,startedAt);
       const stream=method==="streamGenerateContent";usageModel=target.model;usageMode=stream?"sse":"json";usageProvider="github";
       const conversation=request.labels?.root_cascade_id||request.labels?.cascade_id;
-      const scope=body.requestType==="agent"&&typeof profile==="string"&&profile&&typeof conversation==="string"&&conversation.length<=160
-        ?[profile,target.model,conversation]:null;
-      const onOpaque=scope?(value,ids)=>{
-        if(!abort.signal.aborted)opaqueReasoning.remember(scope,value,ids);
+      const canIdentifyToolTurn=body.requestType==="agent"&&typeof conversation==="string"&&conversation.length>0&&conversation.length<=160;
+      let proofProfile;
+      const acceptSignedToolTurn=canIdentifyToolTurn&&sourceProfile?parts=>{
+        proofProfile??=sourceProfile("github");
+        return Boolean(proofProfile&&opaqueReasoning.matchesToolTurn([proofProfile,target.model,conversation],
+          parts.flatMap(part=>part?.functionCall?[part.functionCall]:[])));
       }:undefined;
+      converted=antigravityToChat(request,{model:target.model,effort:target.effort,reasoningEfforts:target.effort?[target.effort]:[],stream,acceptSignedToolTurn});
+      const profile=body.requestType==="agent"&&(!gateway||hasConversation)||compactBinding?.source==="github"
+        ?await guardSource?.(body,"github",abort.signal):undefined;
+      if(proofProfile&&proofProfile!==profile)throw httpError("The Copilot account changed during Antigravity continuation",409);
+      if(body.requestType==="agent"&&(!gateway||hasConversation))commitBinding=prepareConversationBinding(
+        body.model===target.id?body:{...body,model:target.id},"github",profile,startedAt);
+      const scope=canIdentifyToolTurn&&typeof profile==="string"&&profile?[profile,target.model,conversation]:null;
+      let opaque,emittedCalls;
+      const onOpaque=scope?(value,ids)=>{opaque={value,ids};}:undefined;
       const chatCompletions=(input,options)=>client.chatCompletions(scope?opaqueReasoning.attach(scope,input):input,options);
-      converted=antigravityToChat(request,{model:target.model,effort:target.effort,reasoningEfforts:target.effort?[target.effort]:[],stream});
       const reasoningEffort=converted.chat.reasoning_effort;
       markResponseModel(target.model);markRequestObservation({usage_state:"pending",context_window_tokens:target.maxTokens,
         max_output_tokens_requested:request.generationConfig?.maxOutputTokens,
@@ -424,11 +430,14 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
         const usage=mergeChatUsage(null,data.usage);captureUsage(data,usage);
         const result=chatToAntigravity(data,converted.originalNames,usage);markToolActivity(result,"gemini");
         outcome=result.candidates[0].finishReason==="STOP"?"completed":"incomplete";markResponseTerminal(outcome,geminiTerminalDetails(result.candidates[0].finishReason));
-        const response=JSON.stringify(generationReply(session.restoreValue(result)));
+        const restored=session.restoreValue(result);
+        const response=JSON.stringify(generationReply(restored));
         if(commitBinding)await confirmBinding();
         const choice=data.choices[0];
-        if(onOpaque&&choice.finish_reason==="tool_calls"&&choice.message.tool_calls?.length)
-          onOpaque(choice.message.reasoning_opaque,choice.message.tool_calls.map(call=>call.id));
+        if(scope&&choice.finish_reason==="tool_calls"&&!abort.signal.aborted){
+          const calls=restored.candidates[0].content.parts.flatMap(part=>part.functionCall?[part.functionCall]:[]);
+          if(calls.length)opaqueReasoning.remember(scope,calls,{value:choice.message.reasoning_opaque,ids:choice.message.tool_calls.map(call=>call.id)});
+        }
         res.writeHead(200,{"Content-Type":"application/json"});res.end(response);return;
       }
       if (!upstream.body) {
@@ -451,13 +460,18 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
         const candidate=chunk.response?.candidates?.[0];
         for(const part of candidate?.content?.parts||[]){
           if(part.functionCall||typeof part.text==="string"&&part.text&&!part.thought)markFirstOutput("delta");
-          if(part.functionCall){const tail=text.finish();if(tail)await emit({response:{candidates:[{index:0,content:{role:"model",parts:[{text:tail}]}}]}});Object.assign(part,session.restoreToolValue(part));}
+          if(part.functionCall){
+            const tail=text.finish();if(tail)await emit({response:{candidates:[{index:0,content:{role:"model",parts:[{text:tail}]}}]}});
+            Object.assign(part,session.restoreToolValue(part));
+            if(scope&&(!emittedCalls||emittedCalls.length<=256))(emittedCalls||=[]).push(part.functionCall);
+          }
           else if(typeof part.text==="string"&&!part.thought)part.text=text.push(part.text);
         }
         if(candidate?.finishReason){const tail=text.finish();if(tail)await emit({response:{candidates:[{index:0,content:{role:"model",parts:[{text:tail}]}}]}});outcome=candidate.finishReason==="STOP"?"completed":"incomplete";markResponseTerminal(outcome,geminiTerminalDetails(candidate.finishReason))}
         if(candidate?.finishReason&&commitBinding)await confirmBinding();
         if(!await emit(chunk))throw httpError("Antigravity client disconnected",499);
       }
+      if(emittedCalls&&outcome==="completed"&&!abort.signal.aborted)opaqueReasoning.remember(scope,emittedCalls,opaque);
       res.end();
     }catch(error){
       if(abort.reason)error=Object.assign(httpError(error.message,abortErrorStatusCode(abort.reason)),{code:abort.reason});

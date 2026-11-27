@@ -132,13 +132,14 @@ test("Copilot Antigravity streaming keeps parallel calls distinct across separat
 
 test("Copilot tool reasoning returns to its own account, model and complete tool turn", async () => {
   for (const mode of ["json", "sse", "truncated"]) {
-    const calls = ["read_file", "search_files"].map((name, index) => ({
-      id: "fixture-call-" + index, type: "function", function: { name, arguments: "{}" },
+    const calls = [0, 1].map(index => ({
+      id: "fixture-call-" + index, type: "function", function: { name: "lookup", arguments: JSON.stringify({ path: "fixture", index }) },
     }));
     let profile = "copilot-account-one";
     const sent = [];
     const f = fixture({
       guardSource: async () => profile,
+      sourceProfile: () => profile,
       client: { async chatCompletions(value) {
         sent.push(value);
         if (sent.length > 1) return sse();
@@ -155,27 +156,42 @@ test("Copilot tool reasoning returns to its own account, model and complete tool
     });
     const initial = body();
     initial.request.labels = { root_cascade_id: "fixture-conversation" };
-    initial.request.tools = [{ functionDeclarations: calls.map(call => ({ name: call.function.name })) }];
+    initial.request.tools = [{ functionDeclarations: [{ name: "lookup" }] }];
     const reply = await invoke(f.handler, initial,
       mode === "json" ? { url: "/antigravity/v1internal:generateContent" } : {}).done;
     assert.doesNotMatch(reply.text, /reasoning_opaque|fixture-sealed|fixture-earlier/);
     if (mode === "truncated") assert.match(reply.text, /ended before completion/);
     else assert.equal(reply.status, 200);
-    const replay = async ({ model = initial.model, conversation = "fixture-conversation", tools = calls } = {}) => {
+    const replay = async ({ model = initial.model, conversation = "fixture-conversation", tools = calls, signed = false, rejected = false, changed = false } = {}) => {
       const request = structuredClone(initial);
       request.model = model;
       request.request.labels.root_cascade_id = conversation;
       request.request.contents.push(
-        { role: "model", parts: tools.map(call => ({ functionCall: { id: call.id, name: call.function.name, args: {} } })) },
+        { role: "model", parts: tools.map((call,index) => ({
+          functionCall: { id: call.id, name: call.function.name, args: { index: Number(call.id.at(-1)), path: changed ? "changed" : "fixture" } },
+          ...(signed&&index===0?{thought_signature:"fixture-signature"}:{}),
+        })) },
         { role: "user", parts: tools.map(call => ({ functionResponse: { id: call.id, name: call.function.name, response: {} } })) });
-      assert.equal((await invoke(f.handler, request).done).status, 200);
+      const before=sent.length,result=await invoke(f.handler, request).done;
+      if(rejected){
+        assert.equal(result.status,400);assert.match(result.text,/Gemini thought signature/);
+        assert.equal(sent.length,before);return;
+      }
+      assert.equal(result.status, 200);
+      assert.doesNotMatch(JSON.stringify(sent.at(-1)),/thoughtSignature|thought_signature|fixture-signature/);
       return sent.at(-1).messages.find(message => message.role === "assistant").reasoning_opaque;
     };
     assert.equal(await replay(), mode === "truncated" ? undefined : "fixture-sealed");
+    assert.equal(await replay({signed:true,rejected:mode==="truncated"}), mode === "truncated" ? undefined : "fixture-sealed");
+    await replay({signed:true,rejected:true,changed:true});
+    await replay({signed:true,rejected:true,tools:calls.slice(0,1)});
+    await replay({signed:true,rejected:true,conversation:"different-conversation"});
+    await replay({signed:true,rejected:true,model:"ccdx-copilot-gemini-4-argon-high"});
     assert.equal(await replay({ conversation: "different-conversation" }), undefined);
     assert.equal(await replay({ model: "ccdx-copilot-gemini-4-argon-high" }), undefined);
     assert.equal(await replay({ tools: calls.slice(0, 1) }), undefined);
     profile = "copilot-account-two";
+    await replay({signed:true,rejected:true});
     assert.equal(await replay(), undefined);
   }
 });

@@ -519,6 +519,45 @@ test("native grouped choices route and pin the exact selected alias in a convers
   assert.deepEqual(f.copilot.map(call=>call.value.reasoning_effort),["medium","high","high"]);
   assert.deepEqual(pins,[level,alias,alias]);
 });
+
+test("an explicit grouped effort survives a flat catalog read by another client and honors revoked selection", async () => {
+  const parent = "ccdx-copilot-gemini-4-carbon";
+  const catalogPath = "/antigravity/v1internal:fetchAvailableModels";
+  let grant = null;
+  let nativeGeneration = 0;
+  const native = { models: { native: { model: "NATIVE" } } };
+  const options = {
+    groupCapable: agent => agent === "grouped-client",
+    generationSettings: () => ({ selection: grant }),
+    selectedModels: () => grant,
+    fetchGoogle: async url => {
+      if (!url.endsWith("fetchAvailableModels")) nativeGeneration++;
+      return Response.json(native);
+    },
+  };
+  const f = fixture(options);
+  const request = body(parent);
+  request.request.generationConfig.thinkingConfig.thinkingLevel = "HIGH";
+  const grouped = await invoke(f.handler, {}, { url: catalogPath, headers: { "user-agent": "grouped-client" } }).done;
+  assert.ok(JSON.parse(grouped.text).groupedModels[parent]);
+  const flat = await invoke(f.handler, {}, { url: catalogPath, headers: { "user-agent": "flat-client" } }).done;
+  assert.equal(JSON.parse(flat.text).groupedModels, undefined);
+  assert.equal(f.handler.snapshot().catalog_group_count, 0);
+  assert.equal((await invoke(f.handler, request).done).status, 200);
+  assert.equal(f.copilot[0].value.model, "gemini-4-carbon");
+  assert.equal(f.copilot[0].value.reasoning_effort, "high");
+  assert.equal((await invoke(f.handler, body(parent)).done).status, 200);
+  assert.equal(f.copilot[1].value.reasoning_effort, "medium");
+
+  const restarted = fixture(options);
+  assert.equal((await invoke(restarted.handler, body(parent)).done).status, 503);
+  assert.equal((await invoke(restarted.handler, request).done).status, 200);
+  assert.equal(restarted.copilot[0].value.reasoning_effort, "high");
+  grant = [parent + "-low"];
+  assert.equal((await invoke(f.handler, request).done).status, 503);
+  assert.equal(f.copilot.length, 2);
+  assert.equal(nativeGeneration, 0);
+});
 test("Copilot main requests use the advertised model and level without forwarding Google authorization",async()=>{
   const f=fixture(),result=await invoke(f.handler,body()).done;
   assert.equal(result.status,200);assert.equal(f.google.length,0);assert.equal(f.copilot.length,1);

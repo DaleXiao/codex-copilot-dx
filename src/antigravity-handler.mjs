@@ -6,7 +6,7 @@ import {safeUpstreamResponseHeaders,upstreamRejectionHeaders} from "./upstream-h
 import {isLoopbackAddress,isLoopbackHostHeader} from "./security.mjs";
 import {antigravityToChat,chatToAntigravity,chatStreamToAntigravity,mergeChatUsage,chatReasoningTokens,parseAntigravityJSON} from "./antigravity-chat-bridge.mjs";
 import {createAntigravityOpaqueReasoning} from "./antigravity-opaque-reasoning.mjs";
-import {ANTIGRAVITY_MODEL_PREFIX,ANTIGRAVITY_NATIVE_PREFIX,antigravityCopilotModels,groupedAntigravityRoutes,hasAntigravityAgentDefault,mergeAntigravityModels} from "./antigravity-models.mjs";
+import {ANTIGRAVITY_MODEL_PREFIX,ANTIGRAVITY_NATIVE_PREFIX,antigravityCopilotModels,copilotPickerGroups,groupedAntigravityRoutes,hasAntigravityAgentDefault,mergeAntigravityModels} from "./antigravity-models.mjs";
 import {createPrivacyTextFragments} from "./privacy-stream.mjs";
 import {createGoogleResponseObserver,googleUsageEvent} from "./antigravity-usage.mjs";
 import {currentRequestContext,observeRequestedModel} from "./request-context.mjs";
@@ -65,7 +65,8 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
   const opaqueReasoning=createAntigravityOpaqueReasoning();
   let active=0,observed=false,catalogModels=null,catalogDefaultSupported=null,catalogDefaultModel=null;
   let catalogRequest = 0, catalogPublished = 0;
-  const nativeWindows=new Map(),catalogGroups=new Map();
+  const nativeWindows=new Map();
+  let catalogGroupCount=null, groupedDefaults=new Map();
   const counts={total:0,google:0,copilot:0,search:0,images:0,failed:0,generation:0,catalog:0,google_generation:0,copilot_generation:0,custom_generation:0};
   const handler=async(req,res)=>{
     const startedAt=performance.timeOrigin+performance.now(),abort=createRequestAbort(req,res);let commitBinding,release=()=>{},releaseControl,session,body,request,converted,finish,phase="validation",usageEvent=null,usageModel=null,outcome=null,usageMode,usageProvider;
@@ -167,15 +168,17 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
           if(catalogSequence>catalogPublished){
             catalogPublished=catalogSequence;
             nativeWindows.clear();for(const[id,entry]of Object.entries(value.models||{}).slice(0,256))if(Number.isSafeInteger(entry?.maxTokens)&&entry.maxTokens>0){nativeWindows.set(id,entry.maxTokens);if(typeof entry.model==="string")nativeWindows.set(entry.model,entry.maxTokens)}
-            catalogGroups.clear();
+            const defaults=new Map();
             for(const [id,group] of Object.entries(merged.groupedModels||{})){
               if(!id.startsWith(ANTIGRAVITY_MODEL_PREFIX)||Object.hasOwn(value.groupedModels??{},id))continue;
               const routes=groupedAntigravityRoutes(id,group,merged.models);
-              if(routes.defaultAlias)catalogGroups.set(id,routes);
+              if(routes.defaultAlias)defaults.set(id,routes.defaultAlias);
             }
+            catalogGroupCount=defaults.size;
+            if(defaults.size)groupedDefaults=defaults;
             catalogDefaultSupported=hasAntigravityAgentDefault(value);
             catalogDefaultModel=catalogDefaultSupported&&merged.defaultAgentModelId.startsWith(ANTIGRAVITY_MODEL_PREFIX)?merged.defaultAgentModelId:null;
-            catalogModels=Object.keys(merged.models).filter(id=>!catalogGroups.has(id)&&
+            catalogModels=Object.keys(merged.models).filter(id=>!defaults.has(id)&&
               (id.startsWith(ANTIGRAVITY_MODEL_PREFIX)||id.startsWith(ANTIGRAVITY_NATIVE_PREFIX)));
           }
           res.writeHead(200,{"Content-Type":"application/json","Cache-Control":"no-store"});res.end(JSON.stringify(merged));return;
@@ -312,14 +315,23 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
         }catch(error){sourceResponseFailed(upstream);await cancelSourceResponse(upstream).catch(()=>{});markResponseErrorOrigin("upstream_event");throw error;}
         return;
       }
-      const copilotModels=antigravityCopilotModels(models(config)),group=catalogGroups.get(body.model);
+      const copilotCatalog=models(config),copilotModels=antigravityCopilotModels(copilotCatalog);
+      const direct=copilotModels.find(model=>model.id===body.model);
       let selectedId=body.model;
-      if(group){
+      if(!direct&&body.model.startsWith(ANTIGRAVITY_MODEL_PREFIX)){
         const effort=body.request?.generationConfig?.thinkingConfig?.thinkingLevel;
-        selectedId=effort===undefined?group.defaultAlias:typeof effort==="string"?group.aliases.get(effort.toLowerCase()):null;
-        if(!selectedId)throw httpError("Unsupported Antigravity reasoning level",400);
+        if(effort===undefined)selectedId=groupedDefaults.get(body.model)??selectedId;
+        else {
+          const group=copilotPickerGroups(copilotModels,copilotCatalog).find(group=>group.id===body.model);
+          if(group){
+            const level=typeof effort==="string"?effort.toLowerCase():null;
+            selectedId=group.rows.find(row=>row.effort===level)?.id;
+            if(!selectedId)throw httpError("Unsupported Antigravity reasoning level",400);
+          }
+        }
       }
-      const selected=copilotModels.find(model=>model.id===selectedId&&(selection===null||selection.includes(model.id)));
+      const candidate=direct??(selectedId===body.model?null:copilotModels.find(model=>model.id===selectedId));
+      const selected=candidate&&(selection===null||selection.includes(candidate.id))?candidate:null;
       if((body.requestType==="agent"||compactBinding?.source==="google")&&!selected){
         if(body.model.startsWith(ANTIGRAVITY_MODEL_PREFIX))throw httpError("The selected Copilot model is unavailable",503);
         const hasSession=body.requestType==="agent"||body.request?.labels?.root_cascade_id||body.request?.labels?.cascade_id;
@@ -471,7 +483,7 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
   };
   handler.snapshot=(config)=>{
     const queue=acquireControl.diagnostics();
-    return {enabled:enabled(config),observed,catalog_models:catalogModels,catalog_group_count:catalogModels===null?null:catalogGroups.size,
+    return {enabled:enabled(config),observed,catalog_models:catalogModels,catalog_group_count:catalogGroupCount,
       catalog_default_supported:catalogDefaultSupported,catalog_default_model:catalogDefaultModel,active,...counts,
       short_control_queue:{active:queue.activeRequests,waiting:queue.queued,queued_total:queue.queuedTotal,rejected:queue.rejected,timed_out:queue.timedOut,wait_ms_max:queue.waitMsMax}};
   };

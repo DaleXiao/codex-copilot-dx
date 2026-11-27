@@ -4,7 +4,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { inspectApplicationProcesses, processFamily, applicationConnections, controlApplicationProcess } from "./application-process.mjs";
 import { inspectApplicationConfiguration } from "./application-configuration.mjs";
 import { createApplicationEvidence } from "./application-evidence.mjs";
-import { planGeminiAppLaunch, inspectGeminiApp } from "./gemini-app.mjs";
+import { hasManagedAntigravityGateway, planGeminiAppLaunch, inspectGeminiApp } from "./gemini-app.mjs";
 import { readUserSettings } from "./user-settings.mjs";
 import { launchWindowsAntigravity } from "./windows-antigravity-app.mjs";
 
@@ -12,7 +12,7 @@ const execute = promisify(execFile), ids = ["codex", "claude_app", "antigravity"
 export function createApplicationControl({ providerRuntime, clientIntegration, imageHostState, env = process.env, home,
   platform = process.platform, port = 2026, host = "127.0.0.1", now = Date.now, exec = execute, wait = sleep,
   inspect = inspectApplicationProcesses, connections = applicationConnections, control = controlApplicationProcess,
-  inspectGemini = inspectGeminiApp, launchWindowsGemini = launchWindowsAntigravity,
+  inspectGemini = inspectGeminiApp, launchWindowsGemini = launchWindowsAntigravity, managedGeminiGateway = hasManagedAntigravityGateway,
   configuration = inspectApplicationConfiguration, openCodexApp, evidence = providerRuntime?.applicationEvidence || createApplicationEvidence({ now }) } = {}) {
   const options = { env, home, platform, exec };
   const states = Object.fromEntries(ids.map(id => [id, { status: "unknown", connection: "pending" }]));
@@ -69,6 +69,7 @@ export function createApplicationControl({ providerRuntime, clientIntegration, i
     }
     if (operation === "focus") return { status: "app_not_running", app: state };
     if (state.status === "running") {
+      if (id === "antigravity" && antigravityBridgeEnabled() && await managedGeminiGateway(options)) return { status: "route_conflict", app: state };
       const pid = app.pid, started = app.started;
       const result = await control(app, "quit", options);
       if (!["sent", "absent"].includes(result)) return { status: "quit_refused", app: state };
@@ -105,15 +106,17 @@ export function createApplicationControl({ providerRuntime, clientIntegration, i
     evidence.clear(id);starting.set(id, now() + 10000);states[id] = { ...states[id], inspection: ++inspection, status: "starting", connection: "pending", needs_reload: false };
     return { status: "opened", app: states[id] };
   }
+  function antigravityBridgeEnabled() {
+    const config = readUserSettings({ env, home, strict: true });
+    return config.gemini_antigravity_enabled === true || typeof config.gemini_antigravity_native_source === "string";
+  }
   async function antigravityPlan(app) {
-    const bridgeEnabled = () => {
-      const config = readUserSettings({ env, home, strict: true });
-      return config.gemini_antigravity_enabled === true || typeof config.gemini_antigravity_native_source === "string";
-    };
-    if (platform === "darwin" && !bridgeEnabled()) return { status: "prepared", command: "/usr/bin/open", args: ["-a", app.app] };
+    const enabled = antigravityBridgeEnabled();
+    if (platform === "darwin" && !enabled) return { status: "prepared", command: "/usr/bin/open", args: ["-a", app.app] };
+    if (enabled && await managedGeminiGateway(options)) return { status: "route_conflict" };
     const verified = await inspectGemini({ ...options, app: app.app });
     if (verified.status !== "stopped") return { status: verified.status === "running" ? "app_changed" : verified.status };
-    return planGeminiAppLaunch(verified, { cloudCodeUrl: bridgeEnabled() ? `http://${host}:${port}/antigravity` : undefined, env, home, platform });
+    return planGeminiAppLaunch(verified, { cloudCodeUrl: enabled ? `http://${host}:${port}/antigravity` : undefined, env, home, platform });
   }
   return { snapshot, evidence, check, busy: () => operations > 0,
     async previewAntigravity() {

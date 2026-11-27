@@ -118,3 +118,24 @@ test("Windows Antigravity shares verified launch between CLI and dashboard contr
   assert.equal(next.status,"opening");
   assert.deepEqual(calls,[{verified:app},{status:"prepared",command:app,args:[],environment:{CLOUD_CODE_URL:"http://127.0.0.1:2026/antigravity"}}]);
 });
+
+test("an active Antigravity administrator gateway stops a CCDX launch before opening or quitting the app", async t => {
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), "ccdx-managed-antigravity-"));
+  t.after(() => fs.rm(home, { recursive: true, force: true }));
+  const env = {}, file = userSettingsPath({ home, env });
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  await fs.writeFile(file, '{"gemini_antigravity_enabled":true}');
+  const app = { status: "stopped", app: "/Applications/Antigravity.app", pid: 10 };
+  const controller = createApplicationControl({ home, env, platform: "darwin",
+    inspect: async () => ({ apps: { antigravity: { ...app } }, processes: [] }),
+    configuration: () => ({ state: "configured", revision: "test" }),
+    managedGeminiGateway: async () => true,
+    inspectGemini: async () => assert.fail("did not need to verify executable"),
+    exec: async () => assert.fail("did not launch"),
+    control: async () => assert.fail("did not quit"),
+  });
+  assert.equal((await controller.previewAntigravity()).status, "route_conflict");
+  assert.equal((await controller.action({ id: "antigravity", operation: "open" })).status, "route_conflict");
+  app.status = "running";
+  assert.equal((await controller.action({ id: "antigravity", operation: "restart", confirmed: true })).status, "route_conflict");
+});

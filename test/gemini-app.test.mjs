@@ -2,11 +2,27 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import { EventEmitter } from "node:events";
-import {inspectGeminiApp,planGeminiAppLaunch} from "../src/gemini-app.mjs";
+import {hasManagedAntigravityGateway,inspectGeminiApp,planGeminiAppLaunch} from "../src/gemini-app.mjs";
 import {launchWindowsAntigravity} from "../src/windows-antigravity-app.mjs";
 
 const info={CFBundleIdentifier:"com.google.GeminiMacOS",CFBundleExecutable:"Gemini",CFBundleShortVersionString:"1.135.1.1291"};
 const options=(metadata=info,processes="")=>{const calls=[];return {calls,platform:"darwin",exists:()=>true,exec:async(command,args)=>{calls.push({command,args});return {stdout:command.endsWith("plutil")?JSON.stringify(metadata):command.endsWith("ps")?processes:""}}}};
+
+test("managed gateway detection reads only the native admin policy and returns an enabled flag", async () => {
+  for (const [platform, env, file] of [
+    ["darwin", {}, "/Library/Application Support/Antigravity/admin_settings.json"],
+    ["win32", { PROGRAMDATA: "C:\\ProgramData" }, "C:\\ProgramData\\Antigravity\\admin_settings.json"],
+  ]) {
+    const read = raw => async (actual, { maxBytes }) => {
+      assert.equal(actual, file);
+      assert.equal(maxBytes, 1024 * 1024);
+      return raw;
+    };
+    assert.equal(await hasManagedAntigravityGateway({ platform, env, readFile: read('\uFEFF{"gateway":{"enabled":true,"apiKey":"fixture"}}') }), true);
+    assert.equal(await hasManagedAntigravityGateway({ platform, env, readFile: read('{"gateway":{"enabled":false}}') }), false);
+    await assert.rejects(hasManagedAntigravityGateway({ platform, env, readFile: read("malformed fixture") }), /^Error: Could not read the Antigravity managed gateway settings$/);
+  }
+});
 
 test("native Gemini identity and existing process are inspected without controlling it",async()=>{
   const input=options(info,"38378 "+path.join("/Applications/Gemini.app","Contents/MacOS/Gemini")+"\n38444 "+path.join("/Applications/Gemini.app","Contents/Helpers/agy"));

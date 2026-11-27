@@ -5,8 +5,24 @@ import {execFile} from "node:child_process";
 import {promisify} from "node:util";
 import { inspectWindowsAntigravity, windowsAntigravityEnvironment, windowsAntigravityPath } from "./windows-antigravity-app.mjs";
 import { googleMacTeam, macAntigravityBundles, macAntigravityBundlePaths } from "./macos-antigravity-app.mjs";
+import { readBoundedFile } from "./bounded-file.mjs";
 
 const execute=promisify(execFile);
+
+export async function hasManagedAntigravityGateway({platform=process.platform,env=process.env,readFile=readBoundedFile}={}) {
+  const directory=platform==="win32"?Object.entries(env).find(([key])=>key.toLowerCase()==="programdata")?.[1]:null;
+  const file=platform==="darwin"?"/Library/Application Support/Antigravity/admin_settings.json":
+    directory&&path.win32.join(directory,"Antigravity","admin_settings.json");
+  if(!file)return false;
+  try {
+    const raw=await readFile(file,{maxBytes:1024*1024,encoding:"utf8"});
+    const value=JSON.parse(raw.replace(/^\uFEFF/,""));
+    return value?.gateway?.enabled===true;
+  } catch(error) {
+    if(error.code==="ENOENT")return false;
+    throw new Error("Could not read the Antigravity managed gateway settings");
+  }
+}
 
 export async function inspectGeminiApp({platform=process.platform,app,home=os.homedir(),env=process.env,exec=execute,exists=fs.existsSync}={}) {
   if(platform==="win32"){

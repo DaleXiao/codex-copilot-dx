@@ -6,7 +6,7 @@ import {promisify} from "node:util";
 import {createAntigravityHandler} from "./antigravity-handler.mjs";
 import {createAntigravityImages} from "./antigravity-images.mjs";
 import {createCopilotWeb} from "./copilot-web.mjs";
-import {inspectGeminiApp,planGeminiAppLaunch} from "./gemini-app.mjs";
+import {hasManagedAntigravityGateway,inspectGeminiApp,planGeminiAppLaunch} from "./gemini-app.mjs";
 import {launchWindowsAntigravity} from "./windows-antigravity-app.mjs";
 import {readUserSettings,userSettingsPath} from "./user-settings.mjs";
 import {readAccessSettings} from "./access-settings.mjs";
@@ -186,7 +186,9 @@ export function createAntigravityRuntime({client,models=()=>[],refreshModels,pri
     app=await inspect({home,env,platform,exec});route=baseUrl+"/antigravity";
     if(["open","preview"].includes(operation)){
       const config=settings();
-      const plan=planGeminiAppLaunch(app,{cloudCodeUrl:config.enabled||config.native_source?route:undefined,env,home,platform});
+      const cloudCodeUrl=config.enabled||config.native_source?route:undefined;
+      const plan=planGeminiAppLaunch(app,{cloudCodeUrl,env,home,platform,
+        managedGateway:cloudCodeUrl!==undefined&&await hasManagedAntigravityGateway({platform,env})});
       lastOperation={action:operation,status:plan.status};
       if(operation==="open"&&plan.status==="prepared"){
         if(platform==="win32")await launchWindows(plan);

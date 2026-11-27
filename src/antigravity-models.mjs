@@ -54,6 +54,15 @@ export function groupAntigravityModels(listed, catalog) {
   return [...groups.values()];
 }
 
+export function copilotPickerGroups(variants, catalog) {
+  const groups = groupAntigravityModels(variants.map(row => ({ ...row, name: row.displayName })), catalog);
+  return groups.flatMap(group => {
+    const id = ANTIGRAVITY_MODEL_PREFIX + group.id;
+    const rows = group.efforts.filter(row => row.effort && row.id === id + "-" + row.effort);
+    return rows.length >= 2 ? [{ id, rows }] : [];
+  });
+}
+
 // Use the upstream's existing agent-default field only when it names a model
 // in the same catalog. Do not invent a default contract for an unknown catalog.
 export function hasAntigravityAgentDefault(catalog) {
@@ -109,10 +118,8 @@ export function mergeAntigravityModels(googleCatalog,copilotCatalog,selection=nu
   if(groupCapable||nativeGrouping(googleCatalog)){
     const copilot=entries.filter(row=>row.id.startsWith(ANTIGRAVITY_MODEL_PREFIX));
     groupedModels={...googleCatalog.groupedModels};
-    for(const group of groupAntigravityModels(copilot.map(row=>({...row,name:row.displayName})),copilotCatalog)){
-      const parent=ANTIGRAVITY_MODEL_PREFIX+group.id;
-      const rows=group.efforts.filter(row=>row.effort&&row.id===parent+"-"+row.effort);
-      if(rows.length<2||Object.hasOwn(models,parent)||Object.hasOwn(groupedModels,parent))continue;
+    for(const {id:parent,rows} of copilotPickerGroups(copilot,copilotCatalog)){
+      if(Object.hasOwn(models,parent)||Object.hasOwn(groupedModels,parent))continue;
       const chosen=rows.find(row=>row.id===defaultModel)||rows.find(row=>row.effort==="medium")||rows[0];
       const displayName=models[chosen.id].displayName.split(" · Copilot")[0]+" · Copilot";
       // Retain the former parent's enum for sessions that selected it in 1.4.25.

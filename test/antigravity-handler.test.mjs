@@ -25,6 +25,21 @@ test("newly advertised Hydrogen routes xhigh while a native tiered model keeps G
   assert.equal(native.handler.snapshot().google_generation,1);
 });
 
+test("Gemini-signed history stays on its native route and is diagnosed before Copilot dispatch",async()=>{
+  const f=fixture(), errors=[];
+  const signedTurn={role:"model",parts:[{text:"fixture answer",thoughtSignature:"fixture-signature"}]};
+  const request=body();
+  request.request.contents.push(signedTurn);
+  const rejected=await runWithRequestContext({onHttpError:value=>errors.push(value)},()=>invoke(f.handler,request).done);
+  assert.equal(rejected.status,400);
+  assert.match(JSON.parse(rejected.text).error,/Message 2, part 1.*Gemini thought signature/);
+  assert.doesNotMatch(rejected.text,/fixture-signature|fixture answer/);
+  assert.deepEqual(errors.map(error=>[error.code,error.origin]),[["ccdx_antigravity_thought_signature","client_validation"]]);
+  assert.equal(f.copilot.length+f.google.length,0);
+  assert.equal((await invoke(f.handler,{...request,model:"gemini-3.8-flash-tiered"}).done).status,200);
+  assert.deepEqual(JSON.parse(f.google[0].request.body).request.contents.at(-1),signedTurn);
+});
+
 test("Neon aliases send and report the chosen effort and preserve both Copilot reasoning usage formats", async () => {
   const neon = { ...catalog.data[0], id: "gemini-4-neon", capabilities: {
     ...catalog.data[0].capabilities, supports: { reasoning_effort: ["low", "medium", "high", "xhigh"] },

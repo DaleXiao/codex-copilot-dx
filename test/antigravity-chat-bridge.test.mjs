@@ -96,6 +96,29 @@ test("unsupported attachments are refused rather than silently omitted", () => {
   assert.throws(() => antigravityToChat(request, { model: "gemini-4-carbon" }), /not supported/);
 });
 
+test("unsupported Gemini parts identify the form and position without echoing part data", () => {
+  const fixtures = [
+    [{ text: "fixture", thoughtSignature: "fixture-signature" }, "ccdx_antigravity_thought_signature"],
+    [{ functionCall: { name: "probe", args: {} }, thought_signature: "fixture-signature" }, "ccdx_antigravity_thought_signature"],
+    [{ fileData: { fileUri: "https://fixture.invalid/file" } }, "ccdx_antigravity_file_reference"],
+    [{ file_data: { file_uri: "fixture-path" } }, "ccdx_antigravity_file_reference"],
+    [{ text: "fixture", partMetadata: { "fixture-key": "fixture-value" } }, "ccdx_antigravity_part_metadata"],
+    [{ text: "fixture", "fixture-key": "fixture-value" }, "ccdx_antigravity_message_part"],
+  ];
+  for (const [part, code] of fixtures) {
+    assert.throws(() => antigravityToChat({ contents: [
+      { role: "user", parts: [{ text: "fixture" }] },
+      { role: "model", parts: [{ text: "fixture" }, part] },
+    ] }, { model: "gemini-4-carbon" }), error => {
+      assert.equal(error.code, code);
+      assert.equal(error.statusCode, 400);
+      assert.match(error.message, /^Message 2, part 2\./);
+      assert.doesNotMatch(error.message, /fixture/);
+      return true;
+    });
+  }
+});
+
 test("stream emits text promptly and reconstructs split tool arguments without losing integers", async () => {
   const { originalNames } = antigravityToChat({ contents: [{ role: "user", parts: [{ text: "hi" }] }], tools: [{ functionDeclarations: [declaration] }] }, { model: "fixture" });
   const events = [

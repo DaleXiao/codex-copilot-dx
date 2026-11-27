@@ -13,9 +13,23 @@ const types = new Set(["OBJECT", "ARRAY", "STRING", "NUMBER", "INTEGER", "BOOLEA
 const schemaChildren = new Set(["items", "additionalProperties", "not", "if", "then", "else", "contains", "propertyNames"]);
 const schemaMaps = new Set(["properties", "patternProperties", "$defs", "definitions", "dependentSchemas"]);
 const schemaLists = new Set(["allOf", "anyOf", "oneOf", "prefixItems"]);
+const chatPartFields = new Set(["text", "thought", "inlineData", "inline_data", "functionCall", "functionResponse"]);
 
-function invalid(message, statusCode = 400) {
-  return Object.assign(new Error(message), { code: "ccdx_antigravity_protocol", statusCode });
+function invalid(message, statusCode = 400, code = "ccdx_antigravity_protocol") {
+  return Object.assign(new Error(message), { code, statusCode });
+}
+
+function unsupportedPart(part, messageIndex, partIndex) {
+  const location = "Message " + (messageIndex + 1) + ", part " + (partIndex + 1) + ". ";
+  if (object(part)) {
+    if (part.thoughtSignature || part.thought_signature)
+      return invalid(location + "The Copilot Chat route cannot use a Gemini thought signature. Continue with the original Gemini model or start a new Copilot conversation.", 400, "ccdx_antigravity_thought_signature");
+    if (Object.hasOwn(part, "fileData") || Object.hasOwn(part, "file_data"))
+      return invalid(location + "The Copilot Chat route cannot use a Gemini file reference.", 400, "ccdx_antigravity_file_reference");
+    if (Object.hasOwn(part, "partMetadata") || Object.hasOwn(part, "part_metadata"))
+      return invalid(location + "The Copilot Chat route cannot represent Gemini part metadata.", 400, "ccdx_antigravity_part_metadata");
+  }
+  return invalid(location + "Unsupported Gemini message part.", 400, "ccdx_antigravity_message_part");
 }
 
 // Preserve the spelling of numbers which JavaScript cannot round-trip.
@@ -107,10 +121,11 @@ export function antigravityToChat(request, { model, effort, stream = true, reaso
       content = [];calls = [];reasoning = "";
     };
     for (let j = 0; j < item.parts.length; j++) {
-      const part = item.parts[j];if (!object(part) || part.thoughtSignature || part.thought_signature) throw invalid("Unsupported Gemini message part");
+      const part = item.parts[j];
+      if (!object(part) || part.thoughtSignature || part.thought_signature) throw unsupportedPart(part, i, j);
       const count = [typeof part.text === "string", Boolean(part.inlineData || part.inline_data), Boolean(part.functionCall), Boolean(part.functionResponse)].filter(Boolean).length;
-      if (count !== 1 || Object.keys(part).some(key => !["text", "thought", "inlineData", "inline_data", "functionCall", "functionResponse"].includes(key)))
-        throw invalid("Unsupported Gemini message part");
+      if (count !== 1 || Object.keys(part).some(key => !chatPartFields.has(key)))
+        throw unsupportedPart(part, i, j);
       if (typeof part.text === "string") {
         if (part.thought) { if (role !== "assistant") throw invalid("Invalid Gemini thought");reasoning += part.text; }
         else content.push({ type: "text", text: part.text });
@@ -128,7 +143,7 @@ export function antigravityToChat(request, { model, effort, stream = true, reaso
         if (!id || pending.get(id) !== response.name) throw invalid("Gemini function response has no matching call");
         pending.delete(id);const at = queue.indexOf(id);if (at >= 0) queue.splice(at, 1);
         messages.push({ role: "tool", tool_call_id: id, content: JSON.stringify(response.response) });
-      } else throw invalid("Unsupported Gemini message part");
+      } else throw unsupportedPart(part, i, j);
     }
     flush();
   }

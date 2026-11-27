@@ -23,6 +23,8 @@ const MAX_REPLY=64*1024*1024;
 const GOOGLE_ORIGIN="https://daily-cloudcode-pa.googleapis.com";
 const controlMethods=new Set(["loadCodeAssist","fetchUserInfo","fetchAdminControls","fetchAvailableModels","retrieveUserQuotaSummary","listExperiments","buildWithGooglePlugins","writeTrajectoryAcls","cascadeNuxes"]);
 const smallReadControls=new Set(["loadCodeAssist","fetchUserInfo","fetchAdminControls","fetchAvailableModels","retrieveUserQuotaSummary","listExperiments"]);
+// Bare picker enums in the gateway's allocation range have no stable source or model identity.
+const isGatewayPlaceholder = model => typeof model === "string" && /^MODEL_PLACEHOLDER_M5\d{2}$/i.test(model);
 const CONTROL_BODY_BYTES=8*1024;
 // Reserve a full slot so many tiny bodies cannot fan out unbounded upstream calls.
 const controlSlot={headers:{"content-length":String(CONTROL_BODY_BYTES)}};
@@ -62,8 +64,9 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
   const acquireControl=createRequestAdmission({maxBytes:4*CONTROL_BODY_BYTES,maxQueued:8});
   const opaqueReasoning=createAntigravityOpaqueReasoning();
   let active=0,observed=false,catalogModels=null,catalogDefaultSupported=null,catalogDefaultModel=null;
+  let catalogRequest = 0, catalogPublished = 0;
   const nativeWindows=new Map(),catalogGroups=new Map();
-  const counts={total:0,google:0,copilot:0,search:0,images:0,failed:0};
+  const counts={total:0,google:0,copilot:0,search:0,images:0,failed:0,generation:0,catalog:0,google_generation:0,copilot_generation:0,custom_generation:0};
   const handler=async(req,res)=>{
     const startedAt=performance.timeOrigin+performance.now(),abort=createRequestAbort(req,res);let commitBinding,release=()=>{},releaseControl,session,body,request,converted,finish,phase="validation",usageEvent=null,usageModel=null,outcome=null,usageMode,usageProvider;
     const releaseInput=()=>{
@@ -98,6 +101,9 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
       const match=/^\/v1internal(?::|\/)([A-Za-z][A-Za-z0-9]*)$/.exec(route);
       if(!local.pathname.startsWith(PREFIX+"/")||!match)throw httpError("Unknown Antigravity endpoint",404);
       const method=match[1];
+      const catalogSequence=method==="fetchAvailableModels"?++catalogRequest:0;
+      const generation=["streamGenerateContent","generateContent"].includes(method);
+      if(generation)counts.generation++;
       if(controlMethods.has(method))applicationEvidence?.notice(req,res,"antigravity","control");
       if(req.method==="POST"&&!/^application\/json(?:;|$)/i.test(req.headers["content-type"]||""))throw httpError("Antigravity requires JSON",415);
       const length=req.headers["content-length"];
@@ -118,11 +124,13 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
       if(compacting&&context){context.purpose=requestPurpose(req.headers["x-ccdx-purpose"],"compaction");context.streamPerformance?.setPurpose(context.purpose)}
       if(compacting)markRequestObservation({compaction:1});
       if(body?.model)observeRequestedModel(body);
+      markRequestObservation({requested_model:context?.requestedModel});
+      if(generation&&isGatewayPlaceholder(body?.model)){
+        throw Object.assign(httpError("Antigravity sent an internal model identifier. Reopen the app and reselect the model.",409),{code:"ccdx_antigravity_model_placeholder"});
+      }
       const compactBinding=compacting?await resolveCompactionSource(body,config):null;
       if(compactBinding?.model)body={...body,model:compactBinding.model};
-      markRequestObservation({requested_model:context?.requestedModel});
       abort.setTimeout(upstreamTimeoutMs,"upstream_timeout");
-      const generation=["streamGenerateContent","generateContent"].includes(method);
       const native=async()=>{
         counts.google++;
         if(generation){
@@ -136,7 +144,7 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
           const internal=options.internal===true,path=internal?"/v1internal:streamGenerateContent?alt=sse":route+local.search;
           const serialized=value?JSON.stringify(value):undefined,signal=options.signal||abort.signal;
           const perform=()=>{
-            if(generation){abort.setTimeout(upstreamTimeoutMs,"upstream_timeout");markUpstreamStarted(internal||method==="streamGenerateContent")}
+            if(generation){counts.google_generation++;abort.setTimeout(upstreamTimeoutMs,"upstream_timeout");markUpstreamStarted(internal||method==="streamGenerateContent")}
             return fetchGoogle(googleOrigin+path,{method:internal?"POST":req.method,headers:{...nativeHeaders(req),...(value?{"content-type":"application/json"}:{}),...(internal?{accept:"text/event-stream"}:{})},
               ...(serialized?{body:serialized}:{}),signal,redirect:"error"});
           };
@@ -152,18 +160,24 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
         if(!upstream.ok)markResponseErrorOrigin("upstream_http");
         if(method==="fetchAvailableModels"&&upstream.ok){
           const value=JSON.parse(await readBoundedResponseText(upstream,{maxBytes:8*1024*1024,signal:abort.signal,label:"Google model catalog"}));
-          nativeWindows.clear();for(const[id,entry]of Object.entries(value.models||{}).slice(0,256))if(Number.isSafeInteger(entry?.maxTokens)&&entry.maxTokens>0){nativeWindows.set(id,entry.maxTokens);if(typeof entry.model==="string")nativeWindows.set(entry.model,entry.maxTokens)}
-          const merged=mergeAntigravityModels(value,models(config),selectedModels(config),defaultModel(config),nativeModels(config),groupCapable(req.headers["user-agent"]));
-          catalogGroups.clear();
-          for(const [id,group] of Object.entries(merged.groupedModels||{})){
-            if(!id.startsWith(ANTIGRAVITY_MODEL_PREFIX)||Object.hasOwn(value.groupedModels??{},id))continue;
-            const routes=groupedAntigravityRoutes(id,group,merged.models);
-            if(routes.defaultAlias)catalogGroups.set(id,routes);
+          const latest=requestSettings?.();
+          if(!enabled(latest))throw httpError("Antigravity integration is disabled",503);
+          const merged=mergeAntigravityModels(value,models(latest),selectedModels(latest),defaultModel(latest),nativeModels(latest),groupCapable(req.headers["user-agent"]));
+          counts.catalog++;
+          if(catalogSequence>catalogPublished){
+            catalogPublished=catalogSequence;
+            nativeWindows.clear();for(const[id,entry]of Object.entries(value.models||{}).slice(0,256))if(Number.isSafeInteger(entry?.maxTokens)&&entry.maxTokens>0){nativeWindows.set(id,entry.maxTokens);if(typeof entry.model==="string")nativeWindows.set(entry.model,entry.maxTokens)}
+            catalogGroups.clear();
+            for(const [id,group] of Object.entries(merged.groupedModels||{})){
+              if(!id.startsWith(ANTIGRAVITY_MODEL_PREFIX)||Object.hasOwn(value.groupedModels??{},id))continue;
+              const routes=groupedAntigravityRoutes(id,group,merged.models);
+              if(routes.defaultAlias)catalogGroups.set(id,routes);
+            }
+            catalogDefaultSupported=hasAntigravityAgentDefault(value);
+            catalogDefaultModel=catalogDefaultSupported&&merged.defaultAgentModelId.startsWith(ANTIGRAVITY_MODEL_PREFIX)?merged.defaultAgentModelId:null;
+            catalogModels=Object.keys(merged.models).filter(id=>!catalogGroups.has(id)&&
+              (id.startsWith(ANTIGRAVITY_MODEL_PREFIX)||id.startsWith(ANTIGRAVITY_NATIVE_PREFIX)));
           }
-          catalogDefaultSupported=hasAntigravityAgentDefault(value);
-          catalogDefaultModel=catalogDefaultSupported&&merged.defaultAgentModelId.startsWith(ANTIGRAVITY_MODEL_PREFIX)?merged.defaultAgentModelId:null;
-          catalogModels=Object.keys(merged.models).filter(id=>!catalogGroups.has(id)&&
-            (id.startsWith(ANTIGRAVITY_MODEL_PREFIX)||id.startsWith(ANTIGRAVITY_NATIVE_PREFIX)));
           res.writeHead(200,{"Content-Type":"application/json","Cache-Control":"no-store"});res.end(JSON.stringify(merged));return;
         }
         const nativeStreaming=/text\/event-stream/i.test(upstream.headers.get("content-type")||"");
@@ -226,6 +240,7 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
         observed=true;return await native();
       }
       if(req.method!=="POST"||!body||typeof body.model!=="string"||!body.request)throw httpError("Invalid Antigravity generation request",400);
+      if(isGatewayPlaceholder(body.model))throw httpError("Stored Antigravity model identifier is no longer usable.",409);
       const { selection, copilotTimeoutMs:requestCopilotTimeoutMs, preferred }=generationSettings(config);
       if(body.model.startsWith(ANTIGRAVITY_NATIVE_PREFIX)){
         const selected=resolveNativeModel(body.model,config);
@@ -242,7 +257,7 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
         markRequestObservation({usage_state:"pending",context_window_tokens:selected.maxTokens});
         const original={model:selected.model,request:body.request};
         const open=(value,options={})=>source.client.gemini(value,{...options,stream:options.internal===true||stream,sourceBodyManaged:true,
-          onUpstreamStart:()=>abort.setTimeout(upstreamTimeoutMs,"upstream_timeout")});
+          onUpstreamStart:()=>{counts.custom_generation++;abort.setTimeout(upstreamTimeoutMs,"upstream_timeout")}});
         session=privacy?.prepareSession?await privacy.prepareSession(original,{protocol:"gemini",client:"gemini",signal:abort.signal}):passthrough(original);
         phase="upstream";
         const upstream=compacting&&compaction?await compaction.run({body:session.body,protocol:"gemini",scope:source.profileId("gemini"),
@@ -367,6 +382,7 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
       const callOptions={signal:abort.signal,sourceBodyManaged:true,observeBodyWrite:true,retryOptions:{retries:0},
         ...(compacting?{}:{onBodySent:releaseInput}),
         onUpstreamStart:()=>{
+          counts.copilot_generation++;
           abort.setTimeout(requestCopilotTimeoutMs??upstreamTimeoutMs,"upstream_timeout");
           markRequestObservation({reasoning_effort_sent:reasoningEffort});
         }};

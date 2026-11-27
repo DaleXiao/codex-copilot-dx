@@ -297,6 +297,7 @@ export function responsesToChat(body, { reasoningEfforts, cacheSupport } = {}) {
 }
 
 function uid() { return randomUUID().replace(/-/g, ""); }
+function chatReasoningId() { return `rs_ccdx_${uid()}`; }
 
 function chatTerminal(finishReason) {
   const reason = finishReason === "length" ? "max_output_tokens"
@@ -324,7 +325,7 @@ export function chatToResponses(chatResp, model, { toolChoice, toolAdapter } = {
     return terminal.status === "completed" ? !allowed.has(name) : name && ![...allowed].some(candidate => candidate.startsWith(name));
   }) || terminal.status === "completed" && toolChoice.allowed_tools.mode === "required" && !msg?.tool_calls?.length)) throw disallowedUpstreamTool();
   for (const { text, thought } of chatOutputParts(msg?.content)) {
-    output.push(thought ? { type: "reasoning", id: `rs_${uid()}`, summary: [{ type: "summary_text", text }] }
+    output.push(thought ? { type: "reasoning", id: chatReasoningId(), summary: [{ type: "summary_text", text }] }
       : { type: "message", id: `msg_${uid()}`, role: "assistant", status: terminal.status, content: [{ type: "output_text", text }] });
   }
   if (msg?.tool_calls) for (const tc of msg.tool_calls) output.push(toolAdapter
@@ -469,7 +470,7 @@ export async function forwardToChat(chatReq, emitEvent, onDone, onError, options
 
   async function appendReasoning(text) {
     if (!reasoningItem) {
-      reasoningItem = { id: `rs_${uid()}`, outputIndex: nextOutputIndex++, text: "" };
+      reasoningItem = { id: chatReasoningId(), outputIndex: nextOutputIndex++, text: "" };
       const { id, outputIndex } = reasoningItem;
       await emitEvent("response.output_item.added", { output_index: outputIndex, item: { type:"reasoning", id, summary:[] } });
       await emitEvent("response.reasoning_summary_part.added", { item_id:id, output_index:outputIndex, summary_index:0, part:{ type:"summary_text", text:"" } });

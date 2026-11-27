@@ -116,7 +116,7 @@ export function classifyAdapterRoute(method, pathname) {
   if (method === "GET" && pathname === "/v1/models") return "models";
   if (["/v1/images/generations", "/v1/images/edits"].includes(pathname)) return "images";
   if (pathname === "/mcp/image") return "image_mcp";
-  if (pathname.startsWith("/antigravity/")) return ["/antigravity/v1internal:streamGenerateContent", "/antigravity/v1internal:generateContent"].includes(pathname) ? "antigravity" : "antigravity_control";
+  if (pathname.startsWith("/antigravity/")) return /^\/antigravity\/v1internal[:/](?:streamGenerateContent|generateContent)$/.test(pathname) ? "antigravity" : "antigravity_control";
   return "not_found";
 }
 

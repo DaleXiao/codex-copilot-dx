@@ -22,6 +22,7 @@ test("newly advertised Hydrogen routes xhigh while a native tiered model keeps G
   assert.equal(result.status,200);assert.equal(f.copilot[0].value.model,hydrogen.id);assert.equal(f.copilot[0].value.reasoning_effort,"xhigh");
   const native=fixture();assert.equal((await invoke(native.handler,body("gemini-3.8-flash-tiered")).done).status,200);
   assert.equal(native.copilot.length,0);assert.equal(JSON.parse(native.google[0].request.body).model,"gemini-3.8-flash-tiered");
+  assert.equal(native.handler.snapshot().google_generation,1);
 });
 
 test("Neon aliases send and report the chosen effort and preserve both Copilot reasoning usage formats", async () => {
@@ -61,6 +62,8 @@ test("Neon aliases send and report the chosen effort and preserve both Copilot r
     assert.equal(result.status, 200);
     assert.equal(wire.model, neon.id);
     assert.equal(wire.reasoning_effort, effort);
+    assert.equal(f.handler.snapshot().copilot_generation, 1);
+    assert.equal(f.handler.snapshot().google_generation, 0);
     assert.equal(metrics.snapshot().recent_requests.at(-1).context.reasoning_effort_sent, effort);
     const projected = stream ? JSON.parse(result.text.split("\n").filter(line => line.includes('"usageMetadata"')).at(-1).slice(6)) : JSON.parse(result.text);
     assert.deepEqual(projected.response.usageMetadata,
@@ -429,6 +432,7 @@ test("an explicitly selected native Gemini alias preserves tool numbers and uses
   const selected = { id, model: "gemini-model", source: "api_fixture", maxTokens: 1000000, transport: {
     profileId: () => "api-fixture-profile",
     client: { gemini: async (value, options) => {
+      options.onUpstreamStart();
       calls.push({ value, options });
       if (options.countTokens) return Response.json({ totalTokens: 32 });
       return new Response('data: {"candidates":[{"content":{"role":"model","parts":[{"functionCall":{"name":"lookup","args":{"key":9007199254740993}}}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":12,"candidatesTokenCount":2,"totalTokenCount":14}}\n\n',
@@ -436,16 +440,20 @@ test("an explicitly selected native Gemini alias preserves tool numbers and uses
     } },
   } };
   const f = fixture({ resolveNativeModel: model => model === id ? selected : null, guardSource: (_, source) => guarded.push(source) });
-  const result = await invoke(f.handler, body(id)).done;
+  const request = body(id);
+  request.request.contents.push({ role: "user", parts: [] });
+  const result = await invoke(f.handler, request).done;
   assert.equal(result.status, 200);
   assert.match(result.text, /"response":\{"candidates".*9007199254740993/);
   assert.equal(calls[0].value.model, "gemini-model");
+  assert.deepEqual(calls[0].value.request.contents, request.request.contents);
   assert.equal(calls[0].options.stream, true);
   assert.deepEqual(guarded, ["api_fixture"]);
   assert.equal(f.records[0].provider, "api_fixture");
   assert.equal(f.records[0].usage.total_tokens, 14);
   assert.equal((await invoke(f.handler, body(id), { url: "/antigravity/v1internal:countTokens" }).done).text, '{"totalTokens":32}');
   assert.equal((await invoke(f.handler, body(id + "-removed")).done).status, 503);
+  assert.equal(f.handler.snapshot().custom_generation, 1);
   assert.equal(f.google.length + f.copilot.length, 0);
 });
 
@@ -587,6 +595,41 @@ test("successful native model discovery acknowledges the latest configuration",a
   const f=fixture({fetchGoogle:async()=>Response.json({models:{native:{model:"NATIVE"}}})});
   const result=await invoke(f.handler,{}, {url:"/antigravity/v1internal:fetchAvailableModels"}).done;
   assert.equal(result.status,200);assert.ok(f.handler.snapshot().catalog_models.includes(alias));assert.ok(JSON.parse(result.text).models[alias]);
+});
+
+test("model placeholders from an old client never enter Google or Copilot generation", async () => {
+  const f=fixture();
+  for(const path of [":generateContent","/generateContent",":streamGenerateContent","/streamGenerateContent"]){
+    const reply=await invoke(f.handler,body("MODEL_PLACEHOLDER_M501"),{url:"/antigravity/v1internal"+path}).done;
+    assert.equal(reply.status,409);
+    assert.match(reply.text,/internal model identifier/);
+  }
+  assert.equal(f.handler.snapshot().generation,4);
+  assert.equal(f.handler.snapshot().google_generation,0);
+  assert.equal(f.google.length,0);
+  assert.equal(f.copilot.length,0);
+});
+
+test("late discovery replies respect the latest local authorization and cannot replace a newer snapshot", async () => {
+  const oldStarted=Promise.withResolvers(),oldFinished=Promise.withResolvers();
+  let calls=0,allowed=true;
+  const f=fixture({models:()=>allowed?catalog:[],fetchGoogle:async()=>{
+    if(++calls===1){oldStarted.resolve();await oldFinished.promise;return Response.json({models:{old:{}},defaultAgentModelId:"old"});}
+    return Response.json({models:{new:{}}});
+  }});
+  const url="/antigravity/v1internal:fetchAvailableModels";
+  const older=invoke(f.handler,{},{url}).done;
+  await oldStarted.promise;
+  allowed=false;
+  const newer=await invoke(f.handler,{},{url}).done;
+  assert.deepEqual(Object.keys(JSON.parse(newer.text).models),["new"]);
+  oldFinished.resolve();
+  assert.deepEqual(Object.keys(JSON.parse((await older).text).models),["old"]);
+  assert.deepEqual(f.handler.snapshot().catalog_models,[]);
+  assert.equal(f.handler.snapshot().catalog_default_supported,false);
+  assert.equal(f.handler.snapshot().catalog,2);
+  assert.equal((await invoke(f.handler,body()).done).status,503);
+  assert.equal(f.copilot.length,0);
 });
 
 test("Copilot JSON usage reaches the Gemini ledger without dropping zero cache or reasoning counts",async()=>{

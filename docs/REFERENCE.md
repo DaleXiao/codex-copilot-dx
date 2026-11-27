@@ -127,6 +127,10 @@ On Windows, install the official **Antigravity App** for x64 or ARM64 from [Goog
 
 For native Antigravity App 2.35 or later in the 2.x series, Copilot variants of a supported model can occupy one menu row with the available thinking levels. CCDX also recognizes compatible grouping in Google's catalog. Existing effort aliases stay available for routing. `ccdx app antigravity status --format json` reports `activity.catalog_group_count` after the app retrieves its catalog.
 
+To verify a selected model, compare `ccdx app antigravity status --format json` before and after one answer. In `activity`, `catalog` counts successful model catalog responses and `generation` counts generation requests that reached CCDX. `copilot_generation`, `custom_generation` and `google_generation` count upstream starts, including internal generation calls. They do not count successful answers. If only the catalog counter increases, check the client's error and sign-in mode. A Google Cloud session can resolve its model and call Vertex AI directly, outside the local endpoint. The model picker alone cannot verify routing through CCDX.
+
+If CCDX returns an internal model identifier error, reopen the app from CCDX and reselect the model. CCDX requires a named model ID and rejects ambiguous picker identifiers before sending the request upstream.
+
 `disable` removes Copilot model access and refuses later Copilot/background
 requests without sending them to Google. Quit and reopen Gemini through CCDX
 after disabling to restore its native endpoint. This integration is separate
@@ -320,7 +324,7 @@ The Antigravity App can ask CCDX to check for a completed turn immediately with 
 
 Only a fully idle model stop wakes the reader. The normal scan remains available when the hook is absent or local completion records arrive later. Both paths apply the same duration threshold and deduplication. The hook stores an empty local marker and does not record its input.
 
-Web and terminal colors are independent. Web appearance is browser-local. **Settings → Web appearance → Grid paper** gives the light theme a warm paper color and faint gray grid, with a matching dark variant. The terminal keeps its selected color and animation; NO_COLOR, dumb/non-TTY and narrow output remain supported. Reduced motion disables decorative movement. Closed tabs and hidden views stop scheduled work. Model/usage data loads on demand; the Web UI adds no inference calls.
+Web appearance is saved in this browser. In **Settings → Web appearance**, choose **Inter** (default), **System Sans** or **Mono**. Inter is bundled for Latin text. The browser uses local fonts for other scripts. **Grid paper** gives the light theme a warm paper color and faint gray grid, with a matching dark variant. The terminal keeps its selected color and animation; NO_COLOR, dumb/non-TTY and narrow output remain supported. Reduced motion disables decorative movement. Closed tabs and hidden views stop scheduled work. Model/usage data loads on demand; the Web UI adds no inference calls.
 
 Activity, flow and current-run counters use one visible-page SSE connection at `/_ccdx/activity`. TUI activity subscribes to the same in-process notifications. Request starts, model/provider selection, first output, retries and completion coalesce within 50 ms; ordinary output chunks do not trigger pushes. A connection starts with current memory-only state, including the existing recent-request limits. Reconnection restores current state and totals; it does not replay animations or recover arbitrary old history. No replay buffer or durable event store is added.
 

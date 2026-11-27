@@ -270,6 +270,9 @@ try {
         await page.goto(`http://127.0.0.1:${server.address().port}/`);
         await page.locator("#page-title").waitFor();
         const fonts = await page.locator("#page-title").evaluate(node => getComputedStyle(node).fontFamily);
+        assert.match(fonts, /^Inter,/);
+        const interLoaded = await page.evaluate(async () => (await document.fonts.load('400 13px Inter', 'CCDX')).some(font => font.status === "loaded"));
+        assert.equal(interLoaded, true);
         assert.match(fonts, /Microsoft YaHei UI/);assert.match(fonts, /PingFang SC/);
         if (engine === "chromium" && process.platform === "win32" && language === "zh") {
           const cdp = await page.context().newCDPSession(page);
@@ -943,6 +946,19 @@ try {
         await page.locator("#web-color-theme").focus();
         assert.deepEqual(await page.locator("#web-color-theme").evaluate(node => ({ radius: getComputedStyle(node).borderRadius, shadow: getComputedStyle(node).boxShadow, appearance: getComputedStyle(node).appearance })),
           { radius: "0px", shadow: "none", appearance: "none" });
+        const fontSelect = page.locator("#web-font");
+        assert.equal(await fontSelect.inputValue(), "inter");
+        for (const [value, family] of [["mono", /^ui-monospace/], ["system", /^system-ui/], ["inter", /^Inter,/]]) {
+          await fontSelect.selectOption(value);
+          const appearance = await page.evaluate(() => ({
+            font: getComputedStyle(document.documentElement).fontFamily,
+            palette: document.documentElement.dataset.palette,
+            persistedFont: localStorage.getItem("ccdx.dashboard.font"),
+          }));
+          assert.match(appearance.font, family);
+          assert.equal(appearance.palette, palette);
+          assert.equal(appearance.persistedFont, value);
+        }
         await page.locator('[data-install-platform="windows"]').click();
         assert.match(await page.locator("#install-command").innerText(), /v1\.2\.4\/install\.ps1/);
         assert.doesNotMatch(await page.locator("#install-command").innerText(), /Bypass|allow-remote|ExecutionPolicy/);

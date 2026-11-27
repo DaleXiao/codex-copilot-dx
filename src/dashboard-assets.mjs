@@ -1,6 +1,7 @@
 export const DASHBOARD_ASSETS = new Map([
   ["/", ["./dashboard/index.html", "text/html; charset=utf-8"]],
   ["/ui.css", ["./dashboard/ui.css", "text/css; charset=utf-8"]],
+  ["/inter-latin.woff2", ["./dashboard/fonts/inter-latin.woff2", "font/woff2"]],
   ["/language.js", ["./dashboard/language.js", "text/javascript; charset=utf-8"]],
   ["/language-en.js", [null, "text/javascript; charset=utf-8"]],
   ["/language-boot.js", ["./dashboard/language-boot.js", "text/javascript; charset=utf-8"]],

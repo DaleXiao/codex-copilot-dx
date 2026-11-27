@@ -16,7 +16,7 @@ function node(textContent = "", attributes = {}) {
 }
 
 function load({ saved = new Map(), blocked = false, theme = false } = {}) {
-  const nodes = new Map([["language-toggle", node("中文")], ["theme-toggle", node()], ["favicon", node()], ["heading", node("USAGE", { "data-i18n": "" })]]);
+  const nodes = new Map([["language-toggle", node("中文")], ["theme-toggle", node()], ["favicon", node()], ["web-font", node()], ["heading", node("USAGE", { "data-i18n": "" })]]);
   const root = { dataset: {} };
   const ready = [];
   const document = { documentElement: root, getElementById: (id) => nodes.get(id),
@@ -117,10 +117,27 @@ test("appearance controls are readable in English before the language script run
   const appearance = html.slice(html.indexOf('<h2 id="web-appearance-title"'), html.indexOf('<div class="setting-row terminal-animation-toggle">'));
   const language = load().language;
   const labels = [...appearance.matchAll(/<(?:h2|label|option)\b[^>]*data-i18n="([^"]+)"[^>]*>([^<]+)</g)];
-  assert.equal(labels.length, 14);
+  assert.equal(labels.length, 18);
   for (const [, key, fallback] of labels) {
     assert.equal(fallback.replaceAll("&amp;", "&").toLowerCase(), language.format(key).toLowerCase(), key);
   }
+});
+
+test("WebUI font is independent of theme and palette and survives a reload", () => {
+  const saved = new Map([["ccdx.dashboard.theme", "light"], ["ccdx.dashboard.palette", "paper"]]);
+  const page = load({ saved, theme:true });
+  const font = page.nodes.get("web-font");
+  assert.equal(font.value, "inter");
+  font.value="system";font.change({target:font});
+  assert.equal(page.root.dataset.webFont, "system");
+  assert.equal(load({ saved, theme:true }).root.dataset.webFont, "system");
+  assert.equal(saved.get("ccdx.dashboard.theme"), "light");
+  assert.equal(saved.get("ccdx.dashboard.palette"), "paper");
+  font.value="mono";font.change({target:font});
+  assert.equal(saved.get("ccdx.dashboard.font"), "mono");
+  const blocked=load({ blocked:true, theme:true });
+  const selector=blocked.nodes.get("web-font");selector.value="system";selector.change({target:selector});
+  assert.equal(blocked.root.dataset.webFont, "system");
 });
 
 test("bilingual copy preserves every placeholder and necessary information", () => {

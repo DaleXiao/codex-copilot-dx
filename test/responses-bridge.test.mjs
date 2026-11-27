@@ -246,6 +246,10 @@ test("chunked Chat thinking and text become distinct valid Responses events", as
   const completed = events.find(item => item.type === "response.completed").data.response;
   assert.equal(completed.output[0].summary[0].text, "fixture thought");
   assert.equal(completed.output[1].content[0].text, "fixture answer");
+  const reasoning = completed.output[0].id;
+  assert.match(reasoning, /^rs_ccdx_[a-f0-9]{32}$/);
+  assert.equal(events.find(item => item.type === "response.output_item.added").data.item.id, reasoning);
+  for (const { type, data } of events) if (type.startsWith("response.reasoning_summary")) assert.equal(data.item_id, reasoning);
 });
 
 test("forwardToChat: preserves streaming upstream errors", async () => {

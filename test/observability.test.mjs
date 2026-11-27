@@ -124,6 +124,15 @@ test("route classification recognizes only supported Codex routes", () => {
   assert.equal(classifyAdapterRoute("GET", "/other"), "not_found");
 });
 
+test("Antigravity generation metrics recognize both service path forms", () => {
+  for (const separator of [":", "/"]) {
+    for (const method of ["generateContent", "streamGenerateContent"]) {
+      assert.equal(classifyAdapterRoute("POST", "/antigravity/v1internal" + separator + method), "antigravity");
+    }
+    assert.equal(classifyAdapterRoute("POST", "/antigravity/v1internal" + separator + "fetchAvailableModels"), "antigravity_control");
+  }
+});
+
 test("native image status reports local zero counters without an upstream request", async () => {
   const result = await invoke(createAdapterHandler(), { url: ADAPTER_STATUS_PATH });
   const payload = JSON.parse(result.body);
@@ -156,9 +165,14 @@ test("dashboard assets serve on loopback without initializing image tools or aff
   assert.equal(page.statusCode, 200);
   assert.match(page.headers["Content-Type"], /^text\/html/);
   assert.match(page.headers["Content-Security-Policy"], /default-src 'none'/);
+  assert.match(page.headers["Content-Security-Policy"], /font-src 'self'/);
   assert.match(page.body, /CCDX Dashboard/);
   assert.match(page.body, /id="theme-toggle"/);
   assert.match(page.body, /data-i18n-title="activity_updates_live"/);
+  const font = await invoke(handler, { url: "/inter-latin.woff2", ...request });
+  assert.equal(font.statusCode, 200);
+  assert.equal(font.headers["Content-Type"], "font/woff2");
+  assert.equal(font.body.slice(0, 4), "wOF2");
   for (const [url, type] of [["/ui.css", "text/css"], ["/theme.js", "text/javascript"], ["/language.js", "text/javascript"], ["/refresh.js", "text/javascript"], ["/status.js", "text/javascript"], ["/usage.js", "text/javascript"], ["/ui.js", "text/javascript"]]) {
     const asset = await invoke(handler, { url, ...request });
     assert.equal(asset.statusCode, 200);

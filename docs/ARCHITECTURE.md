@@ -84,6 +84,12 @@ For managed GitHub Codex model plans, Auto Review resolves an explicit startup o
 
 Antigravity stages the model binding separately from the source authorization guard. It commits a binding only after protocol completion, using request order to prevent a later-arriving response from an older request replacing a confirmed choice. The binding store retains only the account and conversation hashes, model alias and order. Lightweight runtime status reads its counters directly before composing provider, catalog and diagnostic details. The terminal's app management commands share the existing formatting, confirmation and management API contracts through their own command module.
 
+Antigravity projects a completed model catalog against current settings and grants. An older catalog request cannot replace a newer successful snapshot. This follows [Floway's catalog revision handling](https://github.com/Menci/Floway/pull/779). Generation requires a stable model identity. Bare picker enums can change meaning between catalog responses, so CCDX rejects the managed enum range instead of resolving by slot.
+
+The process-local endpoint applies to the client's Code Assist traffic. Discovery and generation counters are independent because [Antigravity sign-in and gateway modes](https://docs.cloud.google.com/gemini/enterprise/docs/ai-developer-tools/connect-enterprise-gateway) can use different transports. [Magpie's Antigravity integration](https://github.com/yetone/magpie/blob/4283f672fd643bd60a3af6836ab2234c50404525/internal/agent/antigravity.go) is a reference for separating startup configuration and endpoint behavior.
+
+The Chat bridge gives generated Responses reasoning items a distinct local ID namespace, following [CC Switch's reasoning history correction](https://github.com/farion1231/cc-switch/commit/148c1005be). The [LiteLLM empty user turn fix](https://github.com/BerriAI/litellm/pull/53947) informs regression coverage for the native Gemini path, which passes through the last user turn.
+
 ## Composition and lifecycle
 
 ### Application control and shared source admission

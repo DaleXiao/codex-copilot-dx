@@ -57,7 +57,7 @@ export async function serveDashboard(req, res, pathname) {
     "Content-Type": contentType,
     "Cache-Control": pathname === "/" ? "no-store" : "no-cache",
     ...(pathname === "/" ? {} : { ETag: etag }),
-    "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+    "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; font-src 'self'; img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "no-referrer",
